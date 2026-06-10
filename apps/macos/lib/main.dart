@@ -121,8 +121,10 @@ class _ShellState extends State<Shell>
   Timer? _tickerTimer;
   List<int> _tickerRunes = const []; // 整条文本的码点
   int _tickerPos = 0;
-  static const int _tickerWindow = 18; // 菜单栏可见字符数(窗口宽)
   static const String _tickerGap = '      '; // 一圈结束到重新开始的空隙
+  // 窗口宽 / 步进间隔来自设置(macOS 专属、可在设置页实时调)。
+  int get _tickerWindow => _settings.tray.tickerWidth.clamp(8, 60).toInt();
+  int get _tickerMs => _settings.tray.tickerMs.clamp(20, 1000).toInt();
 
   PulseSource get _source => widget.source;
 
@@ -300,8 +302,8 @@ class _ShellState extends State<Shell>
   // 「全部账户」且放不下 → 高频小步前移(更丝滑);否则停表、固定宽静态显示。
   void _syncTicker(bool active) {
     if (active && _tickerTimer == null) {
-      // 间隔越小越顺、但滚得也越快(一步=一个字符,二者绑死)。70ms ≈ 14 字/秒。
-      _tickerTimer = Timer.periodic(const Duration(milliseconds: 70), (_) {
+      // 间隔越小越顺、但滚得也越快(一步=一个字符,二者绑死)。间隔由设置实时控制。
+      _tickerTimer = Timer.periodic(Duration(milliseconds: _tickerMs), (_) {
         _tickerPos++;
         _renderTicker();
       });
@@ -353,7 +355,10 @@ class _ShellState extends State<Shell>
   void _onTrayChanged(TraySettings tray) {
     setState(() => _settings = _settings.copyWith(tray: tray));
     SettingsStore.save(_settings);
-    _updateTray(); // 立刻按新设置重渲染托盘
+    // 滚动间隔/宽度可能变了 → 取消旧定时器,让 _updateTray 用新参数重建(实时预览)。
+    _tickerTimer?.cancel();
+    _tickerTimer = null;
+    _updateTray();
   }
 
   Future<void> _quit() async {

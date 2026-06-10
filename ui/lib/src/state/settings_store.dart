@@ -52,27 +52,40 @@ class TraySettings {
   final TrayMode mode;
   final String? pinnedKey; // "instance|accountId"
   final String? template; // custom 模式:支持 {name} {peak} {count}
+  final int tickerMs; // macOS「全部账户」菜单栏滚动步进间隔(ms;越小越顺也越快)
+  final int tickerWidth; // macOS 菜单栏滚动窗口宽(可见字符数)
 
   const TraySettings({
     this.mode = TrayMode.pinnedAccount, // 默认:选中账户的 5h 剩余/重置(未选则取最忙的)
     this.pinnedKey,
     this.template,
+    this.tickerMs = 70,
+    this.tickerWidth = 18,
   });
 
   TraySettings copyWith({
     TrayMode? mode,
     String? pinnedKey,
     String? template,
+    int? tickerMs,
+    int? tickerWidth,
     bool clearPinned = false,
   }) =>
       TraySettings(
         mode: mode ?? this.mode,
         pinnedKey: clearPinned ? null : (pinnedKey ?? this.pinnedKey),
         template: template ?? this.template,
+        tickerMs: tickerMs ?? this.tickerMs,
+        tickerWidth: tickerWidth ?? this.tickerWidth,
       );
 
-  Map<String, dynamic> toJson() =>
-      {'mode': mode.name, 'pinned_key': pinnedKey, 'template': template};
+  Map<String, dynamic> toJson() => {
+        'mode': mode.name,
+        'pinned_key': pinnedKey,
+        'template': template,
+        'ticker_ms': tickerMs,
+        'ticker_width': tickerWidth,
+      };
 
   factory TraySettings.fromJson(Map<String, dynamic> j) => TraySettings(
         mode: TrayMode.values.firstWhere(
@@ -82,6 +95,8 @@ class TraySettings {
         ),
         pinnedKey: j['pinned_key'] as String?,
         template: j['template'] as String?,
+        tickerMs: (j['ticker_ms'] as num?)?.toInt() ?? 70,
+        tickerWidth: (j['ticker_width'] as num?)?.toInt() ?? 18,
       );
 }
 

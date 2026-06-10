@@ -67,6 +67,8 @@ class _SettingsPageState extends State<SettingsPage> {
   late TrayMode _trayMode;
   String? _pinnedKey;
   late TextEditingController _template;
+  late int _tickerMs; // macOS 菜单栏滚动速度(ms)
+  late int _tickerWidth; // macOS 菜单栏滚动窗口宽(字符)
   int _idSeq = 0;
 
   @override
@@ -81,6 +83,8 @@ class _SettingsPageState extends State<SettingsPage> {
     _trayMode = widget.initial.tray.mode;
     _pinnedKey = widget.initial.tray.pinnedKey;
     _template = TextEditingController(text: widget.initial.tray.template ?? '{name} {peak}%');
+    _tickerMs = widget.initial.tray.tickerMs.clamp(30, 300).toInt();
+    _tickerWidth = widget.initial.tray.tickerWidth.clamp(8, 40).toInt();
   }
 
   _Draft _newDraft() {
@@ -108,6 +112,8 @@ class _SettingsPageState extends State<SettingsPage> {
         mode: _trayMode,
         pinnedKey: _pinnedKey,
         template: _template.text.trim().isEmpty ? null : _template.text.trim(),
+        tickerMs: _tickerMs,
+        tickerWidth: _tickerWidth,
       );
 
   /// 托盘相关改动即时生效(不必保存)。
@@ -281,6 +287,52 @@ class _SettingsPageState extends State<SettingsPage> {
             padding: const EdgeInsets.only(top: 4),
             child: Text('变量:{name} {peak} {count}', style: theme.textTheme.bodySmall),
           ),
+        ],
+
+        // macOS 专属:菜单栏「全部账户」流水屏滚动调参(拖动即时预览)。
+        if (theme.platform == TargetPlatform.macOS) ...[
+          const Divider(height: 24),
+          Text('菜单栏滚动(macOS)',
+              style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+          Text('仅「全部账户」模式、且一行放不下时滚动;拖动滑块菜单栏即时预览。',
+              style: theme.textTheme.bodySmall),
+          const SizedBox(height: 4),
+          Row(children: [
+            SizedBox(
+                width: 76,
+                child: Text('速度 ${_tickerMs}ms', style: theme.textTheme.bodySmall)),
+            Expanded(
+              child: Slider(
+                min: 30,
+                max: 300,
+                divisions: 27,
+                value: _tickerMs.toDouble(),
+                onChanged: (v) {
+                  setState(() => _tickerMs = v.round());
+                  _emitTray();
+                },
+              ),
+            ),
+          ]),
+          Row(children: [
+            SizedBox(
+                width: 76,
+                child: Text('宽度 $_tickerWidth 字', style: theme.textTheme.bodySmall)),
+            Expanded(
+              child: Slider(
+                min: 8,
+                max: 40,
+                divisions: 32,
+                value: _tickerWidth.toDouble(),
+                onChanged: (v) {
+                  setState(() => _tickerWidth = v.round());
+                  _emitTray();
+                },
+              ),
+            ),
+          ]),
+          Text('≈ ${(1000 / _tickerMs).round()} 字/秒(间隔越小越顺、也越快)',
+              style: theme.textTheme.bodySmall),
         ],
 
         const SizedBox(height: 12),
