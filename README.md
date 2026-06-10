@@ -37,9 +37,9 @@ git tag v0.1.0 && git push origin v0.1.0
 
 ## 字体
 
-界面统一打包内嵌 [MiSans](https://hyperos.mi.com/font/download)(小米,免费商用),
-以保证 Windows / macOS 字重渲染一致 —— 系统中文字体雅黑缺 Medium/Semibold,
-会把 `w500/w600` 就近吸附成 Regular/Bold 造成字重忽粗忽细。
+**Windows 端**打包内嵌 [MiSans](https://hyperos.mi.com/font/download)(小米,免费商用):
+系统中文字体雅黑缺 Medium/Semibold,会把 `w500/w600` 就近吸附成 Regular/Bold,
+字重忽粗忽细;内嵌 MiSans 修正。**macOS** 用系统 SF Pro(字重本就齐全,无需替换,也不增体积)。
 字体版权归小米所有,许可见 [`ui/lib/fonts/MiSans-LICENSE.txt`](ui/lib/fonts/MiSans-LICENSE.txt)。
 
 ## 状态

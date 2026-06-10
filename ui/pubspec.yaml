@@ -17,5 +17,5 @@ dev_dependencies:
   flutter_lints: ^4.0.0
 
 # MiSans 字体文件随包放在 lib/fonts/(小米,免费商用,版权见 lib/fonts/MiSans-LICENSE.txt)。
-# 字体由各 apps/<platform> 的 pubspec 通过 packages/quota_pulse_ui/fonts/... 声明并打包
-# (Flutter 跨包字体的标准做法:packages/<包>/ 前缀解析到 <包>/lib/)。本包不重复声明。
+# 仅 apps/windows 的 pubspec 通过 packages/quota_pulse_ui/fonts/... 声明并打包它,修正
+# 雅黑缺失的中间字重;macOS 用系统 SF Pro,不打包。本包不重复声明(跨包字体由 app 声明)。

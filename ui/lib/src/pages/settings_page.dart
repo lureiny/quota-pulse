@@ -229,16 +229,18 @@ class _SettingsPageState extends State<SettingsPage> {
             FilledButton(onPressed: _save, child: const Text('保存并连接')),
           ],
         ),
-        const SizedBox(height: 14),
-        Center(
-          // MiSans 许可要求「在软件中特别注明使用了 MiSans 字体」。
-          child: Text(
-            '界面字体 MiSans · 版权归小米所有',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.55),
+        // MiSans 仅 Windows 打包使用;其许可要求「在软件中特别注明」,故只在 Windows 显示署名。
+        if (theme.platform == TargetPlatform.windows) ...[
+          const SizedBox(height: 14),
+          Center(
+            child: Text(
+              '界面字体 MiSans · 版权归小米所有',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.55),
+              ),
             ),
           ),
-        ),
+        ],
       ],
     );
   }

@@ -68,8 +68,11 @@ class _QuotaPulseAppState extends State<QuotaPulseApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: buildAppTheme(seed: widget.seed, brightness: Brightness.light),
-      darkTheme: buildAppTheme(seed: widget.seed, brightness: Brightness.dark),
+      // Windows:打包 MiSans 修正雅黑缺失的中间字重(macOS 壳不传,用系统 SF)
+      theme: buildAppTheme(
+          seed: widget.seed, brightness: Brightness.light, fontFamily: 'MiSans'),
+      darkTheme: buildAppTheme(
+          seed: widget.seed, brightness: Brightness.dark, fontFamily: 'MiSans'),
       themeMode: _themeMode, // 可设置;默认跟随系统
       builder: (context, child) => MediaQuery(
         data: MediaQuery.of(context).copyWith(

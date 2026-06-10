@@ -18,17 +18,21 @@ Future<Color> loadAccentColor({Color fallback = _fallbackSeed}) async {
 
 /// 统一主题:布局 / 组件 / 间距 / 密度跨平台一致;字体走系统默认(贴近原生);
 /// 配色由 seed(系统强调色)+ 明暗派生。两端及未来平台共用这一份。
-ThemeData buildAppTheme({required Color seed, required Brightness brightness}) {
+ThemeData buildAppTheme({
+  required Color seed,
+  required Brightness brightness,
+  String? fontFamily, // 由平台壳决定:Windows 传 'MiSans',macOS 不传 → 系统 SF
+}) {
   final scheme = ColorScheme.fromSeed(seedColor: seed, brightness: brightness);
   return ThemeData(
     useMaterial3: true,
     colorScheme: scheme,
     // 钉死密度,不随平台变(否则桌面各平台默认间距不同)
     visualDensity: VisualDensity.standard,
-    // 打包的 MiSans:雅黑缺 Medium/Semibold,w500/w600 会被就近吸附成 Regular/Bold,
-    // 导致 Windows 上字重忽粗忽细;自带字体让 Win/macOS 渲染一致。
-    // 字体由各 app 的 pubspec 以 family: MiSans 声明(文件在 ui/lib/fonts/)。
-    fontFamily: 'MiSans',
+    // 字体跟随平台:Windows 雅黑缺 Medium/Semibold,w500/w600 会被就近吸附成
+    // Regular/Bold → 字重忽粗忽细,故 Windows 壳传入打包的 'MiSans' 修正;
+    // macOS 的 SF 字重本就齐全,传 null 用系统字体即可(更原生、也不增体积)。
+    fontFamily: fontFamily,
     scrollbarTheme: const ScrollbarThemeData(
       thickness: WidgetStatePropertyAll<double>(6.0),
       radius: Radius.circular(3),
