@@ -54,7 +54,7 @@ class TraySettings {
   final String? template; // custom 模式:支持 {name} {peak} {count}
 
   const TraySettings({
-    this.mode = TrayMode.allAccounts,
+    this.mode = TrayMode.pinnedAccount, // 默认:选中账户的 5h 剩余/重置(未选则取最忙的)
     this.pinnedKey,
     this.template,
   });

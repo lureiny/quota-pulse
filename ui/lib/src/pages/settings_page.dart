@@ -12,6 +12,8 @@ class SettingsPage extends StatefulWidget {
     required this.onSave,
     this.onCancel,
     this.onThemeChanged, // 主题选中即时生效(不必保存)
+    this.autostartEnabled = false, // 开机自启动当前状态(由壳查询 OS 得到)
+    this.onAutostartChanged, // 开关即时生效(不必保存)
   });
 
   final Settings initial;
@@ -19,6 +21,8 @@ class SettingsPage extends StatefulWidget {
   final void Function(Settings) onSave;
   final VoidCallback? onCancel;
   final void Function(ThemeChoice)? onThemeChanged;
+  final bool autostartEnabled;
+  final void Function(bool)? onAutostartChanged;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -134,6 +138,18 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         const Divider(height: 24),
 
+        Text('启动', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: const Text('开机自启动', style: TextStyle(fontSize: 13)),
+          subtitle: Text('登录系统后自动在后台启动(macOS 下次登录生效)',
+              style: theme.textTheme.bodySmall),
+          value: widget.autostartEnabled,
+          onChanged: widget.onAutostartChanged,
+        ),
+        const Divider(height: 24),
+
         Text('列表布局', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
         SegmentedButton<ListLayout>(
@@ -172,8 +188,8 @@ class _SettingsPageState extends State<SettingsPage> {
             isExpanded: true,
             underline: const SizedBox.shrink(),
             items: const [
-              DropdownMenuItem(value: TrayMode.allAccounts, child: Text('全部账户(默认)')),
-              DropdownMenuItem(value: TrayMode.pinnedAccount, child: Text('指定某账户')),
+              DropdownMenuItem(value: TrayMode.pinnedAccount, child: Text('指定账户·5h 剩余/重置(默认)')),
+              DropdownMenuItem(value: TrayMode.allAccounts, child: Text('全部账户')),
               DropdownMenuItem(value: TrayMode.globalPeak, child: Text('全局峰值%')),
               DropdownMenuItem(value: TrayMode.countPeak, child: Text('账户数 + 峰值%')),
               DropdownMenuItem(value: TrayMode.custom, child: Text('自定义模板')),

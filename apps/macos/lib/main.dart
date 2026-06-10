@@ -2,11 +2,14 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_acrylic/flutter_acrylic.dart';
+import 'package:screen_retriever/screen_retriever.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
 // 共享层:模型 / UI / 状态 / 桥接全部来自 ui 包
 import 'package:quota_pulse_ui/quota_pulse_ui.dart';
+
+import 'autostart.dart'; // 开机自启动(macOS:LaunchAgent)
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -99,11 +102,19 @@ class Shell extends StatefulWidget {
   State<Shell> createState() => _ShellState();
 }
 
-class _ShellState extends State<Shell> with TrayListener, WindowListener {
+class _ShellState extends State<Shell>
+    with TrayListener, WindowListener, SingleTickerProviderStateMixin {
   late Settings _settings = widget.initialSettings;
   PulseController? _controller;
   _View _view = _View.list;
   String? _error;
+  bool _autostartEnabled = false; // 开机自启动:真值以 OS 为准,启动时查询
+
+  // 弹层"从菜单栏放大出现"的入场动画。
+  late final AnimationController _popAnim = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 190),
+  );
 
   PulseSource get _source => widget.source;
 
@@ -112,6 +123,9 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
     super.initState();
     trayManager.addListener(this);
     windowManager.addListener(this);
+    Autostart.isEnabled().then((v) {
+      if (mounted) setState(() => _autostartEnabled = v);
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _initTray();
       if (_settings.configured) {
@@ -127,6 +141,7 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
   void dispose() {
     trayManager.removeListener(this);
     windowManager.removeListener(this);
+    _popAnim.dispose();
     _controller?.dispose();
     super.dispose();
   }
@@ -177,10 +192,34 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
   // ---------- 窗口(弹层) ----------
 
   Future<void> _showPopover() async {
-    await windowManager.setAlignment(Alignment.topRight);
+    await _positionUnderTray();
     await windowManager.show();
     await windowManager.focus();
     _source.setForeground(true);
+    _popAnim.forward(from: 0); // 从菜单栏"放大"出现
+  }
+
+  /// 把弹层贴到菜单栏图标正下方、水平居中(图标落在弹层上沿中点);
+  /// 拿不到图标位置则回退到右上角。
+  Future<void> _positionUnderTray() async {
+    try {
+      final icon = await trayManager.getBounds();
+      if (icon == null) {
+        await windowManager.setAlignment(Alignment.topRight);
+        return;
+      }
+      final size = await windowManager.getSize();
+      var x = icon.center.dx - size.width / 2;
+      final y = icon.bottom + 6; // 菜单栏下方留一点缝
+      try {
+        final d = await screenRetriever.getPrimaryDisplay();
+        final maxX = d.size.width - size.width - 6;
+        x = x.clamp(6.0, maxX > 6 ? maxX : 6.0).toDouble(); // 别越出屏幕右沿
+      } catch (_) {}
+      await windowManager.setPosition(Offset(x, y));
+    } catch (_) {
+      await windowManager.setAlignment(Alignment.topRight);
+    }
   }
 
   Future<void> _hidePopover() async {
@@ -239,6 +278,14 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
     SettingsStore.save(_settings); // 顺手持久化,无需点保存
   }
 
+  Future<void> _onAutostartChanged(bool enable) async {
+    try {
+      await Autostart.setEnabled(enable);
+    } catch (_) {}
+    final now = await Autostart.isEnabled(); // 以 OS 实际状态回填开关
+    if (mounted) setState(() => _autostartEnabled = now);
+  }
+
   Future<void> _quit() async {
     try {
       _source.stop();
@@ -253,7 +300,21 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent, // 透出毛玻璃,卡片自绘圆角
-      body: GlassCard(child: _content()),
+      body: AnimatedBuilder(
+        animation: _popAnim,
+        builder: (context, child) {
+          final t = _popAnim.value;
+          return Opacity(
+            opacity: t.clamp(0.0, 1.0),
+            child: Transform.scale(
+              scale: 0.94 + 0.06 * Curves.easeOutCubic.transform(t),
+              alignment: Alignment.topCenter, // 从上沿(菜单栏处)展开
+              child: child,
+            ),
+          );
+        },
+        child: GlassCard(child: _content()),
+      ),
     );
   }
 
@@ -264,6 +325,8 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
         accounts: _controller?.pulses ?? const [],
         onSave: _saveSettings,
         onThemeChanged: _onThemeChanged,
+        autostartEnabled: _autostartEnabled,
+        onAutostartChanged: _onAutostartChanged,
         onCancel: _settings.configured ? () => setState(() => _view = _View.list) : null,
       );
     }

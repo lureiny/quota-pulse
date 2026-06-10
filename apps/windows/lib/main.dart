@@ -2,11 +2,14 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_acrylic/flutter_acrylic.dart';
+import 'package:screen_retriever/screen_retriever.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
 // 共享层:模型 / UI / 状态 / 桥接全部来自 ui 包(与 macOS 同一份)
 import 'package:quota_pulse_ui/quota_pulse_ui.dart';
+
+import 'autostart.dart'; // 开机自启动(Windows:注册表 Run 项)
 
 // ── Windows 与 macOS 壳的差异(其余逻辑共用 ui 包) ──
 //   · 托盘图标用彩色 .ico(非 macOS 模板图);
@@ -113,6 +116,7 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
   PulseController? _controller;
   _View _view = _View.list;
   String? _error;
+  bool _autostartEnabled = false; // 开机自启动:真值以 OS 为准,启动时查询
 
   PulseSource get _source => widget.source;
 
@@ -121,6 +125,9 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
     super.initState();
     trayManager.addListener(this);
     windowManager.addListener(this);
+    Autostart.isEnabled().then((v) {
+      if (mounted) setState(() => _autostartEnabled = v);
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _initTray();
       if (_settings.configured) {
@@ -186,10 +193,34 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
   // ---------- 窗口(弹层) ----------
 
   Future<void> _showPopover() async {
-    await windowManager.setAlignment(Alignment.bottomRight); // 托盘在右下
+    await _positionNearTray();
     await windowManager.show();
     await windowManager.focus();
     _source.setForeground(true);
+  }
+
+  /// 把弹层贴到托盘图标正上方、水平居中(图标落在弹层下沿中点);
+  /// 拿不到图标位置则回退到右下角。
+  Future<void> _positionNearTray() async {
+    try {
+      final icon = await trayManager.getBounds();
+      if (icon == null) {
+        await windowManager.setAlignment(Alignment.bottomRight);
+        return;
+      }
+      final size = await windowManager.getSize();
+      var x = icon.center.dx - size.width / 2;
+      var y = icon.top - size.height - 6; // 托盘上方留一点缝
+      try {
+        final d = await screenRetriever.getPrimaryDisplay();
+        final maxX = d.size.width - size.width - 6;
+        x = x.clamp(6.0, maxX > 6 ? maxX : 6.0).toDouble();
+      } catch (_) {}
+      if (y < 6) y = 6.0;
+      await windowManager.setPosition(Offset(x, y));
+    } catch (_) {
+      await windowManager.setAlignment(Alignment.bottomRight);
+    }
   }
 
   Future<void> _hidePopover() async {
@@ -249,6 +280,14 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
     SettingsStore.save(_settings); // 顺手持久化,无需点保存
   }
 
+  Future<void> _onAutostartChanged(bool enable) async {
+    try {
+      await Autostart.setEnabled(enable);
+    } catch (_) {}
+    final now = await Autostart.isEnabled(); // 以 OS 实际状态回填开关
+    if (mounted) setState(() => _autostartEnabled = now);
+  }
+
   Future<void> _quit() async {
     try {
       _source.stop();
@@ -274,6 +313,8 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
         accounts: _controller?.pulses ?? const [],
         onSave: _saveSettings,
         onThemeChanged: _onThemeChanged,
+        autostartEnabled: _autostartEnabled,
+        onAutostartChanged: _onAutostartChanged,
         onCancel: _settings.configured ? () => setState(() => _view = _View.list) : null,
       );
     }

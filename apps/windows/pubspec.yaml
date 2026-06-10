@@ -13,7 +13,9 @@ dependencies:
     path: ../../ui
   tray_manager: ^0.5.0    # 系统托盘项
   window_manager: ^0.4.3  # 无边框弹层窗口
+  screen_retriever: ^0.2.0 # 读屏幕尺寸:把弹层夹在可见区域内(贴托盘图标定位用)
   flutter_acrylic: ^1.1.0 # 毛玻璃(Windows acrylic)——重新验证其 Windows 构建是否会挂
+  win32_registry: ^3.0.0  # 开机自启动:写 HKCU\...\Run(纯 Dart,无原生构建)
   # 注:ffi / shared_preferences 由 quota_pulse_ui 传递依赖
 
 dev_dependencies:

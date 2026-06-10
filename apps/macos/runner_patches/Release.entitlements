@@ -2,9 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- 非沙箱:开机自启动需写 ~/Library/LaunchAgents,沙箱应用无权写入,故关闭沙箱。 -->
 	<key>com.apple.security.app-sandbox</key>
-	<true/>
-	<!-- 关键:允许 Go 核心向 sub2api 发起出站 HTTPS -->
+	<false/>
+	<!-- 出站 HTTPS(非沙箱下本无需此项,保留以示意网络用途) -->
 	<key>com.apple.security.network.client</key>
 	<true/>
 </dict>

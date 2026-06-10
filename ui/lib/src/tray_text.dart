@@ -34,6 +34,48 @@ AccountPulse? _topAccount(List<AccountPulse> pulses) {
   return top;
 }
 
+/// 选中(钉住)的账户;找不到则退回使用率最高的那个,保证总有内容。
+AccountPulse? _selected(List<AccountPulse> pulses, TraySettings tray) {
+  for (final a in pulses) {
+    if (a.key == tray.pinnedKey) return a;
+  }
+  return _topAccount(pulses);
+}
+
+/// 取"5 小时"窗口表盘:优先 id=five_hour;兜底标签含 5、再兜底第一个滚动窗口/第一个表盘。
+Meter? _fiveHour(AccountPulse a) {
+  for (final m in a.meters) {
+    if (m.id == 'five_hour') return m;
+  }
+  for (final m in a.meters) {
+    if (m.label.contains('5')) return m;
+  }
+  for (final m in a.meters) {
+    if (m.kind == 'rolling_window') return m;
+  }
+  return a.meters.isEmpty ? null : a.meters.first;
+}
+
+/// 剩余量 = 1 - 使用率(剩余百分比)。
+String _remain(Meter? m) {
+  final u = m?.utilization;
+  if (u == null) return '—';
+  final r = (1 - u).clamp(0.0, 1.0);
+  return '${(r * 100).round()}%';
+}
+
+/// 重置倒计时 "2h13m" / "45m" / "30s"(无则空)。
+String _dur(int? secs) {
+  if (secs == null || secs <= 0) return '';
+  final h = secs ~/ 3600, m = (secs % 3600) ~/ 60;
+  if (h > 0) return '${h}h${m}m';
+  if (m > 0) return '${m}m';
+  return '${secs}s';
+}
+
+String _meterLabel(Meter? m) =>
+    (m != null && m.label.isNotEmpty) ? m.label : '5h';
+
 String _custom(List<AccountPulse> pulses, TraySettings tray) {
   final top = _topAccount(pulses);
   final name = top == null ? '' : _accountName(top);
@@ -45,7 +87,7 @@ String _custom(List<AccountPulse> pulses, TraySettings tray) {
       .replaceAll('{count}', '${pulses.length}');
 }
 
-/// Windows 托盘 tooltip:多行,按 [TraySettings] 模式渲染(默认 allAccounts,按账户排序)。
+/// Windows 托盘 tooltip:多行,按 [TraySettings] 模式渲染。
 /// 注:悬停延迟由 Windows 系统控制、app 无法调整;要即时看全部请左键点托盘。
 String renderTrayTooltip(List<AccountPulse> pulses, TraySettings tray) {
   if (pulses.isEmpty) return 'quota-pulse';
@@ -67,17 +109,15 @@ String renderTrayTooltip(List<AccountPulse> pulses, TraySettings tray) {
       return lines.join('\n');
 
     case TrayMode.pinnedAccount:
-      for (final a in pulses) {
-        if (a.key == tray.pinnedKey) {
-          final meters =
-              a.meters.map((m) => '${m.label} ${_pct(m.utilization)}').join('   ');
-          return meters.isEmpty
-              ? '${_accountName(a)}  ${_pct(a.peakUtilization)}'
-              : '${_accountName(a)}\n$meters';
-        }
-      }
-      // 没钉住或找不到 → 退回全部
-      return renderTrayTooltip(pulses, const TraySettings(mode: TrayMode.allAccounts));
+      // 选中账户的 5 小时窗口:剩余量 + 重置倒计时(与 macOS 菜单栏一致)。
+      final a = _selected(pulses, tray);
+      if (a == null) return 'quota-pulse';
+      final m = _fiveHour(a);
+      final reset = _dur(m?.remainingSecs);
+      final line2 = reset.isEmpty
+          ? '${_meterLabel(m)} 剩 ${_remain(m)}'
+          : '${_meterLabel(m)} 剩 ${_remain(m)}  ·  $reset 后重置';
+      return '${_accountName(a)}\n$line2';
 
     case TrayMode.globalPeak:
       return '峰值 ${_pct(_globalPeak(pulses))}';
@@ -99,13 +139,13 @@ String renderTrayText(List<AccountPulse> pulses, TraySettings tray) {
       return '${pulses.length} 账户 · 峰值 ${_pct(_globalPeak(pulses))}';
 
     case TrayMode.pinnedAccount:
-      for (final a in pulses) {
-        if (a.key == tray.pinnedKey) {
-          return '${_accountName(a)} ${_pct(a.peakUtilization)}';
-        }
-      }
-      final gp = _globalPeak(pulses);
-      return gp == null ? 'quota-pulse' : 'quota-pulse · 峰值 ${_pct(gp)}';
+      // 选中账户的 5 小时窗口:剩余量 + 重置倒计时。
+      final a = _selected(pulses, tray);
+      if (a == null) return 'quota-pulse';
+      final m = _fiveHour(a);
+      final reset = _dur(m?.remainingSecs);
+      final tail = reset.isEmpty ? '' : ' · $reset';
+      return '${_accountName(a)} 剩${_remain(m)}$tail';
 
     case TrayMode.globalPeak:
       final gp = _globalPeak(pulses);
