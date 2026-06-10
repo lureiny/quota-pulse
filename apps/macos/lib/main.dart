@@ -103,19 +103,12 @@ class Shell extends StatefulWidget {
   State<Shell> createState() => _ShellState();
 }
 
-class _ShellState extends State<Shell>
-    with TrayListener, WindowListener, SingleTickerProviderStateMixin {
+class _ShellState extends State<Shell> with TrayListener, WindowListener {
   late Settings _settings = widget.initialSettings;
   PulseController? _controller;
   _View _view = _View.list;
   String? _error;
   bool _autostartEnabled = false; // 开机自启动:真值以 OS 为准,启动时查询
-
-  // 弹层"从菜单栏放大出现"的入场动画。
-  late final AnimationController _popAnim = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 190),
-  );
 
   // 「全部账户」模式:把所有账户拼成一行,在菜单栏里循环横向滚动(类似流水屏)。
   Timer? _tickerTimer;
@@ -152,7 +145,6 @@ class _ShellState extends State<Shell>
     trayManager.removeListener(this);
     windowManager.removeListener(this);
     _tickerTimer?.cancel();
-    _popAnim.dispose();
     _controller?.dispose();
     super.dispose();
   }
@@ -203,19 +195,16 @@ class _ShellState extends State<Shell>
   // ---------- 窗口(弹层) ----------
 
   Future<void> _showPopover() async {
+    // 不做入场动画:窗口的毛玻璃材质是 OS 级的,会整块先出现,内容再缩放只会看着像
+    // "先出一个框再动",反而别扭;直接定位后显示,干净也更快。
     await _positionUnderTray();
-    // 关键:显示前先把动画归零(内容缩到起始态),否则窗口会先以上次的满屏态出现、
-    // forward 再把它缩回 0.92 又放大 → 看着像"弹两次"。再等一帧确保以起始态画好后再显示。
-    _popAnim.value = 0;
-    await WidgetsBinding.instance.endOfFrame;
     await windowManager.show();
     await windowManager.focus();
     _source.setForeground(true);
-    _popAnim.forward(); // 从 0 平滑放大到 1
   }
 
   /// 把弹层贴到菜单栏图标正下方、水平居中(图标落在弹层上沿中点);
-  /// 拿不到图标位置则回退到右上角。
+  /// 拿不到图标位置则回退到右上角。窗口宽固定 340、主屏宽缓存,尽量少往返、开得快。
   Future<void> _positionUnderTray() async {
     try {
       final icon = await trayManager.getBounds();
@@ -223,18 +212,27 @@ class _ShellState extends State<Shell>
         await windowManager.setAlignment(Alignment.topRight);
         return;
       }
-      final size = await windowManager.getSize();
-      var x = icon.center.dx - size.width / 2;
+      const w = 340.0; // = WindowOptions.size.width,省去每次 getSize 往返
+      var x = icon.center.dx - w / 2;
       final y = icon.bottom + 6; // 菜单栏下方留一点缝
-      try {
-        final d = await screenRetriever.getPrimaryDisplay();
-        final maxX = d.size.width - size.width - 6;
+      final sw = await _screenWidth();
+      if (sw != null) {
+        final maxX = sw - w - 6;
         x = x.clamp(6.0, maxX > 6 ? maxX : 6.0).toDouble(); // 别越出屏幕右沿
-      } catch (_) {}
+      }
       await windowManager.setPosition(Offset(x, y));
     } catch (_) {
       await windowManager.setAlignment(Alignment.topRight);
     }
+  }
+
+  double? _cachedScreenW;
+  Future<double?> _screenWidth() async {
+    if (_cachedScreenW != null) return _cachedScreenW;
+    try {
+      _cachedScreenW = (await screenRetriever.getPrimaryDisplay()).size.width;
+    } catch (_) {}
+    return _cachedScreenW;
   }
 
   Future<void> _hidePopover() async {
@@ -375,19 +373,7 @@ class _ShellState extends State<Shell>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent, // 透出毛玻璃,卡片自绘圆角
-      body: AnimatedBuilder(
-        animation: _popAnim,
-        builder: (context, child) {
-          // 只做缩放、不淡入:否则毛玻璃材质先满屏出现、内容再淡入,看着像"弹两次"。
-          final t = Curves.easeOutCubic.transform(_popAnim.value);
-          return Transform.scale(
-            scale: 0.92 + 0.08 * t,
-            alignment: Alignment.topCenter, // 从上沿(菜单栏处)展开
-            child: child,
-          );
-        },
-        child: GlassCard(child: _content()),
-      ),
+      body: GlassCard(child: _content()),
     );
   }
 
