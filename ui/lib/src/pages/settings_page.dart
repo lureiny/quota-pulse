@@ -53,6 +53,7 @@ class _Draft {
 class _SettingsPageState extends State<SettingsPage> {
   late List<_Draft> _drafts;
   late ListLayout _layout;
+  late ThemeChoice _theme;
   late TrayMode _trayMode;
   String? _pinnedKey;
   late TextEditingController _template;
@@ -66,6 +67,7 @@ class _SettingsPageState extends State<SettingsPage> {
         .toList();
     if (_drafts.isEmpty) _drafts.add(_newDraft());
     _layout = widget.initial.layout;
+    _theme = widget.initial.themeMode;
     _trayMode = widget.initial.tray.mode;
     _pinnedKey = widget.initial.tray.pinnedKey;
     _template = TextEditingController(text: widget.initial.tray.template ?? '{name} {peak}%');
@@ -99,7 +101,12 @@ class _SettingsPageState extends State<SettingsPage> {
       pinnedKey: _pinnedKey,
       template: _template.text.trim().isEmpty ? null : _template.text.trim(),
     );
-    widget.onSave(Settings(instances: instances, layout: _layout, tray: tray));
+    widget.onSave(Settings(
+      instances: instances,
+      layout: _layout,
+      tray: tray,
+      themeMode: _theme,
+    ));
   }
 
   @override
@@ -135,6 +142,20 @@ class _SettingsPageState extends State<SettingsPage> {
           ],
           selected: {_layout},
           onSelectionChanged: (s) => setState(() => _layout = s.first),
+        ),
+        const Divider(height: 24),
+
+        Text('主题', style: theme.textTheme.titleSmall),
+        const SizedBox(height: 8),
+        SegmentedButton<ThemeChoice>(
+          showSelectedIcon: false,
+          segments: const [
+            ButtonSegment(value: ThemeChoice.system, label: Text('跟随系统')),
+            ButtonSegment(value: ThemeChoice.light, label: Text('浅色')),
+            ButtonSegment(value: ThemeChoice.dark, label: Text('深色')),
+          ],
+          selected: {_theme},
+          onSelectionChanged: (s) => setState(() => _theme = s.first),
         ),
         const Divider(height: 24),
 

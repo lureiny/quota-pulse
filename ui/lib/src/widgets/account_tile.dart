@@ -17,7 +17,7 @@ class AccountTile extends StatefulWidget {
 }
 
 class _AccountTileState extends State<AccountTile> {
-  bool _expanded = false;
+  bool _expanded = true; // 默认展开(点击可折叠)
   bool _hover = false;
 
   @override

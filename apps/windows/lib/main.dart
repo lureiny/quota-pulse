@@ -36,7 +36,7 @@ Future<void> main() async {
   runApp(QuotaPulseApp(source: FfiPulseSource(), settings: settings, seed: seed));
 }
 
-class QuotaPulseApp extends StatelessWidget {
+class QuotaPulseApp extends StatefulWidget {
   const QuotaPulseApp({
     super.key,
     required this.source,
@@ -49,12 +49,19 @@ class QuotaPulseApp extends StatelessWidget {
   final Color seed;
 
   @override
+  State<QuotaPulseApp> createState() => _QuotaPulseAppState();
+}
+
+class _QuotaPulseAppState extends State<QuotaPulseApp> {
+  late ThemeMode _themeMode = widget.settings.themeMode.toThemeMode();
+
+  @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: buildAppTheme(seed: seed, brightness: Brightness.light),
-      darkTheme: buildAppTheme(seed: seed, brightness: Brightness.dark),
-      themeMode: ThemeMode.system, // 跟随系统深浅色
+      theme: buildAppTheme(seed: widget.seed, brightness: Brightness.light),
+      darkTheme: buildAppTheme(seed: widget.seed, brightness: Brightness.dark),
+      themeMode: _themeMode, // 可设置;默认跟随系统
       builder: (context, child) => MediaQuery(
         data: MediaQuery.of(context).copyWith(
           textScaler: MediaQuery.textScalerOf(context)
@@ -62,7 +69,11 @@ class QuotaPulseApp extends StatelessWidget {
         ),
         child: child!,
       ),
-      home: Shell(source: source, initialSettings: settings),
+      home: Shell(
+        source: widget.source,
+        initialSettings: widget.settings,
+        onThemeModeChanged: (m) => setState(() => _themeMode = m),
+      ),
     );
   }
 }
@@ -70,10 +81,16 @@ class QuotaPulseApp extends StatelessWidget {
 enum _View { list, settings }
 
 class Shell extends StatefulWidget {
-  const Shell({super.key, required this.source, required this.initialSettings});
+  const Shell({
+    super.key,
+    required this.source,
+    required this.initialSettings,
+    required this.onThemeModeChanged,
+  });
 
   final PulseSource source;
   final Settings initialSettings;
+  final void Function(ThemeMode) onThemeModeChanged;
 
   @override
   State<Shell> createState() => _ShellState();
@@ -195,15 +212,20 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
   }
 
   void _onPulse() {
-    // Windows:托盘 tooltip,按设置渲染(默认钉住账户)
-    trayManager.setToolTip(renderTrayText(_controller?.pulses ?? const [], _settings.tray));
+    // Windows:托盘 tooltip 显示尽量全的多行汇总(悬停延迟由系统控制,无法调)
+    trayManager.setToolTip(renderTrayTooltip(_controller?.pulses ?? const []));
     if (mounted) setState(() {});
   }
 
   Future<void> _saveSettings(Settings s) async {
+    // 仅当实例配置(toConfigJson)变化才重启核心,避免布局/主题/托盘改动触发全局刷新。
+    final coreChanged = _settings.toConfigJson() != s.toConfigJson();
     await SettingsStore.save(s);
     setState(() => _settings = s);
-    _startCore(s);
+    widget.onThemeModeChanged(s.themeMode.toThemeMode());
+    if (coreChanged) {
+      _startCore(s);
+    }
     setState(() => _view = _View.list);
   }
 

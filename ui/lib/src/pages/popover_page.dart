@@ -64,37 +64,13 @@ class PopoverPage extends StatelessWidget {
     return peak;
   }
 
-  // ---- 标题:名称 + 醒目峰值色块 ----
+  // ---- 标题 ----
   Widget _header(BuildContext context) {
     final theme = Theme.of(context);
-    final peak = controller.peakUtilization;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 12, 12, 10),
-      child: Row(
-        children: [
-          Text('用量脉搏', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-          const Spacer(),
-          if (peak != null) _peakChip(context, '峰值 ${fmtPct(peak)}', peak),
-        ],
-      ),
-    );
-  }
-
-  Widget _peakChip(BuildContext context, String text, double util) {
-    final c = meterColor(util);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: c.withValues(alpha: 0.16),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Text(
-        text,
-        style: Theme.of(context).textTheme.labelMedium?.copyWith(
-              color: c,
-              fontWeight: FontWeight.w700,
-            ),
-      ),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+      child: Text('用量脉搏',
+          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
     );
   }
 

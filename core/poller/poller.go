@@ -134,16 +134,10 @@ func (p *Poller) pollOnce(ctx context.Context, b binding, opt provider.FetchOpti
 
 			pulse, err := b.prov.FetchUsage(cctx, acc, opt)
 			if err != nil {
-				pulse = model.AccountPulse{
-					AccountID: acc.ID,
-					Name:      acc.Name,
-					Platform:  acc.Platform,
-					Provider:  b.prov.Type(),
-					Status:    model.StatusError,
-					Error:     err.Error(),
-				}
+				// 拉取失败:保留上一次成功的数据,不覆盖、不展示错误。
+				return
 			}
-			pulse.Instance = b.instance // 统一盖章(成功/失败两路都经过这里)
+			pulse.Instance = b.instance
 			if pulse.UpdatedAt.IsZero() {
 				pulse.UpdatedAt = time.Now()
 			}

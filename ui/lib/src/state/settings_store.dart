@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/material.dart' show ThemeMode;
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 一个 sub2api 实例(一个后台 + 一份鉴权)。
@@ -31,6 +32,17 @@ class Sub2apiInstance {
 
 /// 多实例列表布局。
 enum ListLayout { grouped, tabs }
+
+/// 主题模式(可设置;默认跟随系统)。
+enum ThemeChoice { system, light, dark }
+
+extension ThemeChoiceX on ThemeChoice {
+  ThemeMode toThemeMode() => switch (this) {
+        ThemeChoice.system => ThemeMode.system,
+        ThemeChoice.light => ThemeMode.light,
+        ThemeChoice.dark => ThemeMode.dark,
+      };
+}
 
 /// 托盘显示内容模式。
 enum TrayMode { pinnedAccount, globalPeak, countPeak, custom }
@@ -77,11 +89,13 @@ class Settings {
   final List<Sub2apiInstance> instances;
   final ListLayout layout;
   final TraySettings tray;
+  final ThemeChoice themeMode;
 
   const Settings({
     this.instances = const [],
     this.layout = ListLayout.grouped,
     this.tray = const TraySettings(),
+    this.themeMode = ThemeChoice.system,
   });
 
   bool get configured => instances.any((i) => i.configured);
@@ -90,11 +104,13 @@ class Settings {
     List<Sub2apiInstance>? instances,
     ListLayout? layout,
     TraySettings? tray,
+    ThemeChoice? themeMode,
   }) =>
       Settings(
         instances: instances ?? this.instances,
         layout: layout ?? this.layout,
         tray: tray ?? this.tray,
+        themeMode: themeMode ?? this.themeMode,
       );
 
   /// 构造核心配置 JSON;实例名唯一化(与核心 facade 的去重一致,避免 key 串号)。
@@ -130,6 +146,7 @@ class Settings {
         'instances': instances.map((e) => e.toJson()).toList(),
         'layout': layout.name,
         'tray': tray.toJson(),
+        'theme_mode': themeMode.name,
       };
 
   factory Settings.fromJson(Map<String, dynamic> j) => Settings(
@@ -143,6 +160,10 @@ class Settings {
         tray: j['tray'] != null
             ? TraySettings.fromJson(j['tray'] as Map<String, dynamic>)
             : const TraySettings(),
+        themeMode: ThemeChoice.values.firstWhere(
+          (t) => t.name == j['theme_mode'],
+          orElse: () => ThemeChoice.system,
+        ),
       );
 }
 
