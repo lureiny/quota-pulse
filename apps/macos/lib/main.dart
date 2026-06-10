@@ -202,10 +202,14 @@ class _ShellState extends State<Shell>
 
   Future<void> _showPopover() async {
     await _positionUnderTray();
+    // 关键:显示前先把动画归零(内容缩到起始态),否则窗口会先以上次的满屏态出现、
+    // forward 再把它缩回 0.92 又放大 → 看着像"弹两次"。再等一帧确保以起始态画好后再显示。
+    _popAnim.value = 0;
+    await WidgetsBinding.instance.endOfFrame;
     await windowManager.show();
     await windowManager.focus();
     _source.setForeground(true);
-    _popAnim.forward(from: 0); // 从菜单栏"放大"出现
+    _popAnim.forward(); // 从 0 平滑放大到 1
   }
 
   /// 把弹层贴到菜单栏图标正下方、水平居中(图标落在弹层上沿中点);
@@ -277,23 +281,26 @@ class _ShellState extends State<Shell>
     }
   }
 
-  // 把整条文本接成环(尾部留空隙),取当前位置起 _tickerWindow 个字符显示。
+  // 始终输出固定 _tickerWindow 个字符(窗口宽不随内容变);从当前位置起取一段环形文本。
   void _renderTicker() {
-    final runes = _tickerRunes;
-    if (runes.length <= _tickerWindow) {
-      trayManager.setTitle(String.fromCharCodes(runes));
+    if (_tickerRunes.isEmpty) {
+      trayManager.setTitle('');
       return;
     }
-    final loop = [...runes, ..._tickerGap.runes];
+    var loop = [..._tickerRunes, ..._tickerGap.runes];
+    // 一圈比窗口还短 → 用空格补齐,避免同一内容在窗口里立刻重复出现。
+    if (loop.length < _tickerWindow) {
+      loop = [...loop, ...List<int>.filled(_tickerWindow - loop.length, 0x20)];
+    }
     final n = loop.length;
     final out = List<int>.generate(_tickerWindow, (k) => loop[(_tickerPos + k) % n]);
     trayManager.setTitle(String.fromCharCodes(out));
   }
 
-  // 「全部账户」且放不下 → 每 350ms 前移一格循环滚动;否则停表静态显示。
+  // 「全部账户」且放不下 → 高频小步前移(更丝滑);否则停表、固定宽静态显示。
   void _syncTicker(bool active) {
     if (active && _tickerTimer == null) {
-      _tickerTimer = Timer.periodic(const Duration(milliseconds: 350), (_) {
+      _tickerTimer = Timer.periodic(const Duration(milliseconds: 120), (_) {
         _tickerPos++;
         _renderTicker();
       });
@@ -301,6 +308,7 @@ class _ShellState extends State<Shell>
       _tickerTimer!.cancel();
       _tickerTimer = null;
       _tickerPos = 0;
+      _renderTicker(); // 停下时也按固定宽渲染一次
     }
   }
 
