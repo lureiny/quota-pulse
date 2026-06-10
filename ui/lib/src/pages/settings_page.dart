@@ -121,7 +121,7 @@ class _SettingsPageState extends State<SettingsPage> {
     return ListView(
       padding: const EdgeInsets.all(14),
       children: [
-        Text('sub2api 实例', style: theme.textTheme.titleSmall),
+        Text('sub2api 实例', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
         for (var i = 0; i < _drafts.length; i++) _instanceCard(i),
         Align(
@@ -134,7 +134,7 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         const Divider(height: 24),
 
-        Text('列表布局', style: theme.textTheme.titleSmall),
+        Text('列表布局', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
         SegmentedButton<ListLayout>(
           showSelectedIcon: false,
@@ -147,7 +147,7 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         const Divider(height: 24),
 
-        Text('主题', style: theme.textTheme.titleSmall),
+        Text('主题', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
         SegmentedButton<ThemeChoice>(
           showSelectedIcon: false,
@@ -164,7 +164,7 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         const Divider(height: 24),
 
-        Text('托盘悬停内容', style: theme.textTheme.titleSmall),
+        Text('托盘悬停内容', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
         _boxed(
           DropdownButton<TrayMode>(
@@ -229,6 +229,16 @@ class _SettingsPageState extends State<SettingsPage> {
             FilledButton(onPressed: _save, child: const Text('保存并连接')),
           ],
         ),
+        const SizedBox(height: 14),
+        Center(
+          // MiSans 许可要求「在软件中特别注明使用了 MiSans 字体」。
+          child: Text(
+            '界面字体 MiSans · 版权归小米所有',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.55),
+            ),
+          ),
+        ),
       ],
     );
   }
@@ -251,7 +261,9 @@ class _SettingsPageState extends State<SettingsPage> {
                 child: TextField(
                   controller: d.name,
                   decoration: _dec('实例名(如 主力 / 备用)'),
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  // 不设 fontWeight:Windows 雅黑只有 Regular/Bold,w500/w600 会被
+                  // 就近映射成 Bold,导致这一项看起来「莫名加粗」而其它字段正常。
+                  style: const TextStyle(fontSize: 13),
                 ),
               ),
               if (_drafts.length > 1)

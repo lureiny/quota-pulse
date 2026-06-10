@@ -35,6 +35,13 @@ git tag v0.1.0 && git push origin v0.1.0
 
 > 产物未做付费签名/公证:macOS 首次「右键→打开」,Windows 首次 SmartScreen「仍要运行」。
 
+## 字体
+
+界面统一打包内嵌 [MiSans](https://hyperos.mi.com/font/download)(小米,免费商用),
+以保证 Windows / macOS 字重渲染一致 —— 系统中文字体雅黑缺 Medium/Semibold,
+会把 `w500/w600` 就近吸附成 Regular/Bold 造成字重忽粗忽细。
+字体版权归小米所有,许可见 [`ui/lib/fonts/MiSans-LICENSE.txt`](ui/lib/fonts/MiSans-LICENSE.txt)。
+
 ## 状态
 
 详见 [DESIGN.md §9 里程碑](DESIGN.md)。M1(macOS)代码完成并可打包;M3(Windows)代码完成,待实机/CI 终验。

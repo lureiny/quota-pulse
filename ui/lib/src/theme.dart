@@ -25,7 +25,10 @@ ThemeData buildAppTheme({required Color seed, required Brightness brightness}) {
     colorScheme: scheme,
     // 钉死密度,不随平台变(否则桌面各平台默认间距不同)
     visualDensity: VisualDensity.standard,
-    // 不设 fontFamily → 用系统默认字体(macOS=SF / Windows=雅黑)
+    // 打包的 MiSans:雅黑缺 Medium/Semibold,w500/w600 会被就近吸附成 Regular/Bold,
+    // 导致 Windows 上字重忽粗忽细;自带字体让 Win/macOS 渲染一致。
+    // 字体由各 app 的 pubspec 以 family: MiSans 声明(文件在 ui/lib/fonts/)。
+    fontFamily: 'MiSans',
     scrollbarTheme: const ScrollbarThemeData(
       thickness: WidgetStatePropertyAll<double>(6.0),
       radius: Radius.circular(3),

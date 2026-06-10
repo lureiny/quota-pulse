@@ -6,8 +6,9 @@ import '../state/pulse_controller.dart';
 import '../state/settings_store.dart';
 import '../widgets/account_tile.dart';
 
-/// PopoverPage:标题(含醒目峰值)+ 账户列表(按实例分组 / 标签页)+ 底部操作条。
-class PopoverPage extends StatelessWidget {
+/// PopoverPage:账户列表(按实例分组 / 标签页)+ 底部操作条。
+/// 分组模式下每个分组可点击折叠/展开。
+class PopoverPage extends StatefulWidget {
   const PopoverPage({
     super.key,
     required this.controller,
@@ -22,15 +23,25 @@ class PopoverPage extends StatelessWidget {
   final VoidCallback onSettings;
 
   @override
+  State<PopoverPage> createState() => _PopoverPageState();
+}
+
+class _PopoverPageState extends State<PopoverPage> {
+  // 已折叠的实例名集合(分组模式)。默认全部展开。
+  final Set<String> _collapsed = {};
+
+  void _toggle(String instance) => setState(() {
+        if (!_collapsed.remove(instance)) _collapsed.add(instance);
+      });
+
+  @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: controller,
+      animation: widget.controller,
       builder: (context, _) {
-        final groups = _groupByInstance(controller.pulses);
+        final groups = _groupByInstance(widget.controller.pulses);
         return Column(
           children: [
-            _header(context),
-            const Divider(height: 1),
             Expanded(child: _body(context, groups)),
             const Divider(height: 1),
             _footer(context),
@@ -64,25 +75,15 @@ class PopoverPage extends StatelessWidget {
     return peak;
   }
 
-  // ---- 标题 ----
-  Widget _header(BuildContext context) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
-      child: Text('用量脉搏',
-          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-    );
-  }
-
   Widget _body(BuildContext context, Map<String, List<AccountPulse>> groups) {
-    final err = controller.error;
-    if (err != null && controller.pulses.isEmpty) {
+    final err = widget.controller.error;
+    if (err != null && widget.controller.pulses.isEmpty) {
       return _state(context, '读取失败\n$err', color: statusColor(PulseStatus.error));
     }
-    if (controller.pulses.isEmpty) {
+    if (widget.controller.pulses.isEmpty) {
       return _state(context, '加载中…');
     }
-    if (layout == ListLayout.tabs && groups.length > 1) {
+    if (widget.layout == ListLayout.tabs && groups.length > 1) {
       return _tabbed(context, groups);
     }
     return _grouped(context, groups);
@@ -91,13 +92,23 @@ class PopoverPage extends StatelessWidget {
   Widget _grouped(BuildContext context, Map<String, List<AccountPulse>> groups) {
     final children = <Widget>[];
     groups.forEach((instance, list) {
-      children.add(_groupHeader(context, instance, _groupPeak(list),
-          () => controller.refreshInstance(instance)));
-      children.addAll(list.map(
-        (p) => AccountTile(p, onRefresh: () => controller.refreshAccount(p.key)),
+      final collapsed = _collapsed.contains(instance);
+      children.add(_groupHeader(
+        context,
+        instance,
+        _groupPeak(list),
+        () => widget.controller.refreshInstance(instance),
+        collapsible: true,
+        collapsed: collapsed,
+        onToggle: () => _toggle(instance),
       ));
+      if (!collapsed) {
+        children.addAll(list.map(
+          (p) => AccountTile(p, onRefresh: () => widget.controller.refreshAccount(p.key)),
+        ));
+      }
     });
-    return ListView(padding: const EdgeInsets.only(top: 4, bottom: 8), children: children);
+    return ListView(padding: const EdgeInsets.only(top: 6, bottom: 8), children: children);
   }
 
   Widget _tabbed(BuildContext context, Map<String, List<AccountPulse>> groups) {
@@ -122,11 +133,12 @@ class PopoverPage extends StatelessWidget {
                   ListView(
                     padding: const EdgeInsets.only(top: 4, bottom: 8),
                     children: [
+                      // 标签页里 Tab 已显示名字,这里不再重复;也不提供折叠。
                       _groupHeader(context, e.key, _groupPeak(e.value),
-                          () => controller.refreshInstance(e.key),
+                          () => widget.controller.refreshInstance(e.key),
                           showName: false),
                       ...e.value.map((p) => AccountTile(p,
-                          onRefresh: () => controller.refreshAccount(p.key))),
+                          onRefresh: () => widget.controller.refreshAccount(p.key))),
                     ],
                   ),
               ],
@@ -143,18 +155,33 @@ class PopoverPage extends StatelessWidget {
     double? peak,
     VoidCallback onRefresh, {
     bool showName = true, // 标签页里 Tab 已显示名字,这里不再重复
+    bool collapsible = false, // 分组模式可折叠
+    bool collapsed = false,
+    VoidCallback? onToggle,
   }) {
     final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 8, 8, 4),
+    final row = Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 8, 4),
       child: Row(
         children: [
+          if (collapsible) ...[
+            AnimatedRotation(
+              duration: const Duration(milliseconds: 150),
+              turns: collapsed ? -0.25 : 0, // 展开 ▼ / 折叠 ▶
+              child: Icon(Icons.expand_more,
+                  size: 18, color: theme.colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(width: 2),
+          ],
           if (showName)
-            Text(instance.toUpperCase(),
-                style: theme.textTheme.labelMedium?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                  letterSpacing: 0.5,
-                )),
+            Flexible(
+              child: Text(instance.toUpperCase(),
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    letterSpacing: 0.5,
+                  )),
+            ),
           const Spacer(),
           if (peak != null)
             Text(fmtPct(peak),
@@ -170,18 +197,27 @@ class PopoverPage extends StatelessWidget {
         ],
       ),
     );
+    if (!collapsible) return row;
+    // 整行可点折叠;刷新按钮在手势竞技场里仍优先响应自己的点击。
+    return InkWell(onTap: onToggle, child: row);
   }
 
   Widget _footer(BuildContext context) {
-    final n = controller.pulses.length;
+    final n = widget.controller.pulses.length;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: Row(
         children: [
           Text('$n 个账户', style: Theme.of(context).textTheme.bodySmall),
           const Spacer(),
-          IconButton(tooltip: '刷新', icon: const Icon(Icons.refresh, size: 18), onPressed: onRefresh),
-          IconButton(tooltip: '设置', icon: const Icon(Icons.settings, size: 18), onPressed: onSettings),
+          IconButton(
+              tooltip: '刷新',
+              icon: const Icon(Icons.refresh, size: 18),
+              onPressed: widget.onRefresh),
+          IconButton(
+              tooltip: '设置',
+              icon: const Icon(Icons.settings, size: 18),
+              onPressed: widget.onSettings),
         ],
       ),
     );

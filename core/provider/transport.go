@@ -47,10 +47,10 @@ type Client struct {
 	HTTP    *http.Client
 
 	mu    sync.Mutex
-	etags map[string]etagEntry // path -> 上次 etag + data
+	cache map[string]cacheEntry // path -> 上次 etag + data(供 304 复用)
 }
 
-type etagEntry struct {
+type cacheEntry struct {
 	etag string
 	data json.RawMessage
 }
@@ -68,66 +68,98 @@ func NewClient(baseURL string, auth AuthScheme) *Client {
 				IdleConnTimeout:     90 * time.Second,
 			},
 		},
-		etags: make(map[string]etagEntry),
+		cache: make(map[string]cacheEntry),
 	}
 }
 
 // GetData 发起 GET、解开信封、返回 data 原始字节。
-// useETag=true 时带 If-None-Match;命中 304 直接返回上次缓存的 data(几乎零流量)。
+//
+// 304 处理(无论 useETag 与否——有的服务端/中间层即便没收到条件头也会回 304):
+//   - 命中 304 且本地有缓存 → 直接返回上次的 data(几乎零流量);
+//   - 命中 304 但本地无缓存(冷启动遇到中间层缓存)→ 去条件头、加 no-cache
+//     强制回源重试一次,避免「304 → 空响应 → 报错 → 页面加载不出来」。
 func (c *Client) GetData(ctx context.Context, path string, useETag bool) (json.RawMessage, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	data, status, err := c.doOnce(ctx, path, useETag, false)
 	if err != nil {
 		return nil, err
+	}
+	if status == http.StatusNotModified {
+		c.mu.Lock()
+		prev, ok := c.cache[path]
+		c.mu.Unlock()
+		if ok && len(prev.data) > 0 {
+			return prev.data, nil
+		}
+		// 冷 304:无缓存可复用 → 强制回源一次(绕过中间层缓存)。
+		data, status, err = c.doOnce(ctx, path, false, true)
+		if err != nil {
+			return nil, err
+		}
+		if status == http.StatusNotModified {
+			return nil, fmt.Errorf("GET %s -> 304 但无可用缓存", path)
+		}
+	}
+	return data, nil
+}
+
+// doOnce 发一次请求并解信封。成功返回 (data, 状态码, nil);
+// 命中 304 返回 (nil, 304, nil) 交由上层决定;其余错误照常返回。
+//
+//	conditional=true  且有上次 etag → 带 If-None-Match;
+//	forceFresh=true                 → 带 Cache-Control: no-cache 强制回源。
+func (c *Client) doOnce(ctx context.Context, path string, conditional, forceFresh bool) (json.RawMessage, int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	if err != nil {
+		return nil, 0, err
 	}
 	c.Auth.apply(req)
 	req.Header.Set("Accept", "application/json")
 
-	if useETag {
+	if conditional {
 		c.mu.Lock()
-		prev, ok := c.etags[path]
+		prev, ok := c.cache[path]
 		c.mu.Unlock()
 		if ok && prev.etag != "" {
 			req.Header.Set("If-None-Match", prev.etag)
 		}
 	}
+	if forceFresh {
+		req.Header.Set("Cache-Control", "no-cache")
+		req.Header.Set("Pragma", "no-cache")
+	}
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
 
-	if useETag && resp.StatusCode == http.StatusNotModified {
-		c.mu.Lock()
-		prev := c.etags[path]
-		c.mu.Unlock()
-		return prev.data, nil
+	if resp.StatusCode == http.StatusNotModified {
+		return nil, resp.StatusCode, nil
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
-		return nil, err
+		return nil, resp.StatusCode, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("GET %s -> %d: %s", path, resp.StatusCode, snippet(body))
+		return nil, resp.StatusCode, fmt.Errorf("GET %s -> %d: %s", path, resp.StatusCode, snippet(body))
 	}
 
 	var env Envelope
 	if err := json.Unmarshal(body, &env); err != nil {
-		return nil, fmt.Errorf("decode envelope: %w", err)
+		return nil, resp.StatusCode, fmt.Errorf("decode envelope: %w", err)
 	}
 	if env.Code != 0 {
-		return nil, fmt.Errorf("api error code=%d: %s", env.Code, env.Message)
+		return nil, resp.StatusCode, fmt.Errorf("api error code=%d: %s", env.Code, env.Message)
 	}
 
-	if useETag {
-		if et := resp.Header.Get("ETag"); et != "" {
-			c.mu.Lock()
-			c.etags[path] = etagEntry{etag: et, data: env.Data}
-			c.mu.Unlock()
-		}
-	}
-	return env.Data, nil
+	// 缓存 data(+ etag,如有)供后续 304 复用。对所有路径都缓存,
+	// 这样 useETag=false 的用量接口遇到 304 也能拿回上次的值。
+	c.mu.Lock()
+	c.cache[path] = cacheEntry{etag: resp.Header.Get("ETag"), data: env.Data}
+	c.mu.Unlock()
+	return env.Data, resp.StatusCode, nil
 }
 
 func snippet(b []byte) string {

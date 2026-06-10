@@ -1,0 +1,24 @@
+MiSans 字体 — 版权与授权说明
+================================
+
+本目录中的 MiSans-Regular.ttf / MiSans-Medium.ttf / MiSans-Bold.ttf 为
+小米公司发布的 MiSans 字体(v2.000,北京小米移动软件有限公司 / 汉仪字库制作)。
+
+Copyright (c) 2020-2021 Beijing Xiaomi Mobile Software Co., Ltd.
+All Rights Reserved.
+
+quota-pulse 依据《MiSans 字体知识产权许可协议》将其作为嵌入式 UI 字体打包使用。
+该协议授予「免费商用」的许可,核心约束如下(以官方协议全文为准):
+
+  1. 需在软件中特别注明使用了 MiSans 字体(本文件 + 应用内「设置」页底部署名即为此);
+  2. 不得对字体进行改编或二次开发,不得单独更改其外观;
+  3. 不得单独将字体文件对外出售、出租、再许可、出借或再分发
+     (打进 App 作为嵌入字体不在此限);
+  4. 需在字体副本中保留本版权声明与许可协议;
+  5. 授权为「可撤销」性质,小米保留撤销权利。
+
+官方协议与下载:
+  https://hyperos.mi.com/font/download
+
+字体文件来源(第三方打包仓库,仅打包小米原始 TTF,代码部分 MIT):
+  https://github.com/boyan01/mi_sans_font

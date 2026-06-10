@@ -35,7 +35,7 @@ class MeterBar extends StatelessWidget {
                 fmtPct(u),
                 style: TextStyle(
                   fontSize: 12,
-                  fontWeight: FontWeight.w600,
+                  fontWeight: FontWeight.w700,
                   color: meterColor(u),
                 ),
               ),

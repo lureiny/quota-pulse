@@ -21,5 +21,16 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  # MiSans 字体文件随共享包发布(ui/lib/fonts/),这里通过 packages/ 前缀引用并打包。
+  # 雅黑缺 Medium/Semibold 字重,自带字体保证 Win/macOS 字重渲染一致。
+  fonts:
+    - family: MiSans
+      fonts:
+        - asset: packages/quota_pulse_ui/fonts/MiSans-Regular.ttf
+          weight: 400
+        - asset: packages/quota_pulse_ui/fonts/MiSans-Medium.ttf
+          weight: 500
+        - asset: packages/quota_pulse_ui/fonts/MiSans-Bold.ttf
+          weight: 700
   assets:
     - assets/tray_icon.png
