@@ -15,7 +15,7 @@ class GlassCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(12),
       child: Container(
         decoration: BoxDecoration(
-          color: scheme.surface.withValues(alpha: 0.62), // 半透明,透出毛玻璃
+          color: scheme.surface.withValues(alpha: 0.45), // 更透:让背后毛玻璃更明显
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: scheme.outlineVariant.withValues(alpha: 0.4),
