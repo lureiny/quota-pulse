@@ -1,16 +1,16 @@
-import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_acrylic/flutter_acrylic.dart';
 import 'package:screen_retriever/screen_retriever.dart';
-import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
 // 共享层:模型 / UI / 状态 / 桥接全部来自 ui 包
 import 'package:quota_pulse_ui/quota_pulse_ui.dart';
 
 import 'autostart.dart'; // 开机自启动(macOS:LaunchAgent)
+import 'menu_bar.dart'; // 自定义菜单栏状态项(替代 tray_manager,支持丝滑滚动)
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -30,7 +30,7 @@ Future<void> main() async {
     await windowManager.setBackgroundColor(Colors.transparent);
     await windowManager.setSkipTaskbar(true);
     await windowManager.setAlwaysOnTop(true);
-    await windowManager.hide(); // 菜单栏应用:启动即隐藏,点托盘才弹出
+    await windowManager.hide(); // 菜单栏应用:启动即隐藏,点图标才弹出
   });
 
   // 毛玻璃:macOS 用 popover 弹层材质(降级可改 WindowEffect.solid)
@@ -103,34 +103,29 @@ class Shell extends StatefulWidget {
   State<Shell> createState() => _ShellState();
 }
 
-class _ShellState extends State<Shell> with TrayListener, WindowListener {
+class _ShellState extends State<Shell> with WindowListener {
   late Settings _settings = widget.initialSettings;
   PulseController? _controller;
   _View _view = _View.list;
   String? _error;
   bool _autostartEnabled = false; // 开机自启动:真值以 OS 为准,启动时查询
 
-  // 「全部账户」模式:把所有账户拼成一行,在菜单栏里循环横向滚动(类似流水屏)。
-  Timer? _tickerTimer;
-  List<int> _tickerRunes = const []; // 整条文本的码点
-  int _tickerPos = 0;
-  static const String _tickerGap = '      '; // 一圈结束到重新开始的空隙
-  // 窗口宽 / 步进间隔来自设置(macOS 专属、可在设置页实时调)。
-  int get _tickerWindow => _settings.tray.tickerWidth.clamp(8, 60).toInt();
-  int get _tickerMs => _settings.tray.tickerMs.clamp(20, 1000).toInt();
+  // 菜单栏滚动参数由设置映射(macOS 专属、可在设置页实时调):
+  //   速度 tickerMs(ms/字,20-1000)→ pps(点/秒);宽度 tickerWidth(字,8-40)→ 点。
+  double get _scrollPps => 8000.0 / _settings.tray.tickerMs.clamp(20, 1000);
+  double get _scrollWidth => _settings.tray.tickerWidth.clamp(8, 40) * 9.0;
 
   PulseSource get _source => widget.source;
 
   @override
   void initState() {
     super.initState();
-    trayManager.addListener(this);
     windowManager.addListener(this);
     Autostart.isEnabled().then((v) {
       if (mounted) setState(() => _autostartEnabled = v);
     });
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await _initTray();
+      await _initMenuBar();
       if (_settings.configured) {
         _startCore(_settings);
       } else {
@@ -142,28 +137,30 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
 
   @override
   void dispose() {
-    trayManager.removeListener(this);
     windowManager.removeListener(this);
-    _tickerTimer?.cancel();
     _controller?.dispose();
     super.dispose();
   }
 
-  // ---------- 托盘 ----------
+  // ---------- 菜单栏(自定义状态项) ----------
 
-  Future<void> _initTray() async {
-    await trayManager.setIcon('assets/tray_icon.png', isTemplate: true);
-    await trayManager.setTitle('用量');
-    await trayManager.setContextMenu(Menu(items: [
-      MenuItem(key: 'refresh', label: '刷新'),
-      MenuItem.separator(),
-      MenuItem(key: 'settings', label: '设置…'),
-      MenuItem(key: 'quit', label: '退出 quota-pulse'),
-    ]));
+  Future<void> _initMenuBar() async {
+    MacMenuBar.onClick = _toggle;
+    MacMenuBar.onMenu = _onMenu;
+    final icon = await rootBundle.load('assets/tray_icon.png');
+    await MacMenuBar.setup(
+      icon: icon.buffer.asUint8List(),
+      menu: [
+        {'key': 'refresh', 'label': '刷新'},
+        {'separator': true},
+        {'key': 'settings', 'label': '设置…'},
+        {'key': 'quit', 'label': '退出 quota-pulse'},
+      ],
+    );
+    _updateTray();
   }
 
-  @override
-  void onTrayIconMouseDown() async {
+  Future<void> _toggle() async {
     if (await windowManager.isVisible()) {
       await _hidePopover();
     } else {
@@ -171,14 +168,8 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
     }
   }
 
-  @override
-  void onTrayIconRightMouseDown() {
-    trayManager.popUpContextMenu();
-  }
-
-  @override
-  void onTrayMenuItemClick(MenuItem menuItem) async {
-    switch (menuItem.key) {
+  Future<void> _onMenu(String key) async {
+    switch (key) {
       case 'refresh':
         _controller?.refreshNow();
         break;
@@ -195,30 +186,27 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
   // ---------- 窗口(弹层) ----------
 
   Future<void> _showPopover() async {
-    // 不做入场动画:窗口的毛玻璃材质是 OS 级的,会整块先出现,内容再缩放只会看着像
-    // "先出一个框再动",反而别扭;直接定位后显示,干净也更快。
     await _positionUnderTray();
     await windowManager.show();
     await windowManager.focus();
     _source.setForeground(true);
   }
 
-  /// 把弹层贴到菜单栏图标正下方、水平居中(图标落在弹层上沿中点);
-  /// 拿不到图标位置则回退到右上角。窗口宽固定 340、主屏宽缓存,尽量少往返、开得快。
+  /// 贴到菜单栏图标正下方、水平居中(图标落在弹层上沿中点);拿不到位置则回退右上角。
   Future<void> _positionUnderTray() async {
     try {
-      final icon = await trayManager.getBounds();
+      final icon = await MacMenuBar.getFrame();
       if (icon == null) {
         await windowManager.setAlignment(Alignment.topRight);
         return;
       }
-      const w = 340.0; // = WindowOptions.size.width,省去每次 getSize 往返
+      const w = 340.0; // = WindowOptions.size.width
       var x = icon.center.dx - w / 2;
-      final y = icon.bottom + 6; // 菜单栏下方留一点缝
+      final y = icon.bottom + 6;
       final sw = await _screenWidth();
       if (sw != null) {
         final maxX = sw - w - 6;
-        x = x.clamp(6.0, maxX > 6 ? maxX : 6.0).toDouble(); // 别越出屏幕右沿
+        x = x.clamp(6.0, maxX > 6 ? maxX : 6.0).toDouble();
       }
       await windowManager.setPosition(Offset(x, y));
     } catch (_) {
@@ -242,8 +230,7 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
 
   @override
   void onWindowBlur() {
-    // 点击弹层外即收起(popover 行为)
-    _hidePopover();
+    _hidePopover(); // 点击弹层外即收起(popover 行为)
   }
 
   // ---------- 核心生命周期 ----------
@@ -267,50 +254,20 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
     if (mounted) setState(() {});
   }
 
+  // 菜单栏内容:全部账户 → 拼一行交给原生做流水屏滚动;否则静态显示。
+  // 滚不滚由原生按"放不放得下"决定;速度/宽度来自设置(实时)。
   void _updateTray() {
-    // macOS 菜单栏单行。「全部账户」→ 拼成一整行做流水屏滚动;否则按模式静态渲染。
     final pulses = _controller?.pulses ?? const <AccountPulse>[];
+    final String text;
+    final bool scroll;
     if (_settings.tray.mode == TrayMode.allAccounts && pulses.isNotEmpty) {
-      final full = sortedByAccount(pulses).map(renderTrayAccountLine).join('   ·   ');
-      _tickerRunes = full.runes.toList();
-      _renderTicker();
-      _syncTicker(_tickerRunes.length > _tickerWindow); // 放得下就不必滚
+      text = sortedByAccount(pulses).map(renderTrayAccountLine).join('   ·   ');
+      scroll = true;
     } else {
-      _syncTicker(false);
-      trayManager.setTitle(renderTrayText(pulses, _settings.tray));
+      text = renderTrayText(pulses, _settings.tray);
+      scroll = false;
     }
-  }
-
-  // 始终输出固定 _tickerWindow 个字符(窗口宽不随内容变);从当前位置起取一段环形文本。
-  void _renderTicker() {
-    if (_tickerRunes.isEmpty) {
-      trayManager.setTitle('');
-      return;
-    }
-    var loop = [..._tickerRunes, ..._tickerGap.runes];
-    // 一圈比窗口还短 → 用空格补齐,避免同一内容在窗口里立刻重复出现。
-    if (loop.length < _tickerWindow) {
-      loop = [...loop, ...List<int>.filled(_tickerWindow - loop.length, 0x20)];
-    }
-    final n = loop.length;
-    final out = List<int>.generate(_tickerWindow, (k) => loop[(_tickerPos + k) % n]);
-    trayManager.setTitle(String.fromCharCodes(out));
-  }
-
-  // 「全部账户」且放不下 → 高频小步前移(更丝滑);否则停表、固定宽静态显示。
-  void _syncTicker(bool active) {
-    if (active && _tickerTimer == null) {
-      // 间隔越小越顺、但滚得也越快(一步=一个字符,二者绑死)。间隔由设置实时控制。
-      _tickerTimer = Timer.periodic(Duration(milliseconds: _tickerMs), (_) {
-        _tickerPos++;
-        _renderTicker();
-      });
-    } else if (!active && _tickerTimer != null) {
-      _tickerTimer!.cancel();
-      _tickerTimer = null;
-      _tickerPos = 0;
-      _renderTicker(); // 停下时也按固定宽渲染一次
-    }
+    MacMenuBar.setTicker(text, scroll: scroll, pps: _scrollPps, width: _scrollWidth);
   }
 
   void _onPulse() {
@@ -353,17 +310,14 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
   void _onTrayChanged(TraySettings tray) {
     setState(() => _settings = _settings.copyWith(tray: tray));
     SettingsStore.save(_settings);
-    // 滚动间隔/宽度可能变了 → 取消旧定时器,让 _updateTray 用新参数重建(实时预览)。
-    _tickerTimer?.cancel();
-    _tickerTimer = null;
-    _updateTray();
+    _updateTray(); // 即时把新文字/速度/宽度发给原生菜单栏
   }
 
   Future<void> _quit() async {
     try {
       _source.stop();
     } catch (_) {}
-    await trayManager.destroy();
+    await MacMenuBar.destroy();
     exit(0);
   }
 

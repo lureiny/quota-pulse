@@ -2,15 +2,278 @@ import Cocoa
 import FlutterMacOS
 
 // 替换 flutter create 生成的 macos/Runner/AppDelegate.swift。
-// 菜单栏(accessory)应用:隐藏窗口时不退出整个 App。
+//
+// 自管菜单栏状态项(不再用 tray_manager):固定宽 = 图标区 + 文字区,
+// 图标钉死在左、永不被挤动;右侧文字区裁剪后做像素级平滑横向滚动(流水屏)。
+// 与 Flutter 通过 MethodChannel "quota_pulse/menubar" 通信。
+
+// AppKit(左下原点)↔ Flutter(左上原点)坐标换算,与 window_manager 一致。
+extension NSRect {
+  var qpTopLeft: CGPoint {
+    let h = NSScreen.main?.frame.height ?? 0
+    return CGPoint(x: origin.x, y: h - origin.y - size.height)
+  }
+}
+
 @main
 class AppDelegate: FlutterAppDelegate {
+  private var menuBar: MenuBarController?
+
   override func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-    // 关键:窗口隐藏 ≠ 退出。退出走托盘菜单"退出"。
+    // 关键:窗口隐藏 ≠ 退出。退出走菜单栏右键"退出"。
     return false
   }
 
   override func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
     return true
   }
+
+  override func applicationDidFinishLaunching(_ notification: Notification) {
+    super.applicationDidFinishLaunching(notification)
+    setupMenuBar(retries: 10)
+  }
+
+  // FlutterViewController 一般在 awakeFromNib 已就绪;万一稍晚则短暂重试。
+  private func setupMenuBar(retries: Int) {
+    if let messenger = flutterMessenger() {
+      menuBar = MenuBarController(messenger: messenger)
+    } else if retries > 0 {
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+        self?.setupMenuBar(retries: retries - 1)
+      }
+    }
+  }
+
+  // 取主 FlutterViewController 的 binaryMessenger(窗口在 awakeFromNib 已创建)。
+  private func flutterMessenger() -> FlutterBinaryMessenger? {
+    for w in NSApp.windows {
+      if let c = w.contentViewController as? FlutterViewController {
+        return c.engine.binaryMessenger
+      }
+    }
+    return nil
+  }
+}
+
+// 菜单栏状态项控制器:固定长度;左键→通知 Flutter 弹层,右键→上下文菜单。
+class MenuBarController: NSObject {
+  private let channel: FlutterMethodChannel
+  private var statusItem: NSStatusItem?
+  private var view: MenuBarView?
+  private var menuItems: [[String: Any]] = []
+
+  init(messenger: FlutterBinaryMessenger) {
+    channel = FlutterMethodChannel(name: "quota_pulse/menubar", binaryMessenger: messenger)
+    super.init()
+    channel.setMethodCallHandler { [weak self] call, result in
+      self?.handle(call, result)
+    }
+  }
+
+  private func handle(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
+    let args = call.arguments as? [String: Any] ?? [:]
+    switch call.method {
+    case "setup": setup(args); result(nil)
+    case "setTicker": setTicker(args); result(nil)
+    case "getFrame": result(frameDict())
+    case "destroy": destroy(); result(nil)
+    default: result(FlutterMethodNotImplemented)
+    }
+  }
+
+  private func ensureItem() {
+    guard statusItem == nil else { return }
+    let item = NSStatusBar.system.statusItem(withLength: MenuBarView.iconArea + 150)
+    if let button = item.button {
+      let v = MenuBarView(frame: button.bounds)
+      v.autoresizingMask = [.width, .height]
+      v.onLeftClick = { [weak self] in self?.channel.invokeMethod("onClick", arguments: nil) }
+      v.onRightClick = { [weak self] in self?.showMenu() }
+      button.addSubview(v)
+      view = v
+    }
+    statusItem = item
+  }
+
+  private func setup(_ args: [String: Any]) {
+    ensureItem()
+    if let icon = args["icon"] as? FlutterStandardTypedData {
+      let img = NSImage(data: icon.data)
+      img?.isTemplate = true
+      view?.icon = img
+    }
+    menuItems = args["menu"] as? [[String: Any]] ?? []
+  }
+
+  private func setTicker(_ args: [String: Any]) {
+    ensureItem()
+    let text = args["text"] as? String ?? ""
+    let scroll = args["scroll"] as? Bool ?? false
+    let pps = CGFloat((args["pps"] as? NSNumber)?.doubleValue ?? 100)
+    let width = CGFloat((args["width"] as? NSNumber)?.doubleValue ?? 150)
+    statusItem?.length = MenuBarView.iconArea + width
+    view?.setContent(text, scroll: scroll, pps: pps, textWidth: width)
+  }
+
+  // 状态项按钮的屏幕坐标(左上原点),供 Flutter 给弹层定位。
+  private func frameDict() -> [String: Any]? {
+    guard let wf = statusItem?.button?.window?.frame else { return nil }
+    let tl = wf.qpTopLeft
+    return ["x": tl.x, "y": tl.y, "width": wf.size.width, "height": wf.size.height]
+  }
+
+  private func destroy() {
+    if let item = statusItem { NSStatusBar.system.removeStatusItem(item) }
+    statusItem = nil
+    view = nil
+  }
+
+  // 右键:临时挂菜单 → performClick 弹出 → 立刻摘掉(避免左键也弹菜单)。
+  private func showMenu() {
+    guard let item = statusItem else { return }
+    item.menu = buildMenu()
+    item.button?.performClick(nil)
+    item.menu = nil
+  }
+
+  private func buildMenu() -> NSMenu {
+    let menu = NSMenu()
+    for item in menuItems {
+      if (item["separator"] as? Bool) == true {
+        menu.addItem(.separator())
+        continue
+      }
+      let mi = NSMenuItem(
+        title: item["label"] as? String ?? "",
+        action: #selector(onMenuItem(_:)), keyEquivalent: "")
+      mi.target = self
+      mi.representedObject = item["key"]
+      menu.addItem(mi)
+    }
+    return menu
+  }
+
+  @objc private func onMenuItem(_ sender: NSMenuItem) {
+    if let key = sender.representedObject as? String {
+      channel.invokeMethod("onMenu", arguments: key)
+    }
+  }
+}
+
+// 自定义绘制 + 鼠标处理(参照 tray_manager 的 TrayIcon 子视图方式)。
+// 左侧固定图标(模板色随明暗适配)+ 右侧裁剪区内逐像素横向滚动文字。
+// 翻转坐标(左上原点)便于排版;滚动用 60fps 定时器推进偏移。
+class MenuBarView: NSView {
+  static let iconArea: CGFloat = 26
+  private let font = NSFont.systemFont(ofSize: 13)
+  private let gap: CGFloat = 44 // 一圈文字尾到头的空隙
+
+  var onLeftClick: (() -> Void)?
+  var onRightClick: (() -> Void)?
+  var icon: NSImage? { didSet { needsDisplay = true } }
+
+  private var text: String = ""
+  private var scrolling = false
+  private var pps: CGFloat = 100
+  private var textWidth: CGFloat = 150
+  private var contentWidth: CGFloat = 0
+  private var offset: CGFloat = 0
+  private var timer: Timer?
+
+  override var isFlipped: Bool { true }
+
+  // 每次数据轮询都会调用(文字常有微变,如倒计时)。已在滚动时只换文字、保留进度,
+  // 避免每轮跳回开头;速度/宽度变化即时生效(定时器闭包每帧读 self.pps)。
+  func setContent(_ s: String, scroll: Bool, pps: CGFloat, textWidth: CGFloat) {
+    self.pps = pps
+    self.textWidth = textWidth
+    self.text = s
+    contentWidth = (s as NSString).size(withAttributes: [.font: font]).width
+    let shouldScroll = scroll && contentWidth > textWidth
+    let wasScrolling = scrolling
+    scrolling = shouldScroll
+    if shouldScroll {
+      if !wasScrolling || timer == nil {
+        offset = 0
+        startTimer()
+      }
+      // 已在滚 → 保留 offset 与定时器,仅换文字
+    } else {
+      timer?.invalidate()
+      timer = nil
+      offset = 0
+    }
+    needsDisplay = true
+  }
+
+  private func startTimer() {
+    timer?.invalidate()
+    let t = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+      guard let self = self else { return }
+      self.offset += self.pps / 60.0
+      let loop = self.contentWidth + self.gap
+      if loop > 0, self.offset >= loop { self.offset -= loop }
+      self.needsDisplay = true
+    }
+    RunLoop.main.add(t, forMode: .common) // .common:菜单/拖动时也继续滚
+    timer = t
+  }
+
+  override func draw(_ dirtyRect: NSRect) {
+    let h = bounds.height
+    // 图标:模板图用 labelColor 着色(sourceAtop),自动适配明暗菜单栏。
+    if let icon = icon {
+      let r = NSRect(x: 4, y: (h - 18) / 2, width: 18, height: 18)
+      NSGraphicsContext.saveGraphicsState()
+      icon.draw(in: r)
+      if icon.isTemplate {
+        NSColor.labelColor.set()
+        NSGraphicsContext.current?.compositingOperation = .sourceAtop
+        NSBezierPath(rect: r).fill()
+      }
+      NSGraphicsContext.restoreGraphicsState()
+    }
+    // 文字区:裁剪后绘制,滚动时画多遍接成无缝循环。用 textWidth(不依赖 bounds 时序)。
+    let tx = MenuBarView.iconArea
+    let tw = textWidth
+    if tw <= 0 || text.isEmpty { return }
+    let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.labelColor]
+    let ns = text as NSString
+    let size = ns.size(withAttributes: attrs)
+    let ty = (h - size.height) / 2
+    NSGraphicsContext.saveGraphicsState()
+    NSBezierPath(rect: NSRect(x: tx, y: 0, width: tw, height: h)).addClip()
+    if scrolling {
+      let loop = contentWidth + gap
+      var x = tx - offset
+      while x < tx + tw {
+        ns.draw(at: NSPoint(x: x, y: ty), withAttributes: attrs)
+        x += loop
+      }
+    } else {
+      ns.draw(at: NSPoint(x: tx, y: ty), withAttributes: attrs)
+    }
+    NSGraphicsContext.restoreGraphicsState()
+  }
+
+  // 明暗切换时重绘(labelColor 重新解析)。
+  override func viewDidChangeEffectiveAppearance() {
+    needsDisplay = true
+  }
+
+  // ---- 鼠标:自己处理,不走 button.action ----
+  override func mouseDown(with event: NSEvent) {
+    (superview as? NSStatusBarButton)?.highlight(true)
+  }
+
+  override func mouseUp(with event: NSEvent) {
+    (superview as? NSStatusBarButton)?.highlight(false)
+    onLeftClick?()
+  }
+
+  override func rightMouseDown(with event: NSEvent) {
+    onRightClick?()
+  }
+
+  deinit { timer?.invalidate() }
 }
