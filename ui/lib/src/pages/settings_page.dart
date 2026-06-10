@@ -9,11 +9,13 @@ class SettingsPage extends StatefulWidget {
     super.key,
     required this.initial,
     required this.accounts, // 当前快照,供「钉住账户」下拉
-    required this.onSave,
+    required this.onSave, // 仅 sub2api 实例:保存并重连核心
     this.onCancel,
-    this.onThemeChanged, // 主题选中即时生效(不必保存)
+    this.onThemeChanged, // 以下都是改动即时生效(不必保存)
+    this.onLayoutChanged,
+    this.onTrayChanged,
     this.autostartEnabled = false, // 开机自启动当前状态(由壳查询 OS 得到)
-    this.onAutostartChanged, // 开关即时生效(不必保存)
+    this.onAutostartChanged,
   });
 
   final Settings initial;
@@ -21,6 +23,8 @@ class SettingsPage extends StatefulWidget {
   final void Function(Settings) onSave;
   final VoidCallback? onCancel;
   final void Function(ThemeChoice)? onThemeChanged;
+  final void Function(ListLayout)? onLayoutChanged;
+  final void Function(TraySettings)? onTrayChanged;
   final bool autostartEnabled;
   final void Function(bool)? onAutostartChanged;
 
@@ -100,17 +104,21 @@ class _SettingsPageState extends State<SettingsPage> {
         _drafts.removeAt(i);
       });
 
+  TraySettings _tray() => TraySettings(
+        mode: _trayMode,
+        pinnedKey: _pinnedKey,
+        template: _template.text.trim().isEmpty ? null : _template.text.trim(),
+      );
+
+  /// 托盘相关改动即时生效(不必保存)。
+  void _emitTray() => widget.onTrayChanged?.call(_tray());
+
   void _save() {
     final instances = _drafts.map((d) => d.toInstance()).toList();
-    final tray = TraySettings(
-      mode: _trayMode,
-      pinnedKey: _pinnedKey,
-      template: _template.text.trim().isEmpty ? null : _template.text.trim(),
-    );
     widget.onSave(Settings(
       instances: instances,
       layout: _layout,
-      tray: tray,
+      tray: _tray(),
       themeMode: _theme,
     ));
   }
@@ -128,13 +136,25 @@ class _SettingsPageState extends State<SettingsPage> {
         Text('sub2api 实例', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
         for (var i = 0; i < _drafts.length; i++) _instanceCard(i),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: _addInstance,
-            icon: const Icon(Icons.add, size: 16),
-            label: const Text('添加 sub2api'),
-          ),
+        Row(
+          children: [
+            Expanded(
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: _addInstance,
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('添加 sub2api'),
+                ),
+              ),
+            ),
+            FilledButton(onPressed: _save, child: const Text('保存并连接')),
+          ],
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Text('实例改动需点「保存并连接」生效;以下其余设置均改动即时生效。',
+              style: theme.textTheme.bodySmall),
         ),
         const Divider(height: 24),
 
@@ -159,7 +179,10 @@ class _SettingsPageState extends State<SettingsPage> {
             ButtonSegment(value: ListLayout.tabs, label: Text('标签页'), icon: Icon(Icons.tab_outlined, size: 15)),
           ],
           selected: {_layout},
-          onSelectionChanged: (s) => setState(() => _layout = s.first),
+          onSelectionChanged: (s) {
+            setState(() => _layout = s.first);
+            widget.onLayoutChanged?.call(_layout); // 即时生效
+          },
         ),
         const Divider(height: 24),
 
@@ -194,7 +217,10 @@ class _SettingsPageState extends State<SettingsPage> {
               DropdownMenuItem(value: TrayMode.countPeak, child: Text('账户数 + 峰值%')),
               DropdownMenuItem(value: TrayMode.custom, child: Text('自定义模板')),
             ],
-            onChanged: (v) => setState(() => _trayMode = v ?? TrayMode.pinnedAccount),
+            onChanged: (v) {
+              setState(() => _trayMode = v ?? TrayMode.pinnedAccount);
+              _emitTray(); // 即时生效
+            },
           ),
         ),
         if (_trayMode == TrayMode.pinnedAccount) ...[
@@ -213,7 +239,10 @@ class _SettingsPageState extends State<SettingsPage> {
                         overflow: TextOverflow.ellipsis),
                   ),
               ],
-              onChanged: (v) => setState(() => _pinnedKey = v),
+              onChanged: (v) {
+                setState(() => _pinnedKey = v);
+                _emitTray();
+              },
             ),
           ),
           if (widget.accounts.isEmpty)
@@ -228,6 +257,7 @@ class _SettingsPageState extends State<SettingsPage> {
             controller: _template,
             decoration: _dec('模板,如 {name} {peak}%'),
             style: const TextStyle(fontSize: 13),
+            onChanged: (_) => _emitTray(), // 即时生效
           ),
           Padding(
             padding: const EdgeInsets.only(top: 4),
@@ -236,15 +266,10 @@ class _SettingsPageState extends State<SettingsPage> {
         ],
 
         const SizedBox(height: 20),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            if (widget.onCancel != null)
-              TextButton(onPressed: widget.onCancel, child: const Text('取消')),
-            const SizedBox(width: 8),
-            FilledButton(onPressed: _save, child: const Text('保存并连接')),
-          ],
-        ),
+        if (widget.onCancel != null)
+          Center(
+            child: TextButton(onPressed: widget.onCancel, child: const Text('完成')),
+          ),
         // MiSans 仅 Windows 打包使用;其许可要求「在软件中特别注明」,故只在 Windows 显示署名。
         if (theme.platform == TargetPlatform.windows) ...[
           const SizedBox(height: 14),

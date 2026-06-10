@@ -254,9 +254,13 @@ class _ShellState extends State<Shell>
     if (mounted) setState(() {});
   }
 
-  void _onPulse() {
-    // macOS:菜单栏标题文字,按设置渲染(默认钉住账户)
+  void _updateTray() {
+    // macOS:菜单栏标题文字,按设置渲染(默认选中账户的 5h 剩余/重置)
     trayManager.setTitle(renderTrayText(_controller?.pulses ?? const [], _settings.tray));
+  }
+
+  void _onPulse() {
+    _updateTray();
     if (mounted) setState(() {});
   }
 
@@ -284,6 +288,18 @@ class _ShellState extends State<Shell>
     } catch (_) {}
     final now = await Autostart.isEnabled(); // 以 OS 实际状态回填开关
     if (mounted) setState(() => _autostartEnabled = now);
+  }
+
+  // 布局 / 托盘:改动即时生效 + 持久化(无需"保存并连接")。
+  void _onLayoutChanged(ListLayout layout) {
+    setState(() => _settings = _settings.copyWith(layout: layout));
+    SettingsStore.save(_settings);
+  }
+
+  void _onTrayChanged(TraySettings tray) {
+    setState(() => _settings = _settings.copyWith(tray: tray));
+    SettingsStore.save(_settings);
+    _updateTray(); // 立刻按新设置重渲染托盘
   }
 
   Future<void> _quit() async {
@@ -325,6 +341,8 @@ class _ShellState extends State<Shell>
         accounts: _controller?.pulses ?? const [],
         onSave: _saveSettings,
         onThemeChanged: _onThemeChanged,
+        onLayoutChanged: _onLayoutChanged,
+        onTrayChanged: _onTrayChanged,
         autostartEnabled: _autostartEnabled,
         onAutostartChanged: _onAutostartChanged,
         onCancel: _settings.configured ? () => setState(() => _view = _View.list) : null,

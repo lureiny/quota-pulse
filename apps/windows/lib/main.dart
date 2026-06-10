@@ -254,11 +254,16 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
     if (mounted) setState(() {});
   }
 
-  void _onPulse() {
-    // Windows:托盘 tooltip 按设置渲染(默认全部账户;悬停延迟由系统控制,无法调)
+  void _updateTray() {
+    // Windows:托盘 tooltip 按设置渲染(默认选中账户的 5h 剩余/重置;
+    // 悬停延迟由系统控制,无法调)
     trayManager.setToolTip(
       renderTrayTooltip(_controller?.pulses ?? const [], _settings.tray),
     );
+  }
+
+  void _onPulse() {
+    _updateTray();
     if (mounted) setState(() {});
   }
 
@@ -288,6 +293,18 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
     if (mounted) setState(() => _autostartEnabled = now);
   }
 
+  // 布局 / 托盘:改动即时生效 + 持久化(无需"保存并连接")。
+  void _onLayoutChanged(ListLayout layout) {
+    setState(() => _settings = _settings.copyWith(layout: layout));
+    SettingsStore.save(_settings);
+  }
+
+  void _onTrayChanged(TraySettings tray) {
+    setState(() => _settings = _settings.copyWith(tray: tray));
+    SettingsStore.save(_settings);
+    _updateTray(); // 立刻按新设置重渲染托盘
+  }
+
   Future<void> _quit() async {
     try {
       _source.stop();
@@ -313,6 +330,8 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
         accounts: _controller?.pulses ?? const [],
         onSave: _saveSettings,
         onThemeChanged: _onThemeChanged,
+        onLayoutChanged: _onLayoutChanged,
+        onTrayChanged: _onTrayChanged,
         autostartEnabled: _autostartEnabled,
         onAutostartChanged: _onAutostartChanged,
         onCancel: _settings.configured ? () => setState(() => _view = _View.list) : null,
