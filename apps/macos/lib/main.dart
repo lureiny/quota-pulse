@@ -117,9 +117,12 @@ class _ShellState extends State<Shell>
     duration: const Duration(milliseconds: 190),
   );
 
-  // 「全部账户」模式菜单栏轮播。
-  Timer? _rotateTimer;
-  int _rotateIndex = 0;
+  // 「全部账户」模式:把所有账户拼成一行,在菜单栏里循环横向滚动(类似流水屏)。
+  Timer? _tickerTimer;
+  List<int> _tickerRunes = const []; // 整条文本的码点
+  int _tickerPos = 0;
+  static const int _tickerWindow = 18; // 菜单栏可见字符数(窗口宽)
+  static const String _tickerGap = '      '; // 一圈结束到重新开始的空隙
 
   PulseSource get _source => widget.source;
 
@@ -146,7 +149,7 @@ class _ShellState extends State<Shell>
   void dispose() {
     trayManager.removeListener(this);
     windowManager.removeListener(this);
-    _rotateTimer?.cancel();
+    _tickerTimer?.cancel();
     _popAnim.dispose();
     _controller?.dispose();
     super.dispose();
@@ -261,29 +264,43 @@ class _ShellState extends State<Shell>
   }
 
   void _updateTray() {
-    // macOS 菜单栏单行。「全部账户」且多于一个 → 轮播逐个显示;否则按模式静态渲染。
+    // macOS 菜单栏单行。「全部账户」→ 拼成一整行做流水屏滚动;否则按模式静态渲染。
     final pulses = _controller?.pulses ?? const <AccountPulse>[];
-    if (_settings.tray.mode == TrayMode.allAccounts && pulses.length > 1) {
-      final sorted = sortedByAccount(pulses);
-      trayManager.setTitle(renderTrayAccountLine(sorted[_rotateIndex % sorted.length]));
+    if (_settings.tray.mode == TrayMode.allAccounts && pulses.isNotEmpty) {
+      final full = sortedByAccount(pulses).map(renderTrayAccountLine).join('   ·   ');
+      _tickerRunes = full.runes.toList();
+      _renderTicker();
+      _syncTicker(_tickerRunes.length > _tickerWindow); // 放得下就不必滚
     } else {
+      _syncTicker(false);
       trayManager.setTitle(renderTrayText(pulses, _settings.tray));
     }
-    _syncRotation(pulses);
   }
 
-  // 「全部账户」模式下,菜单栏每隔几秒切换到下一个账户(单行放不下全部)。
-  void _syncRotation(List<AccountPulse> pulses) {
-    final rotate = _settings.tray.mode == TrayMode.allAccounts && pulses.length > 1;
-    if (rotate && _rotateTimer == null) {
-      _rotateTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-        _rotateIndex++;
-        _updateTray();
+  // 把整条文本接成环(尾部留空隙),取当前位置起 _tickerWindow 个字符显示。
+  void _renderTicker() {
+    final runes = _tickerRunes;
+    if (runes.length <= _tickerWindow) {
+      trayManager.setTitle(String.fromCharCodes(runes));
+      return;
+    }
+    final loop = [...runes, ..._tickerGap.runes];
+    final n = loop.length;
+    final out = List<int>.generate(_tickerWindow, (k) => loop[(_tickerPos + k) % n]);
+    trayManager.setTitle(String.fromCharCodes(out));
+  }
+
+  // 「全部账户」且放不下 → 每 350ms 前移一格循环滚动;否则停表静态显示。
+  void _syncTicker(bool active) {
+    if (active && _tickerTimer == null) {
+      _tickerTimer = Timer.periodic(const Duration(milliseconds: 350), (_) {
+        _tickerPos++;
+        _renderTicker();
       });
-    } else if (!rotate && _rotateTimer != null) {
-      _rotateTimer!.cancel();
-      _rotateTimer = null;
-      _rotateIndex = 0;
+    } else if (!active && _tickerTimer != null) {
+      _tickerTimer!.cancel();
+      _tickerTimer = null;
+      _tickerPos = 0;
     }
   }
 
