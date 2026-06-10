@@ -167,6 +167,7 @@ class _SettingsPageState extends State<SettingsPage> {
             isExpanded: true,
             underline: const SizedBox.shrink(),
             items: const [
+              DropdownMenuItem(value: TrayMode.allAccounts, child: Text('全部账户(默认)')),
               DropdownMenuItem(value: TrayMode.pinnedAccount, child: Text('指定某账户')),
               DropdownMenuItem(value: TrayMode.globalPeak, child: Text('全局峰值%')),
               DropdownMenuItem(value: TrayMode.countPeak, child: Text('账户数 + 峰值%')),

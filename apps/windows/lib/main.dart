@@ -212,8 +212,10 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
   }
 
   void _onPulse() {
-    // Windows:托盘 tooltip 显示尽量全的多行汇总(悬停延迟由系统控制,无法调)
-    trayManager.setToolTip(renderTrayTooltip(_controller?.pulses ?? const []));
+    // Windows:托盘 tooltip 按设置渲染(默认全部账户;悬停延迟由系统控制,无法调)
+    trayManager.setToolTip(
+      renderTrayTooltip(_controller?.pulses ?? const [], _settings.tray),
+    );
     if (mounted) setState(() {});
   }
 
