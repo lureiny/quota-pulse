@@ -233,6 +233,12 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
     setState(() => _view = _View.list);
   }
 
+  void _onThemeChanged(ThemeChoice choice) {
+    setState(() => _settings = _settings.copyWith(themeMode: choice));
+    widget.onThemeModeChanged(choice.toThemeMode()); // 选中即时生效
+    SettingsStore.save(_settings); // 顺手持久化,无需点保存
+  }
+
   Future<void> _quit() async {
     try {
       _source.stop();
@@ -257,6 +263,7 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
         initial: _settings,
         accounts: _controller?.pulses ?? const [],
         onSave: _saveSettings,
+        onThemeChanged: _onThemeChanged,
         onCancel: _settings.configured ? () => setState(() => _view = _View.list) : null,
       );
     }

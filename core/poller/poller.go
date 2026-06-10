@@ -145,8 +145,8 @@ func (p *Poller) refreshOne(ctx context.Context, b binding, accountID string) {
 }
 
 func (p *Poller) loop(ctx context.Context, b binding) {
-	// 启动即拉一次(便宜的被动读)
-	p.pollOnce(ctx, b, provider.FetchOptions{Fresh: false})
+	// 启动首次用 active 强制回源:被动缓存对"冷账户"常为空,会导致首屏加载不出来。
+	p.pollOnce(ctx, b, provider.FetchOptions{Fresh: true})
 
 	timer := time.NewTimer(b.sched.NextInterval())
 	defer timer.Stop()

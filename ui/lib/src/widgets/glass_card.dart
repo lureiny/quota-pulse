@@ -10,12 +10,15 @@ class GlassCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    // 浅色模式下太透会让文字与亮背景对比不足、看不清 → 提高不透明度保证可读;深色仍更透。
+    final alpha = theme.brightness == Brightness.light ? 0.78 : 0.45;
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: Container(
         decoration: BoxDecoration(
-          color: scheme.surface.withValues(alpha: 0.45), // 更透:让背后毛玻璃更明显
+          color: scheme.surface.withValues(alpha: alpha),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: scheme.outlineVariant.withValues(alpha: 0.4),

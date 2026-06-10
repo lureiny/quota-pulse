@@ -123,7 +123,8 @@ class PopoverPage extends StatelessWidget {
                     padding: const EdgeInsets.only(top: 4, bottom: 8),
                     children: [
                       _groupHeader(context, e.key, _groupPeak(e.value),
-                          () => controller.refreshInstance(e.key)),
+                          () => controller.refreshInstance(e.key),
+                          showName: false),
                       ...e.value.map((p) => AccountTile(p,
                           onRefresh: () => controller.refreshAccount(p.key))),
                     ],
@@ -137,17 +138,23 @@ class PopoverPage extends StatelessWidget {
   }
 
   Widget _groupHeader(
-      BuildContext context, String instance, double? peak, VoidCallback onRefresh) {
+    BuildContext context,
+    String instance,
+    double? peak,
+    VoidCallback onRefresh, {
+    bool showName = true, // 标签页里 Tab 已显示名字,这里不再重复
+  }) {
     final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 8, 8, 4),
       child: Row(
         children: [
-          Text(instance.toUpperCase(),
-              style: theme.textTheme.labelMedium?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-                letterSpacing: 0.5,
-              )),
+          if (showName)
+            Text(instance.toUpperCase(),
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  letterSpacing: 0.5,
+                )),
           const Spacer(),
           if (peak != null)
             Text(fmtPct(peak),

@@ -11,12 +11,14 @@ class SettingsPage extends StatefulWidget {
     required this.accounts, // 当前快照,供「钉住账户」下拉
     required this.onSave,
     this.onCancel,
+    this.onThemeChanged, // 主题选中即时生效(不必保存)
   });
 
   final Settings initial;
   final List<AccountPulse> accounts;
   final void Function(Settings) onSave;
   final VoidCallback? onCancel;
+  final void Function(ThemeChoice)? onThemeChanged;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -155,7 +157,10 @@ class _SettingsPageState extends State<SettingsPage> {
             ButtonSegment(value: ThemeChoice.dark, label: Text('深色')),
           ],
           selected: {_theme},
-          onSelectionChanged: (s) => setState(() => _theme = s.first),
+          onSelectionChanged: (s) {
+            setState(() => _theme = s.first);
+            widget.onThemeChanged?.call(s.first); // 即时生效 + 持久化(由壳处理)
+          },
         ),
         const Divider(height: 24),
 
