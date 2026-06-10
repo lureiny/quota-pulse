@@ -49,6 +49,9 @@ class PulseController extends ChangeNotifier {
   /// 只刷新指定账户(key = "instance|accountId",即 AccountPulse.key)。
   void refreshAccount(String key) => _source.refresh(key);
 
+  /// 刷新某个实例的全部账户(key = "instance|")。
+  void refreshInstance(String instance) => _source.refresh('$instance|');
+
   void _tick() {
     try {
       _pulses = AccountPulse.listFromJson(_source.snapshotJson());

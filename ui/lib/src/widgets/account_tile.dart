@@ -5,8 +5,8 @@ import '../models/pulse.dart';
 import 'meter_bar.dart';
 import 'status_dot.dart';
 
-/// AccountTile 渲染一个账户。点击行内展开:折叠态只显示最满的一条表盘,
-/// 展开态显示全部表盘 + 平台/类型/账户号/更新时间/申诉链接。桌面端 hover 高亮。
+/// AccountTile 渲染一个账户:状态 + 名称 + 全部窗口 + 详情(始终展开,不折叠)。
+/// 桌面端 hover 高亮,并出现「刷新此账户」按钮。
 class AccountTile extends StatefulWidget {
   const AccountTile(this.pulse, {super.key, this.onRefresh});
 
@@ -18,7 +18,6 @@ class AccountTile extends StatefulWidget {
 }
 
 class _AccountTileState extends State<AccountTile> {
-  bool _expanded = true; // 默认展开(点击可折叠)
   bool _hover = false;
 
   @override
@@ -27,56 +26,42 @@ class _AccountTileState extends State<AccountTile> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
-    // 折叠态显示使用率最高的一条;展开态显示全部。
-    final sorted = [...p.meters]
-      ..sort((a, b) => (b.utilization ?? -1).compareTo(a.utilization ?? -1));
-    final shown = _expanded ? p.meters : sorted.take(1).toList();
-
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       child: MouseRegion(
         onEnter: (_) => setState(() => _hover = true),
         onExit: (_) => setState(() => _hover = false),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () => setState(() => _expanded = !_expanded),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
-            padding: const EdgeInsets.fromLTRB(12, 9, 10, 10),
-            decoration: BoxDecoration(
-              color: scheme.surfaceContainerHighest
-                  .withValues(alpha: _hover ? 0.55 : 0.22),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: AnimatedSize(
-              duration: const Duration(milliseconds: 150),
-              alignment: Alignment.topCenter,
-              curve: Curves.easeOut,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _headerRow(theme, scheme, p),
-                  if (p.error.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        p.error,
-                        maxLines: _expanded ? 4 : 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodySmall
-                            ?.copyWith(color: statusColor(PulseStatus.error)),
-                      ),
-                    ),
-                  if (p.meters.isEmpty && p.error.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text('无窗口数据', style: theme.textTheme.bodySmall),
-                    ),
-                  ...shown.map((m) => MeterBar(m)),
-                  if (_expanded) _detail(theme, scheme, p),
-                ],
-              ),
-            ),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          padding: const EdgeInsets.fromLTRB(12, 9, 10, 10),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHighest
+                .withValues(alpha: _hover ? 0.45 : 0.22),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _headerRow(theme, scheme, p),
+              if (p.error.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    p.error,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall
+                        ?.copyWith(color: statusColor(PulseStatus.error)),
+                  ),
+                ),
+              if (p.meters.isEmpty && p.error.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text('无窗口数据', style: theme.textTheme.bodySmall),
+                ),
+              ...p.meters.map((m) => MeterBar(m)),
+              _detail(theme, scheme, p),
+            ],
           ),
         ),
       ),
@@ -105,20 +90,18 @@ class _AccountTileState extends State<AccountTile> {
             fontWeight: FontWeight.w700,
           ),
         ),
-        if (widget.onRefresh != null && _hover)
-          IconButton(
-            tooltip: '刷新此账户',
-            icon: const Icon(Icons.refresh, size: 15),
-            padding: EdgeInsets.zero,
-            visualDensity: VisualDensity.compact,
-            constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
-            onPressed: widget.onRefresh,
+        if (widget.onRefresh != null)
+          Opacity(
+            opacity: _hover ? 1 : 0, // 预留位避免抖动;hover 才可点
+            child: IconButton(
+              tooltip: '刷新此账户',
+              icon: const Icon(Icons.refresh, size: 15),
+              padding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+              onPressed: _hover ? widget.onRefresh : null,
+            ),
           ),
-        Icon(
-          _expanded ? Icons.expand_less : Icons.expand_more,
-          size: 16,
-          color: scheme.onSurfaceVariant,
-        ),
       ],
     );
   }

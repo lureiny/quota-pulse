@@ -74,7 +74,7 @@ func (p *Poller) Stop() {
 	p.running = false
 }
 
-// Refresh 触发强制回源。key 为空=所有账户;否则 key="instance|accountID" 只刷该账户。
+// Refresh 触发强制回源。key="" 全部;"instance|" 整个实例;"instance|accountID" 单个账户。
 func (p *Poller) Refresh(key string) {
 	p.mu.Lock()
 	ctx := p.ctx
@@ -98,7 +98,11 @@ func (p *Poller) Refresh(key string) {
 	for i := range bindings {
 		if bindings[i].instance == inst {
 			b := bindings[i]
-			go p.refreshOne(ctx, b, accID)
+			if accID == "" {
+				go p.pollOnce(ctx, b, provider.FetchOptions{Fresh: true}) // 整个实例
+			} else {
+				go p.refreshOne(ctx, b, accID) // 单个账户
+			}
 			return
 		}
 	}

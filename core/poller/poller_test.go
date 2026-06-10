@@ -110,6 +110,11 @@ func TestSplitKey(t *testing.T) {
 	if !ok || inst != "实例A" || acc != "40" {
 		t.Errorf("splitKey = %q,%q,%v", inst, acc, ok)
 	}
+	// 实例级:accountID 为空。
+	inst, acc, ok = splitKey("实例A|")
+	if !ok || inst != "实例A" || acc != "" {
+		t.Errorf("实例级 splitKey = %q,%q,%v", inst, acc, ok)
+	}
 	if _, _, ok := splitKey("no-pipe"); ok {
 		t.Error("无分隔符应 ok=false")
 	}

@@ -91,7 +91,8 @@ class PopoverPage extends StatelessWidget {
   Widget _grouped(BuildContext context, Map<String, List<AccountPulse>> groups) {
     final children = <Widget>[];
     groups.forEach((instance, list) {
-      children.add(_groupHeader(context, instance, _groupPeak(list)));
+      children.add(_groupHeader(context, instance, _groupPeak(list),
+          () => controller.refreshInstance(instance)));
       children.addAll(list.map(
         (p) => AccountTile(p, onRefresh: () => controller.refreshAccount(p.key)),
       ));
@@ -120,10 +121,12 @@ class PopoverPage extends StatelessWidget {
                 for (final e in entries)
                   ListView(
                     padding: const EdgeInsets.only(top: 4, bottom: 8),
-                    children: e.value
-                        .map((p) => AccountTile(p,
-                            onRefresh: () => controller.refreshAccount(p.key)))
-                        .toList(),
+                    children: [
+                      _groupHeader(context, e.key, _groupPeak(e.value),
+                          () => controller.refreshInstance(e.key)),
+                      ...e.value.map((p) => AccountTile(p,
+                          onRefresh: () => controller.refreshAccount(p.key))),
+                    ],
                   ),
               ],
             ),
@@ -133,10 +136,11 @@ class PopoverPage extends StatelessWidget {
     );
   }
 
-  Widget _groupHeader(BuildContext context, String instance, double? peak) {
+  Widget _groupHeader(
+      BuildContext context, String instance, double? peak, VoidCallback onRefresh) {
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
+      padding: const EdgeInsets.fromLTRB(14, 8, 8, 4),
       child: Row(
         children: [
           Text(instance.toUpperCase(),
@@ -148,6 +152,14 @@ class PopoverPage extends StatelessWidget {
           if (peak != null)
             Text(fmtPct(peak),
                 style: theme.textTheme.labelSmall?.copyWith(color: meterColor(peak))),
+          IconButton(
+            tooltip: '刷新本实例',
+            icon: const Icon(Icons.refresh, size: 15),
+            padding: const EdgeInsets.only(left: 6),
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+            onPressed: onRefresh,
+          ),
         ],
       ),
     );
