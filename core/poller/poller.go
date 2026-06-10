@@ -11,8 +11,9 @@ import (
 
 // binding 把一个 provider 实例与它的调度器绑定。
 type binding struct {
-	prov  provider.Provider
-	sched *Scheduler
+	prov     provider.Provider
+	sched    *Scheduler
+	instance string // 实例显示名,盖到每个 pulse 上用于区分/分组
 }
 
 // Poller 周期性拉取所有 provider 的所有账户用量。
@@ -39,8 +40,9 @@ func New(store *Store, onUpdate func([]model.AccountPulse)) *Poller {
 }
 
 // AddProvider 注册一个 provider 与其调度器(须在 Start 前调用)。
-func (p *Poller) AddProvider(prov provider.Provider, sched *Scheduler) {
-	p.bindings = append(p.bindings, binding{prov: prov, sched: sched})
+// instance 为该实例的唯一显示名,会盖到它产出的每个 pulse 上。
+func (p *Poller) AddProvider(prov provider.Provider, sched *Scheduler, instance string) {
+	p.bindings = append(p.bindings, binding{prov: prov, sched: sched, instance: instance})
 }
 
 // Start 为每个 provider 起一个轮询 goroutine。
@@ -141,6 +143,7 @@ func (p *Poller) pollOnce(ctx context.Context, b binding, opt provider.FetchOpti
 					Error:     err.Error(),
 				}
 			}
+			pulse.Instance = b.instance // 统一盖章(成功/失败两路都经过这里)
 			if pulse.UpdatedAt.IsZero() {
 				pulse.UpdatedAt = time.Now()
 			}

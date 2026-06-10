@@ -30,6 +30,14 @@ else
 fi
 echo "    + LSUIElement=true"
 
+# flutter_acrylic(毛玻璃)要求 macOS 部署目标 ≥ 10.14.6
+echo "==> 提升部署目标到 10.14.6(flutter_acrylic 需要)"
+if [[ -f macos/Podfile ]]; then
+  sed -i '' "s/platform :osx, '[0-9.]*'/platform :osx, '10.14.6'/" macos/Podfile || true
+fi
+sed -i '' 's/MACOSX_DEPLOYMENT_TARGET = 10\.14;/MACOSX_DEPLOYMENT_TARGET = 10.14.6;/g' \
+  macos/Runner.xcodeproj/project.pbxproj 2>/dev/null || true
+
 echo "==> flutter pub get"
 flutter pub get
 

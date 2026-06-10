@@ -5,6 +5,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 
 	"github.com/lureiny/quota-pulse/core/config"
@@ -37,13 +38,28 @@ func New(cfg config.Config) (*App, error) {
 	}
 	a.poll = poller.New(a.store, a.broadcast)
 
-	for _, pc := range a.cfg.Providers {
+	used := map[string]bool{}
+	for i, pc := range a.cfg.Providers {
 		prov, err := provider.Build(pc)
 		if err != nil {
 			return nil, err
 		}
+		// 计算唯一实例名:优先配置名 → provider 显示名 → 序号;重名自动加后缀。
+		base := pc.Name
+		if base == "" {
+			base = prov.DisplayName()
+		}
+		if base == "" {
+			base = fmt.Sprintf("provider-%d", i+1)
+		}
+		instance := base
+		for k := 2; used[instance]; k++ {
+			instance = fmt.Sprintf("%s (%d)", base, k)
+		}
+		used[instance] = true
+
 		sched := poller.NewScheduler(pc.Poll)
-		a.poll.AddProvider(prov, sched)
+		a.poll.AddProvider(prov, sched, instance)
 		a.scheds = append(a.scheds, sched)
 	}
 	return a, nil

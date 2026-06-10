@@ -8,10 +8,17 @@ library;
 export 'src/models/pulse.dart';
 export 'src/format.dart';
 
+// 统一主题(跨平台共用:布局/组件/密度一致;字体走系统;配色由系统 accent + 明暗派生)
+export 'src/theme.dart';
+
+// 托盘文字渲染(跨平台共用)
+export 'src/tray_text.dart';
+
 // UI 组件
 export 'src/widgets/meter_bar.dart';
 export 'src/widgets/account_tile.dart';
 export 'src/widgets/status_dot.dart';
+export 'src/widgets/glass_card.dart';
 
 // 页面
 export 'src/pages/popover_page.dart';

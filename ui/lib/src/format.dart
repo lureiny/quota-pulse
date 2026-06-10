@@ -52,3 +52,11 @@ String fmtDuration(int secs) {
 
 /// 把 0~1 的使用率格式化为百分比文本。
 String fmtPct(double? u) => u == null ? '—' : '${(u * 100).round()}%';
+
+/// 本地时钟 HH:mm:ss(用于"更新时间")。
+String fmtClock(DateTime? t) {
+  if (t == null) return '';
+  final l = t.toLocal();
+  String two(int n) => n.toString().padLeft(2, '0');
+  return '${two(l.hour)}:${two(l.minute)}:${two(l.second)}';
+}

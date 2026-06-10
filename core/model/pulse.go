@@ -21,7 +21,8 @@ type AccountPulse struct {
 	AccountID string    `json:"account_id"`
 	Name      string    `json:"name"`
 	Platform  string    `json:"platform"`           // 上游平台
-	Provider  string    `json:"provider"`           // 来源:sub2api / oneapi / newapi
+	Provider  string    `json:"provider"`           // 类型:sub2api / oneapi / newapi
+	Instance  string    `json:"instance"`           // 实例显示名(区分多个同类型后台;UI 按它分组)
 	Status    Status    `json:"status"`             //
 	Tier      string    `json:"tier,omitempty"`     // 订阅等级(若有)
 	Meters    []Meter   `json:"meters"`             // 一组表盘 —— 抽象的灵魂

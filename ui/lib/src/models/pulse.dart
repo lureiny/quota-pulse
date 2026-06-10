@@ -59,7 +59,8 @@ class AccountPulse {
   final String accountId;
   final String name;
   final String platform;
-  final String provider;
+  final String provider; // 类型:sub2api / oneapi / newapi
+  final String instance; // 实例显示名(区分多个同类型后台;UI 按它分组)
   final PulseStatus status;
   final String tier;
   final List<Meter> meters;
@@ -72,6 +73,7 @@ class AccountPulse {
     required this.name,
     required this.platform,
     required this.provider,
+    required this.instance,
     required this.status,
     required this.tier,
     required this.meters,
@@ -85,6 +87,7 @@ class AccountPulse {
         name: j['name'] as String? ?? '',
         platform: j['platform'] as String? ?? '',
         provider: j['provider'] as String? ?? '',
+        instance: j['instance'] as String? ?? '',
         status: parseStatus(j['status'] as String?),
         tier: j['tier'] as String? ?? '',
         meters: ((j['meters'] as List?) ?? const [])
@@ -94,6 +97,9 @@ class AccountPulse {
         error: j['error'] as String? ?? '',
         actionUrl: j['action_url'] as String? ?? '',
       );
+
+  /// 跨实例唯一键(分组 / 钉住托盘用)。
+  String get key => '$instance|$accountId';
 
   /// 该账户所有表盘里的最高使用率(用于菜单栏标题/状态色)。
   double? get peakUtilization {

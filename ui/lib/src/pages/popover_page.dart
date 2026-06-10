@@ -1,19 +1,23 @@
 import 'package:flutter/material.dart';
 
 import '../format.dart';
+import '../models/pulse.dart';
 import '../state/pulse_controller.dart';
+import '../state/settings_store.dart';
 import '../widgets/account_tile.dart';
 
-/// PopoverPage 是弹层主体:标题栏 + 账户列表 + 底部操作条。
+/// PopoverPage:标题(含醒目峰值)+ 账户列表(按实例分组 / 标签页)+ 底部操作条。
 class PopoverPage extends StatelessWidget {
   const PopoverPage({
     super.key,
     required this.controller,
+    required this.layout,
     required this.onRefresh,
     required this.onSettings,
   });
 
   final PulseController controller;
+  final ListLayout layout;
   final VoidCallback onRefresh;
   final VoidCallback onSettings;
 
@@ -22,82 +26,176 @@ class PopoverPage extends StatelessWidget {
     return AnimatedBuilder(
       animation: controller,
       builder: (context, _) {
+        final groups = _groupByInstance(controller.pulses);
         return Column(
           children: [
-            _header(),
+            _header(context),
             const Divider(height: 1),
-            Expanded(child: _body()),
+            Expanded(child: _body(context, groups)),
             const Divider(height: 1),
-            _footer(),
+            _footer(context),
           ],
         );
       },
     );
   }
 
-  Widget _header() {
+  // ---- 分组 + 组内按使用率降序 ----
+  Map<String, List<AccountPulse>> _groupByInstance(List<AccountPulse> pulses) {
+    final map = <String, List<AccountPulse>>{};
+    for (final p in pulses) {
+      (map[p.instance] ??= []).add(p);
+    }
+    final out = <String, List<AccountPulse>>{};
+    for (final k in map.keys.toList()..sort()) {
+      out[k] = map[k]!
+        ..sort((a, b) => (b.peakUtilization ?? -1).compareTo(a.peakUtilization ?? -1));
+    }
+    return out;
+  }
+
+  double? _groupPeak(List<AccountPulse> list) {
+    double? peak;
+    for (final p in list) {
+      final u = p.peakUtilization;
+      if (u == null) continue;
+      if (peak == null || u > peak) peak = u;
+    }
+    return peak;
+  }
+
+  // ---- 标题:名称 + 醒目峰值色块 ----
+  Widget _header(BuildContext context) {
+    final theme = Theme.of(context);
     final peak = controller.peakUtilization;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+      padding: const EdgeInsets.fromLTRB(14, 12, 12, 10),
       child: Row(
         children: [
-          const Text('用量脉搏', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+          Text('用量脉搏', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
           const Spacer(),
-          if (peak != null)
-            Text('峰值 ${fmtPct(peak)}',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: meterColor(peak))),
+          if (peak != null) _peakChip(context, '峰值 ${fmtPct(peak)}', peak),
         ],
       ),
     );
   }
 
-  Widget _body() {
-    final err = controller.error;
-    final pulses = controller.pulses;
-
-    if (err != null && pulses.isEmpty) {
-      return _centered('读取失败\n$err', color: const Color(0xFFFF3B30));
-    }
-    if (pulses.isEmpty) {
-      return _centered('加载中…');
-    }
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      itemCount: pulses.length,
-      itemBuilder: (_, i) => AccountTile(pulses[i]),
+  Widget _peakChip(BuildContext context, String text, double util) {
+    final c = meterColor(util);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: c.withValues(alpha: 0.16),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        text,
+        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: c,
+              fontWeight: FontWeight.w700,
+            ),
+      ),
     );
   }
 
-  Widget _footer() {
+  Widget _body(BuildContext context, Map<String, List<AccountPulse>> groups) {
+    final err = controller.error;
+    if (err != null && controller.pulses.isEmpty) {
+      return _state(context, '读取失败\n$err', color: statusColor(PulseStatus.error));
+    }
+    if (controller.pulses.isEmpty) {
+      return _state(context, '加载中…');
+    }
+    if (layout == ListLayout.tabs && groups.length > 1) {
+      return _tabbed(context, groups);
+    }
+    return _grouped(context, groups);
+  }
+
+  Widget _grouped(BuildContext context, Map<String, List<AccountPulse>> groups) {
+    final children = <Widget>[];
+    groups.forEach((instance, list) {
+      children.add(_groupHeader(context, instance, _groupPeak(list)));
+      children.addAll(list.map((p) => AccountTile(p)));
+    });
+    return ListView(padding: const EdgeInsets.only(top: 4, bottom: 8), children: children);
+  }
+
+  Widget _tabbed(BuildContext context, Map<String, List<AccountPulse>> groups) {
+    final entries = groups.entries.toList();
+    return DefaultTabController(
+      length: entries.length,
+      child: Column(
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TabBar(
+              isScrollable: true,
+              tabAlignment: TabAlignment.start,
+              labelStyle: Theme.of(context).textTheme.labelLarge,
+              tabs: [for (final e in entries) Tab(height: 36, text: e.key)],
+            ),
+          ),
+          Expanded(
+            child: TabBarView(
+              children: [
+                for (final e in entries)
+                  ListView(
+                    padding: const EdgeInsets.only(top: 4, bottom: 8),
+                    children: e.value.map((p) => AccountTile(p)).toList(),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _groupHeader(BuildContext context, String instance, double? peak) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
+      child: Row(
+        children: [
+          Text(instance.toUpperCase(),
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+                letterSpacing: 0.5,
+              )),
+          const Spacer(),
+          if (peak != null)
+            Text(fmtPct(peak),
+                style: theme.textTheme.labelSmall?.copyWith(color: meterColor(peak))),
+        ],
+      ),
+    );
+  }
+
+  Widget _footer(BuildContext context) {
     final n = controller.pulses.length;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: Row(
         children: [
-          Text('$n 个账户', style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93))),
+          Text('$n 个账户', style: Theme.of(context).textTheme.bodySmall),
           const Spacer(),
-          IconButton(
-            tooltip: '刷新',
-            icon: const Icon(Icons.refresh, size: 18),
-            onPressed: onRefresh,
-          ),
-          IconButton(
-            tooltip: '设置',
-            icon: const Icon(Icons.settings, size: 18),
-            onPressed: onSettings,
-          ),
+          IconButton(tooltip: '刷新', icon: const Icon(Icons.refresh, size: 18), onPressed: onRefresh),
+          IconButton(tooltip: '设置', icon: const Icon(Icons.settings, size: 18), onPressed: onSettings),
         ],
       ),
     );
   }
 
-  Widget _centered(String text, {Color? color}) => Center(
+  Widget _state(BuildContext context, String text, {Color? color}) => Center(
         child: Padding(
           padding: const EdgeInsets.all(20),
           child: Text(
             text,
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 12, color: color ?? const Color(0xFF8E8E93)),
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: color ?? Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
           ),
         ),
       );

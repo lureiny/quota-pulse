@@ -19,14 +19,16 @@ func NewStore() *Store {
 	return &Store{m: make(map[string]model.AccountPulse)}
 }
 
-func key(providerType, accountID string) string {
-	return providerType + "|" + accountID
+// key 用实例名 + 账户号。不同 sub2api 实例可能有相同账户号,
+// 必须带上实例名,否则会互相覆盖。
+func key(instance, accountID string) string {
+	return instance + "|" + accountID
 }
 
 // Put 写入/覆盖一个账户的脉搏。
 func (s *Store) Put(p model.AccountPulse) {
 	s.mu.Lock()
-	s.m[key(p.Provider, p.AccountID)] = p
+	s.m[key(p.Instance, p.AccountID)] = p
 	s.mu.Unlock()
 }
 
@@ -40,8 +42,8 @@ func (s *Store) Snapshot() []model.AccountPulse {
 	s.mu.RUnlock()
 
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].Provider != out[j].Provider {
-			return out[i].Provider < out[j].Provider
+		if out[i].Instance != out[j].Instance {
+			return out[i].Instance < out[j].Instance
 		}
 		if out[i].Name != out[j].Name {
 			return out[i].Name < out[j].Name

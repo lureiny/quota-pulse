@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_acrylic/flutter_acrylic.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -10,9 +11,11 @@ import 'package:quota_pulse_ui/quota_pulse_ui.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await windowManager.ensureInitialized();
+  await Window.initialize(); // flutter_acrylic
 
   final windowOptions = WindowOptions(
     size: const Size(340, 460),
+    backgroundColor: Colors.transparent, // 透出毛玻璃
     skipTaskbar: true,
     titleBarStyle: TitleBarStyle.hidden,
     windowButtonVisibility: false,
@@ -20,26 +23,48 @@ Future<void> main() async {
   );
   await windowManager.waitUntilReadyToShow(windowOptions, () async {
     await windowManager.setAsFrameless();
+    await windowManager.setBackgroundColor(Colors.transparent);
     await windowManager.setSkipTaskbar(true);
     await windowManager.setAlwaysOnTop(true);
     await windowManager.hide(); // 菜单栏应用:启动即隐藏,点托盘才弹出
   });
 
+  // 毛玻璃:macOS 用 popover 弹层材质(降级可改 WindowEffect.solid)
+  final isDark =
+      WidgetsBinding.instance.platformDispatcher.platformBrightness == Brightness.dark;
+  await Window.setEffect(effect: WindowEffect.popover, dark: isDark);
+
   final settings = await SettingsStore.load();
-  runApp(QuotaPulseApp(source: FfiPulseSource(), settings: settings));
+  final seed = await loadAccentColor(); // 跟随系统强调色
+  runApp(QuotaPulseApp(source: FfiPulseSource(), settings: settings, seed: seed));
 }
 
 class QuotaPulseApp extends StatelessWidget {
-  const QuotaPulseApp({super.key, required this.source, required this.settings});
+  const QuotaPulseApp({
+    super.key,
+    required this.source,
+    required this.settings,
+    required this.seed,
+  });
 
   final PulseSource source;
   final Settings settings;
+  final Color seed;
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(useMaterial3: true, colorSchemeSeed: const Color(0xFF007AFF)),
+      theme: buildAppTheme(seed: seed, brightness: Brightness.light),
+      darkTheme: buildAppTheme(seed: seed, brightness: Brightness.dark),
+      themeMode: ThemeMode.system, // 跟随系统深浅色
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(
+          textScaler: MediaQuery.textScalerOf(context)
+              .clamp(minScaleFactor: 1.0, maxScaleFactor: 1.3),
+        ),
+        child: child!,
+      ),
       home: Shell(source: source, initialSettings: settings),
     );
   }
@@ -174,8 +199,8 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
   }
 
   void _onPulse() {
-    final peak = _controller?.peakUtilization;
-    trayManager.setTitle(peak == null ? '用量' : '${(peak * 100).round()}%');
+    // macOS:菜单栏标题文字,按设置渲染(默认钉住账户)
+    trayManager.setTitle(renderTrayText(_controller?.pulses ?? const [], _settings.tray));
     if (mounted) setState(() {});
   }
 
@@ -198,13 +223,17 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(body: _content());
+    return Scaffold(
+      backgroundColor: Colors.transparent, // 透出毛玻璃,卡片自绘圆角
+      body: GlassCard(child: _content()),
+    );
   }
 
   Widget _content() {
     if (_view == _View.settings || !_settings.configured) {
       return SettingsPage(
         initial: _settings,
+        accounts: _controller?.pulses ?? const [],
         onSave: _saveSettings,
         onCancel: _settings.configured ? () => setState(() => _view = _View.list) : null,
       );
@@ -214,6 +243,7 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
     }
     return PopoverPage(
       controller: _controller!,
+      layout: _settings.layout,
       onRefresh: () => _controller?.refreshNow(),
       onSettings: () => setState(() => _view = _View.settings),
     );
