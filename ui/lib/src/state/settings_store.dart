@@ -45,7 +45,7 @@ extension ThemeChoiceX on ThemeChoice {
 }
 
 /// 托盘显示内容模式。
-enum TrayMode { allAccounts, pinnedAccount, globalPeak, countPeak, custom }
+enum TrayMode { allAccounts, pinnedAccount, custom }
 
 /// 托盘内容设置(跨平台;Windows=tooltip,macOS=菜单栏标题)。
 class TraySettings {
@@ -77,7 +77,8 @@ class TraySettings {
   factory TraySettings.fromJson(Map<String, dynamic> j) => TraySettings(
         mode: TrayMode.values.firstWhere(
           (m) => m.name == j['mode'],
-          orElse: () => TrayMode.allAccounts,
+          // 老数据若是已移除的 globalPeak/countPeak,迁到新默认(与全新安装一致)。
+          orElse: () => TrayMode.pinnedAccount,
         ),
         pinnedKey: j['pinned_key'] as String?,
         template: j['template'] as String?,

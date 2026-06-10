@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -116,6 +117,10 @@ class _ShellState extends State<Shell>
     duration: const Duration(milliseconds: 190),
   );
 
+  // 「全部账户」模式菜单栏轮播。
+  Timer? _rotateTimer;
+  int _rotateIndex = 0;
+
   PulseSource get _source => widget.source;
 
   @override
@@ -141,6 +146,7 @@ class _ShellState extends State<Shell>
   void dispose() {
     trayManager.removeListener(this);
     windowManager.removeListener(this);
+    _rotateTimer?.cancel();
     _popAnim.dispose();
     _controller?.dispose();
     super.dispose();
@@ -255,8 +261,30 @@ class _ShellState extends State<Shell>
   }
 
   void _updateTray() {
-    // macOS:菜单栏标题文字,按设置渲染(默认选中账户的 5h 剩余/重置)
-    trayManager.setTitle(renderTrayText(_controller?.pulses ?? const [], _settings.tray));
+    // macOS 菜单栏单行。「全部账户」且多于一个 → 轮播逐个显示;否则按模式静态渲染。
+    final pulses = _controller?.pulses ?? const <AccountPulse>[];
+    if (_settings.tray.mode == TrayMode.allAccounts && pulses.length > 1) {
+      final sorted = sortedByAccount(pulses);
+      trayManager.setTitle(renderTrayAccountLine(sorted[_rotateIndex % sorted.length]));
+    } else {
+      trayManager.setTitle(renderTrayText(pulses, _settings.tray));
+    }
+    _syncRotation(pulses);
+  }
+
+  // 「全部账户」模式下,菜单栏每隔几秒切换到下一个账户(单行放不下全部)。
+  void _syncRotation(List<AccountPulse> pulses) {
+    final rotate = _settings.tray.mode == TrayMode.allAccounts && pulses.length > 1;
+    if (rotate && _rotateTimer == null) {
+      _rotateTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+        _rotateIndex++;
+        _updateTray();
+      });
+    } else if (!rotate && _rotateTimer != null) {
+      _rotateTimer!.cancel();
+      _rotateTimer = null;
+      _rotateIndex = 0;
+    }
   }
 
   void _onPulse() {
@@ -319,14 +347,12 @@ class _ShellState extends State<Shell>
       body: AnimatedBuilder(
         animation: _popAnim,
         builder: (context, child) {
-          final t = _popAnim.value;
-          return Opacity(
-            opacity: t.clamp(0.0, 1.0),
-            child: Transform.scale(
-              scale: 0.94 + 0.06 * Curves.easeOutCubic.transform(t),
-              alignment: Alignment.topCenter, // 从上沿(菜单栏处)展开
-              child: child,
-            ),
+          // 只做缩放、不淡入:否则毛玻璃材质先满屏出现、内容再淡入,看着像"弹两次"。
+          final t = Curves.easeOutCubic.transform(_popAnim.value);
+          return Transform.scale(
+            scale: 0.92 + 0.08 * t,
+            alignment: Alignment.topCenter, // 从上沿(菜单栏处)展开
+            child: child,
           );
         },
         child: GlassCard(child: _content()),

@@ -13,10 +13,10 @@ class GlassCard extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final isLight = theme.brightness == Brightness.light;
-    // 浅色:M3 的 surface 偏灰 + 半透明会让整页发灰发暗 → 底色拉向纯白且高不透明,
-    // 保证够亮、文字对比足;深色仍保留较透的玻璃感。
-    final base = isLight ? Color.lerp(scheme.surface, Colors.white, 0.7)! : scheme.surface;
-    final alpha = isLight ? 0.94 : 0.45;
+    // 浅色:底色拉到接近纯白 → 即便较透也够亮、不发灰(M3 的 surface 偏灰才是发灰主因);
+    // 两端都保留明显的半透明玻璃感(深色更透)。
+    final base = isLight ? Color.lerp(scheme.surface, Colors.white, 0.85)! : scheme.surface;
+    final alpha = isLight ? 0.62 : 0.30;
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: Container(

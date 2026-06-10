@@ -87,6 +87,19 @@ String _custom(List<AccountPulse> pulses, TraySettings tray) {
       .replaceAll('{count}', '${pulses.length}');
 }
 
+/// 单个账户的菜单栏/单行表示:名称 + 5h 剩余 + 重置倒计时。
+/// 供「指定账户」模式与 macOS「全部账户」轮播复用。
+String renderTrayAccountLine(AccountPulse a) {
+  final m = _fiveHour(a);
+  final reset = _dur(m?.remainingSecs);
+  final tail = reset.isEmpty ? '' : ' · $reset';
+  return '${_accountName(a)} 剩${_remain(m)}$tail';
+}
+
+/// 全部账户按账户序排序(供 macOS 菜单栏轮播取下一个)。
+List<AccountPulse> sortedByAccount(List<AccountPulse> pulses) =>
+    [...pulses]..sort(_byAccount);
+
 /// Windows 托盘 tooltip:多行,按 [TraySettings] 模式渲染。
 /// 注:悬停延迟由 Windows 系统控制、app 无法调整;要即时看全部请左键点托盘。
 String renderTrayTooltip(List<AccountPulse> pulses, TraySettings tray) {
@@ -119,37 +132,23 @@ String renderTrayTooltip(List<AccountPulse> pulses, TraySettings tray) {
           : '${_meterLabel(m)} 剩 ${_remain(m)}  ·  $reset 后重置';
       return '${_accountName(a)}\n$line2';
 
-    case TrayMode.globalPeak:
-      return '峰值 ${_pct(_globalPeak(pulses))}';
-
-    case TrayMode.countPeak:
-      return '${pulses.length} 账户 · 峰值 ${_pct(_globalPeak(pulses))}';
-
     case TrayMode.custom:
       return _custom(pulses, tray);
   }
 }
 
 /// macOS 菜单栏标题(单行,空间有限)。
+/// 「全部账户」多个时由壳层用 [renderTrayAccountLine] + [sortedByAccount] 轮播;
+/// 这里只兜底单个/直接调用的情况。
 String renderTrayText(List<AccountPulse> pulses, TraySettings tray) {
   if (pulses.isEmpty) return 'quota-pulse';
   switch (tray.mode) {
     case TrayMode.allAccounts:
-    case TrayMode.countPeak:
-      return '${pulses.length} 账户 · 峰值 ${_pct(_globalPeak(pulses))}';
+      return renderTrayAccountLine(sortedByAccount(pulses).first);
 
     case TrayMode.pinnedAccount:
-      // 选中账户的 5 小时窗口:剩余量 + 重置倒计时。
-      final a = _selected(pulses, tray);
-      if (a == null) return 'quota-pulse';
-      final m = _fiveHour(a);
-      final reset = _dur(m?.remainingSecs);
-      final tail = reset.isEmpty ? '' : ' · $reset';
-      return '${_accountName(a)} 剩${_remain(m)}$tail';
-
-    case TrayMode.globalPeak:
-      final gp = _globalPeak(pulses);
-      return gp == null ? 'quota-pulse' : 'quota-pulse · 峰值 ${_pct(gp)}';
+      final a = _selected(pulses, tray); // 选中账户的 5h 剩余 + 重置
+      return a == null ? 'quota-pulse' : renderTrayAccountLine(a);
 
     case TrayMode.custom:
       return _custom(pulses, tray);

@@ -133,6 +133,26 @@ class _SettingsPageState extends State<SettingsPage> {
     return ListView(
       padding: const EdgeInsets.all(14),
       children: [
+        if (widget.onCancel != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Row(
+              children: [
+                IconButton(
+                  tooltip: '返回',
+                  icon: const Icon(Icons.arrow_back, size: 20),
+                  padding: EdgeInsets.zero,
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  onPressed: widget.onCancel,
+                ),
+                const SizedBox(width: 6),
+                Text('设置',
+                    style: theme.textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w700)),
+              ],
+            ),
+          ),
         Text('sub2api 实例', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
         for (var i = 0; i < _drafts.length; i++) _instanceCard(i),
@@ -213,8 +233,6 @@ class _SettingsPageState extends State<SettingsPage> {
             items: const [
               DropdownMenuItem(value: TrayMode.pinnedAccount, child: Text('指定账户·5h 剩余/重置(默认)')),
               DropdownMenuItem(value: TrayMode.allAccounts, child: Text('全部账户')),
-              DropdownMenuItem(value: TrayMode.globalPeak, child: Text('全局峰值%')),
-              DropdownMenuItem(value: TrayMode.countPeak, child: Text('账户数 + 峰值%')),
               DropdownMenuItem(value: TrayMode.custom, child: Text('自定义模板')),
             ],
             onChanged: (v) {
@@ -265,11 +283,7 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ],
 
-        const SizedBox(height: 20),
-        if (widget.onCancel != null)
-          Center(
-            child: TextButton(onPressed: widget.onCancel, child: const Text('完成')),
-          ),
+        const SizedBox(height: 12),
         // MiSans 仅 Windows 打包使用;其许可要求「在软件中特别注明」,故只在 Windows 显示署名。
         if (theme.platform == TargetPlatform.windows) ...[
           const SizedBox(height: 14),
