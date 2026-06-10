@@ -300,7 +300,8 @@ class _ShellState extends State<Shell>
   // 「全部账户」且放不下 → 高频小步前移(更丝滑);否则停表、固定宽静态显示。
   void _syncTicker(bool active) {
     if (active && _tickerTimer == null) {
-      _tickerTimer = Timer.periodic(const Duration(milliseconds: 120), (_) {
+      // 间隔越小越顺、但滚得也越快(一步=一个字符,二者绑死)。70ms ≈ 14 字/秒。
+      _tickerTimer = Timer.periodic(const Duration(milliseconds: 70), (_) {
         _tickerPos++;
         _renderTicker();
       });
