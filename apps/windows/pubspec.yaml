@@ -1,0 +1,24 @@
+name: quota_pulse
+description: "sub2api 用量脉搏 — Windows 系统托盘预览栏"
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  quota_pulse_ui:         # 共享层:模型 / UI / 状态 / 桌面 FFI 桥(与 macOS 同一份)
+    path: ../../ui
+  tray_manager: ^0.5.0    # 系统托盘项
+  window_manager: ^0.4.3  # 无边框弹层窗口
+  # 注:ffi / shared_preferences 由 quota_pulse_ui 传递依赖
+
+dev_dependencies:
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/tray_icon.ico

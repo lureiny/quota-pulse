@@ -1,0 +1,16 @@
+name: quota_pulse_ui
+description: "quota-pulse 跨平台共享层:通用模型 / UI 组件 / 状态 / 桌面 FFI 桥(平台无关)。各 apps/<platform> 依赖本包,只各自实现薄外壳(托盘/窗口/打包)。"
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  ffi: ^2.1.0                  # dart:ffi 辅助(native_core)
+  shared_preferences: ^2.2.0  # 设置持久化(settings_store)
+
+dev_dependencies:
+  flutter_lints: ^4.0.0

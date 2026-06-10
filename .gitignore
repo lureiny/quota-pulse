@@ -1,0 +1,21 @@
+# ---- 构建产物 ----
+**/build/
+**/dist/
+
+# ---- Flutter / Dart ----
+.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/ephemeral/
+*.iml
+
+# ---- 生成的平台 runner(由 setup_*.sh / setup_*.ps1 重新生成并套补丁)----
+apps/macos/macos/
+apps/windows/windows/
+
+# ---- 本地 / IDE / 系统 ----
+.claude/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

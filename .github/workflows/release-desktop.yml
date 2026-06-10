@@ -1,0 +1,96 @@
+name: release-desktop
+
+# 推一个 v* tag(如 v0.1.0)→ 自动编译 macOS .dmg 与 Windows .zip 并发布到 Release。
+# 也可在 Actions 页手动触发(workflow_dispatch),只产出构件、不建 Release。
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write   # 创建 Release / 上传资产需要
+
+jobs:
+  # ---------------- macOS:出 .dmg ----------------
+  build-macos:
+    runs-on: macos-14            # Apple Silicon runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter config --enable-macos-desktop
+
+      - name: Build .app + .dmg(脚本内做 dylib 注入 + ad-hoc 签名)
+        working-directory: apps/macos
+        run: |
+          chmod +x *.sh
+          ./setup_macos.sh
+          ./build_app.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: apps/macos/dist/*.dmg
+          if-no-files-found: error
+
+  # ---------------- Windows:出便携 .zip ----------------
+  build-windows:
+    runs-on: windows-latest      # 自带 Visual Studio(C++ 工作负载)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter config --enable-windows-desktop
+
+      - name: 确保 mingw-w64 gcc(给 Go 的 cgo c-shared 用)
+        run: choco install mingw --no-progress -y
+
+      - name: Build .exe 目录 + 打包 .zip
+        working-directory: apps/windows
+        shell: pwsh
+        run: |
+          ./setup_windows.ps1
+          ./build_app.ps1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-zip
+          path: apps/windows/dist/*.zip
+          if-no-files-found: error
+
+  # ---------------- 发布 Release(仅在打 tag 时)----------------
+  release:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: 创建 / 更新 Release 并附上两端包
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/macos-dmg/*.dmg
+            artifacts/windows-zip/*.zip
+          body: |
+            自动构建产物:
+            - macOS:`quota_pulse.dmg`(ad-hoc 签名;首次「右键→打开」)
+            - Windows:`quota_pulse-windows.zip`(便携;首次 SmartScreen「仍要运行」)
