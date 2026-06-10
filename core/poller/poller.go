@@ -2,6 +2,7 @@ package poller
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,9 +26,9 @@ type Poller struct {
 	bindings []binding
 
 	mu      sync.Mutex
+	ctx     context.Context // 运行期 ctx,供手动刷新使用
 	cancel  context.CancelFunc
 	running bool
-	refresh chan string // 手动刷新触发(account id;当前实现为整体回源)
 }
 
 func New(store *Store, onUpdate func([]model.AccountPulse)) *Poller {
@@ -35,7 +36,6 @@ func New(store *Store, onUpdate func([]model.AccountPulse)) *Poller {
 		store:    store,
 		onUpdate: onUpdate,
 		maxConc:  6,
-		refresh:  make(chan string, 8),
 	}
 }
 
@@ -53,6 +53,7 @@ func (p *Poller) Start(ctx context.Context) {
 		return
 	}
 	ctx, cancel := context.WithCancel(ctx)
+	p.ctx = ctx
 	p.cancel = cancel
 	p.running = true
 	bindings := p.bindings
@@ -73,11 +74,69 @@ func (p *Poller) Stop() {
 	p.running = false
 }
 
-// Refresh 触发一次强制回源(对所有 provider)。
-func (p *Poller) Refresh(accountID string) {
-	select {
-	case p.refresh <- accountID:
-	default: // 已有待处理刷新,丢弃以防积压
+// Refresh 触发强制回源。key 为空=所有账户;否则 key="instance|accountID" 只刷该账户。
+func (p *Poller) Refresh(key string) {
+	p.mu.Lock()
+	ctx := p.ctx
+	bindings := append([]binding(nil), p.bindings...)
+	p.mu.Unlock()
+	if ctx == nil {
+		return // 未启动
+	}
+
+	if key == "" {
+		for i := range bindings {
+			go p.pollOnce(ctx, bindings[i], provider.FetchOptions{Fresh: true})
+		}
+		return
+	}
+
+	inst, accID, ok := splitKey(key)
+	if !ok {
+		return
+	}
+	for i := range bindings {
+		if bindings[i].instance == inst {
+			b := bindings[i]
+			go p.refreshOne(ctx, b, accID)
+			return
+		}
+	}
+}
+
+func splitKey(key string) (instance, accountID string, ok bool) {
+	i := strings.IndexByte(key, '|')
+	if i < 0 {
+		return "", "", false
+	}
+	return key[:i], key[i+1:], true
+}
+
+// refreshOne 只强制回源单个账户。
+func (p *Poller) refreshOne(ctx context.Context, b binding, accountID string) {
+	accounts, err := b.prov.ListAccounts(ctx)
+	if err != nil {
+		return
+	}
+	for _, acc := range accounts {
+		if acc.ID != accountID {
+			continue
+		}
+		cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		pulse, err := b.prov.FetchUsage(cctx, acc, provider.FetchOptions{Fresh: true})
+		cancel()
+		if err != nil {
+			return // 失败保留上次成功
+		}
+		pulse.Instance = b.instance
+		if pulse.UpdatedAt.IsZero() {
+			pulse.UpdatedAt = time.Now()
+		}
+		p.store.Put(pulse)
+		if p.onUpdate != nil {
+			p.onUpdate(p.store.Snapshot())
+		}
+		return
 	}
 }
 
@@ -94,10 +153,6 @@ func (p *Poller) loop(ctx context.Context, b binding) {
 		select {
 		case <-ctx.Done():
 			return
-
-		case <-p.refresh:
-			p.pollOnce(ctx, b, provider.FetchOptions{Fresh: true})
-			lastActive = time.Now()
 
 		case <-timer.C:
 			if !b.sched.Paused() {

@@ -43,7 +43,11 @@ class PulseController extends ChangeNotifier {
     _timer = null;
   }
 
+  /// 刷新全部账户。
   void refreshNow() => _source.refresh('');
+
+  /// 只刷新指定账户(key = "instance|accountId",即 AccountPulse.key)。
+  void refreshAccount(String key) => _source.refresh(key);
 
   void _tick() {
     try {

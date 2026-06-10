@@ -8,9 +8,10 @@ import 'status_dot.dart';
 /// AccountTile 渲染一个账户。点击行内展开:折叠态只显示最满的一条表盘,
 /// 展开态显示全部表盘 + 平台/类型/账户号/更新时间/申诉链接。桌面端 hover 高亮。
 class AccountTile extends StatefulWidget {
-  const AccountTile(this.pulse, {super.key});
+  const AccountTile(this.pulse, {super.key, this.onRefresh});
 
   final AccountPulse pulse;
+  final VoidCallback? onRefresh; // 只刷新此账户
 
   @override
   State<AccountTile> createState() => _AccountTileState();
@@ -104,6 +105,15 @@ class _AccountTileState extends State<AccountTile> {
             fontWeight: FontWeight.w700,
           ),
         ),
+        if (widget.onRefresh != null && _hover)
+          IconButton(
+            tooltip: '刷新此账户',
+            icon: const Icon(Icons.refresh, size: 15),
+            padding: EdgeInsets.zero,
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+            onPressed: widget.onRefresh,
+          ),
         Icon(
           _expanded ? Icons.expand_less : Icons.expand_more,
           size: 16,

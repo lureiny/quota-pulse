@@ -92,7 +92,9 @@ class PopoverPage extends StatelessWidget {
     final children = <Widget>[];
     groups.forEach((instance, list) {
       children.add(_groupHeader(context, instance, _groupPeak(list)));
-      children.addAll(list.map((p) => AccountTile(p)));
+      children.addAll(list.map(
+        (p) => AccountTile(p, onRefresh: () => controller.refreshAccount(p.key)),
+      ));
     });
     return ListView(padding: const EdgeInsets.only(top: 4, bottom: 8), children: children);
   }
@@ -118,7 +120,10 @@ class PopoverPage extends StatelessWidget {
                 for (final e in entries)
                   ListView(
                     padding: const EdgeInsets.only(top: 4, bottom: 8),
-                    children: e.value.map((p) => AccountTile(p)).toList(),
+                    children: e.value
+                        .map((p) => AccountTile(p,
+                            onRefresh: () => controller.refreshAccount(p.key)))
+                        .toList(),
                   ),
               ],
             ),
