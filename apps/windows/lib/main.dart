@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_acrylic/flutter_acrylic.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -17,11 +16,9 @@ import 'package:quota_pulse_ui/quota_pulse_ui.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await windowManager.ensureInitialized();
-  await Window.initialize(); // flutter_acrylic
 
   final windowOptions = WindowOptions(
     size: const Size(340, 460),
-    backgroundColor: Colors.transparent, // 透出毛玻璃
     skipTaskbar: true,
     titleBarStyle: TitleBarStyle.hidden,
     windowButtonVisibility: false,
@@ -29,16 +26,10 @@ Future<void> main() async {
   );
   await windowManager.waitUntilReadyToShow(windowOptions, () async {
     await windowManager.setAsFrameless();
-    await windowManager.setBackgroundColor(Colors.transparent);
     await windowManager.setSkipTaskbar(true);
     await windowManager.setAlwaysOnTop(true);
     await windowManager.hide(); // 托盘应用:启动即隐藏,点托盘才弹出
   });
-
-  // 毛玻璃:Windows 用 acrylic(Win10+;降级可改 WindowEffect.solid)
-  final isDark =
-      WidgetsBinding.instance.platformDispatcher.platformBrightness == Brightness.dark;
-  await Window.setEffect(effect: WindowEffect.acrylic, dark: isDark);
 
   final settings = await SettingsStore.load();
   final seed = await loadAccentColor(); // 跟随系统强调色
@@ -228,10 +219,8 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.transparent, // 透出毛玻璃,卡片自绘圆角
-      body: GlassCard(child: _content()),
-    );
+    // Windows 暂用不透明窗口(毛玻璃待定:flutter_acrylic 会挂 Windows 构建)
+    return Scaffold(body: _content());
   }
 
   Widget _content() {

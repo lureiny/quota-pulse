@@ -44,6 +44,7 @@ jobs:
   # ---------------- Windows:出便携 .zip ----------------
   build-windows:
     runs-on: windows-latest      # 自带 Visual Studio(C++ 工作负载)
+    timeout-minutes: 35          # 防止挂死跑满 6 小时
     steps:
       - uses: actions/checkout@v4
 
@@ -58,10 +59,16 @@ jobs:
 
       - run: flutter config --enable-windows-desktop
 
+      - name: 关闭 Defender 实时扫描(大幅加速 Flutter/MSVC 构建)
+        shell: pwsh
+        run: Set-MpPreference -DisableRealtimeMonitoring $true
+        continue-on-error: true
+
       - name: 确保 mingw-w64 gcc(给 Go 的 cgo c-shared 用)
         run: choco install mingw --no-progress -y
 
       - name: Build .exe 目录 + 打包 .zip
+        timeout-minutes: 25      # 卡住就快速失败,日志落盘便于定位
         working-directory: apps/windows
         shell: pwsh
         run: |
