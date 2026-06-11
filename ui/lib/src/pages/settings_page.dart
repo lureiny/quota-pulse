@@ -18,7 +18,7 @@ class SettingsPage extends StatefulWidget {
     this.onResetModeChanged,
     this.onAlertChanged,
     this.onTestNotification,
-    this.onResetTickerPosition, // Windows 悬浮跑马灯「重置位置」
+    this.onResetTickerPosition, // Windows 悬浮窗口「重置位置」
     this.autostartEnabled = false, // 开机自启动当前状态(由壳查询 OS 得到)
     this.onAutostartChanged,
   });
@@ -83,7 +83,7 @@ class _SettingsPageState extends State<SettingsPage> {
   late Set<String> _pinnedKeys; // 指定账户(可多选)
   late int _tickerMs; // 滚动速度(ms):macOS 菜单栏 + Windows 跑马灯共用
   late int _tickerWidth; // 滚动窗口宽(字符):macOS 菜单栏 + Windows 跑马灯共用
-  late bool _windowsTickerEnabled; // Windows 悬浮跑马灯开关
+  late bool _windowsTickerEnabled; // Windows 悬浮窗口开关
   late bool _windowsTickerHideFullscreen; // Windows 跑马灯全屏时隐藏
   late TrayMetric _metric; // 托盘显示量:使用量/剩余量
   late ResetMode _resetMode; // 重置显示:倒计时/绝对
@@ -473,15 +473,15 @@ class _SettingsPageState extends State<SettingsPage> {
               style: theme.textTheme.bodySmall),
         ],
 
-        // Windows 专属:桌面悬浮跑马灯(原生置顶浮窗,像素级滚动)。
+        // Windows 专属:桌面悬浮窗口(原生置顶浮窗,像素级滚动)。
         if (theme.platform == TargetPlatform.windows) ...[
           const Divider(height: 24),
-          Text('悬浮跑马灯(Windows)',
+          Text('悬浮窗口',
               style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             dense: true,
-            title: const Text('启用悬浮跑马灯', style: TextStyle(fontSize: 13)),
+            title: const Text('启用悬浮窗口', style: TextStyle(fontSize: 13)),
             subtitle: Text('桌面常驻一条可拖拽的滚动用量条;左键点开主面板',
                 style: theme.textTheme.bodySmall),
             value: _windowsTickerEnabled,

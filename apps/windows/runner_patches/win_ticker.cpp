@@ -98,7 +98,9 @@ struct Seg {
 class Ticker {
  public:
   Ticker(flutter::MethodChannel<flutter::EncodableValue>* ch, HWND owner)
-      : channel_(ch), owner_(owner) {}
+      : channel_(ch), owner_(owner) {
+    dark_ = SystemDark();  // 兜底默认;每次 update 会按 app 主题覆盖
+  }
 
   void Apply(const flutter::EncodableMap& args) {
     bool enabled = GetBool(args, "enabled", true);
@@ -113,6 +115,13 @@ class Ticker {
     if (width_ < 1.0f) width_ = 1.0f;
     scrollPref_ = GetBool(args, "scroll", false);
     hideOnFullscreen_ = GetBool(args, "hideOnFullscreen", false);
+    bool dark = GetBool(args, "dark", dark_);
+    if (dark != dark_) {
+      dark_ = dark;  // 主题切换 → 丢弃基础画刷,EnsureDevice 会按新明暗重建
+      bgBrush_.Reset();
+      textBrush_.Reset();
+      outlineBrush_.Reset();
+    }
 
     ParseSegments(args);
 
@@ -136,6 +145,13 @@ class Ticker {
                    SWP_NOSIZE | SWP_NOACTIVATE);
     ReportMoved();
     Render();
+  }
+
+  // 主面板弹出 → 浮窗降为非置顶(落到置顶的主面板之下,仍在普通窗口之上);收起 → 恢复置顶。
+  void SetPopoverOpen(bool open) {
+    if (!hwnd_) return;
+    ::SetWindowPos(hwnd_, open ? HWND_NOTOPMOST : HWND_TOPMOST, 0, 0, 0, 0,
+                   SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
   }
 
   void Destroy() {
@@ -356,7 +372,7 @@ class Ticker {
         return false;
     }
     if (!bgBrush_) {
-      bool dark = SystemDark();
+      bool dark = dark_;  // 由 app 主题决定(update 传入),非系统明暗
       target_->CreateSolidColorBrush(
           dark ? D2D1::ColorF(0.12f, 0.12f, 0.13f, 0.90f)
                : D2D1::ColorF(0.97f, 0.97f, 0.98f, 0.92f),
@@ -578,6 +594,7 @@ class Ticker {
   bool hideOnFullscreen_ = false;
   bool fsHidden_ = false;
   bool shown_ = false;
+  bool dark_ = false;  // 明暗:由 app 主题设置决定(每次 update 传入)
 
   std::vector<Seg> segs_;
   std::wstring content_;
@@ -626,6 +643,10 @@ void Attach(flutter::BinaryMessenger* messenger, HWND owner) {
         if (method == "update") {
           if (auto* m = std::get_if<flutter::EncodableMap>(call.arguments()))
             g_ticker->Apply(*m);
+          result->Success();
+        } else if (method == "setPopoverOpen") {
+          if (auto b = std::get_if<bool>(call.arguments()))
+            g_ticker->SetPopoverOpen(*b);
           result->Success();
         } else if (method == "resetPosition") {
           g_ticker->ResetPosition();

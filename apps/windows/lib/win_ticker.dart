@@ -38,6 +38,7 @@ class WinTicker {
     required bool scroll,
     required double pps,
     required double width,
+    required bool dark, // 生效后的明暗(跟随 app 主题设置,而非系统)
     required bool hideOnFullscreen,
     int? x,
     int? y,
@@ -49,11 +50,16 @@ class WinTicker {
       'scroll': scroll,
       'pps': pps,
       'width': width,
+      'dark': dark,
       'hideOnFullscreen': hideOnFullscreen,
       'x': x ?? -1,
       'y': y ?? -1,
     });
   }
+
+  /// 主面板弹出/收起时调:open=true 把浮窗降到面板之下(仍压住其他程序),false 恢复置顶。
+  static Future<void> setPopoverOpen(bool open) =>
+      _ch.invokeMethod('setPopoverOpen', open);
 
   /// 把浮窗移回默认位置(设置页「重置位置」用)。
   static Future<void> resetPosition() => _ch.invokeMethod('resetPosition');

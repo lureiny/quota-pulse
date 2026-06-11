@@ -121,7 +121,8 @@ class Shell extends StatefulWidget {
   State<Shell> createState() => _ShellState();
 }
 
-class _ShellState extends State<Shell> with TrayListener, WindowListener {
+class _ShellState extends State<Shell>
+    with TrayListener, WindowListener, WidgetsBindingObserver {
   late Settings _settings = widget.initialSettings;
   PulseController? _controller;
   final _alerter = UsageAlerter(); // 用量阈值提醒
@@ -140,6 +141,7 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
     super.initState();
     trayManager.addListener(this);
     windowManager.addListener(this);
+    WidgetsBinding.instance.addObserver(this); // 跟随系统明暗(themeMode=system 时)
     WinTicker.onClick = () => _showPopover(); // 左键点浮窗 → 弹主面板
     WinTicker.onMoved = _onTickerMoved; // 拖拽结束 → 持久化位置
     Autostart.isEnabled().then((v) {
@@ -161,9 +163,14 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
   void dispose() {
     trayManager.removeListener(this);
     windowManager.removeListener(this);
+    WidgetsBinding.instance.removeObserver(this);
     _controller?.dispose();
     super.dispose();
   }
+
+  // 系统明暗变化(themeMode=system 时):重渲染浮窗以跟随。
+  @override
+  void didChangePlatformBrightness() => _updateTicker();
 
   // ---------- 托盘 ----------
 
@@ -211,6 +218,7 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
   // ---------- 窗口(弹层) ----------
 
   Future<void> _showPopover() async {
+    WinTicker.setPopoverOpen(true); // 面板弹出时把浮窗降到面板之下(仍压住其他程序)
     await _positionNearTray();
     await windowManager.show();
     await windowManager.focus();
@@ -244,6 +252,7 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
   Future<void> _hidePopover() async {
     _source.setForeground(false);
     await windowManager.hide();
+    WinTicker.setPopoverOpen(false); // 面板收起 → 浮窗恢复置顶
   }
 
   @override
@@ -281,7 +290,16 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
     );
   }
 
-  // 悬浮跑马灯:内容与 macOS 菜单栏同源(同一选集 + 5h 用量/重置),状态走原生圆点。
+  // 浮窗明暗:跟随 app 的「主题」设置(system 时解析系统明暗),而非直接读系统。
+  bool _effectiveDark() => switch (_settings.themeMode) {
+        ThemeChoice.light => false,
+        ThemeChoice.dark => true,
+        ThemeChoice.system =>
+          WidgetsBinding.instance.platformDispatcher.platformBrightness ==
+              Brightness.dark,
+      };
+
+  // 悬浮窗口:内容与 macOS 菜单栏同源(同一选集 + 5h 用量/重置),状态走原生圆点。
   void _updateTicker() {
     final tray = _settings.tray;
     final pulses = _controller?.pulses ?? const <AccountPulse>[];
@@ -295,6 +313,7 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
       scroll: scroll,
       pps: _scrollPps,
       width: _scrollWidth,
+      dark: _effectiveDark(),
       hideOnFullscreen: tray.windowsTickerHideFullscreen,
       x: tray.windowsTickerX,
       y: tray.windowsTickerY,
@@ -324,6 +343,7 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
     setState(() => _settings = _settings.copyWith(themeMode: choice));
     widget.onThemeModeChanged(choice.toThemeMode()); // 选中即时生效
     SettingsStore.save(_settings); // 顺手持久化,无需点保存
+    _updateTicker(); // 浮窗即时跟随新主题
   }
 
   Future<void> _onAutostartChanged(bool enable) async {
