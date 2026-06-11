@@ -19,9 +19,10 @@ quota-pulse 的 **Windows 系统托盘外壳**:托盘图标 + 弹层,查看 sub2
 |---|---|---|
 | 托盘图标 | 模板 `.png`(系统染色) | 彩色 `.ico` |
 | 峰值显示 | 菜单栏标题文字(`setTitle`) | 托盘 **tooltip**(`setToolTip`,Windows 托盘无标题) |
+| 常驻滚动条 | 菜单栏滚动文字(`NSStatusItem`) | **桌面悬浮跑马灯**(原生 Win32 浮窗,可拖拽,默认开) |
 | 弹层定位 | 右上 `topRight` | 右下 `bottomRight`(托盘在右下) |
 | 隐藏图标栏 | `LSUIElement`(无 Dock) | `skipTaskbar`(无任务栏按钮) |
-| Runner 补丁 | 需要(AppDelegate / entitlements / Info.plist) | **不需要**(Windows 不沙箱) |
+| Runner 补丁 | AppDelegate / entitlements / Info.plist(菜单栏 + 沙箱/自启) | **win_ticker**(悬浮跑马灯:生成后注入 `flutter_window.cpp` + `runner/CMakeLists.txt`) |
 | 库文件 | `libqp.dylib` | `libqp.dll` |
 | 嵌入方式 | 注入 `.app/Contents/Frameworks` + ad-hoc 签名 | 拷到 `.exe` 同级目录 |
 | 打包 | `.dmg` | 便携 `.zip` |
@@ -37,7 +38,8 @@ apps/windows/
 ├── SETUP.md              构建 / 打包 / 分发指南
 ├── pubspec.yaml          依赖:quota_pulse_ui(path) / tray_manager / window_manager
 ├── assets/tray_icon.ico  系统托盘图标(32×32)
-├── setup_windows.ps1     ① 生成 runner + pub get
+├── runner_patches\       原生补丁(win_ticker:悬浮跑马灯 C++)
+├── setup_windows.ps1     ① 生成 runner + 套 win_ticker 补丁 + pub get
 ├── build_windows_dll.ps1 (被 build_app 调用)编 Go → libqp.dll(mingw)
 ├── build_app.ps1         ② 一键出 dist\quota_pulse-windows.zip
 ├── dist\                 构建产物(zip),build_app 生成

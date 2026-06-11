@@ -75,9 +75,14 @@ Set<String> _parseWindowSet(Object? raw, Set<String> fallback) {
 class TraySettings {
   final TrayMode mode;
   final List<String> pinnedKeys; // 指定账户(可多选)的 key 列表 "instance|accountId"
-  final int tickerMs; // macOS「全部账户」菜单栏滚动步进间隔(ms;越小越顺也越快)
-  final int tickerWidth; // macOS 菜单栏滚动窗口宽(可见字符数)
+  final int tickerMs; // 滚动步进间隔(ms;越小越顺也越快)。macOS 菜单栏 + Windows 跑马灯共用
+  final int tickerWidth; // 滚动可见宽(字符数)。macOS 菜单栏 + Windows 跑马灯共用
   final TrayMetric metric; // 显示使用量 / 剩余量(默认使用量)
+  // Windows 桌面悬浮跑马灯(macOS 无此项;原生浮窗,见 apps/windows/runner_patches/win_ticker)
+  final bool windowsTickerEnabled; // 是否启用(默认开)
+  final bool windowsTickerHideFullscreen; // 前台全屏时自动隐藏(默认关=始终显示)
+  final int? windowsTickerX; // 浮窗位置(物理像素;null=原生用默认右下角)
+  final int? windowsTickerY;
 
   const TraySettings({
     this.mode = TrayMode.allAccounts, // 默认:全部账户
@@ -85,6 +90,10 @@ class TraySettings {
     this.tickerMs = 300, // 默认最慢/最稳(滑块下限即此值)
     this.tickerWidth = 10, // 默认窗口宽 10 字
     this.metric = TrayMetric.usage, // 默认显示使用量
+    this.windowsTickerEnabled = true, // 默认开启
+    this.windowsTickerHideFullscreen = false,
+    this.windowsTickerX,
+    this.windowsTickerY,
   });
 
   TraySettings copyWith({
@@ -93,6 +102,10 @@ class TraySettings {
     int? tickerMs,
     int? tickerWidth,
     TrayMetric? metric,
+    bool? windowsTickerEnabled,
+    bool? windowsTickerHideFullscreen,
+    int? windowsTickerX,
+    int? windowsTickerY,
   }) =>
       TraySettings(
         mode: mode ?? this.mode,
@@ -100,6 +113,24 @@ class TraySettings {
         tickerMs: tickerMs ?? this.tickerMs,
         tickerWidth: tickerWidth ?? this.tickerWidth,
         metric: metric ?? this.metric,
+        windowsTickerEnabled: windowsTickerEnabled ?? this.windowsTickerEnabled,
+        windowsTickerHideFullscreen:
+            windowsTickerHideFullscreen ?? this.windowsTickerHideFullscreen,
+        windowsTickerX: windowsTickerX ?? this.windowsTickerX,
+        windowsTickerY: windowsTickerY ?? this.windowsTickerY,
+      );
+
+  /// 清掉浮窗位置(「重置位置」用;copyWith 无法把字段置回 null)。
+  TraySettings clearWindowsTickerPos() => TraySettings(
+        mode: mode,
+        pinnedKeys: pinnedKeys,
+        tickerMs: tickerMs,
+        tickerWidth: tickerWidth,
+        metric: metric,
+        windowsTickerEnabled: windowsTickerEnabled,
+        windowsTickerHideFullscreen: windowsTickerHideFullscreen,
+        windowsTickerX: null,
+        windowsTickerY: null,
       );
 
   Map<String, dynamic> toJson() => {
@@ -108,6 +139,10 @@ class TraySettings {
         'ticker_ms': tickerMs,
         'ticker_width': tickerWidth,
         'metric': metric.name,
+        'win_ticker_enabled': windowsTickerEnabled,
+        'win_ticker_hide_fullscreen': windowsTickerHideFullscreen,
+        if (windowsTickerX != null) 'win_ticker_x': windowsTickerX,
+        if (windowsTickerY != null) 'win_ticker_y': windowsTickerY,
       };
 
   factory TraySettings.fromJson(Map<String, dynamic> j) => TraySettings(
@@ -119,6 +154,11 @@ class TraySettings {
           (m) => m.name == j['metric'],
           orElse: () => TrayMetric.usage,
         ),
+        windowsTickerEnabled: j['win_ticker_enabled'] as bool? ?? true,
+        windowsTickerHideFullscreen:
+            j['win_ticker_hide_fullscreen'] as bool? ?? false,
+        windowsTickerX: (j['win_ticker_x'] as num?)?.toInt(),
+        windowsTickerY: (j['win_ticker_y'] as num?)?.toInt(),
       );
 }
 

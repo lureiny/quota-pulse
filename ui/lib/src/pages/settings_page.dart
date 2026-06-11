@@ -18,6 +18,7 @@ class SettingsPage extends StatefulWidget {
     this.onResetModeChanged,
     this.onAlertChanged,
     this.onTestNotification,
+    this.onResetTickerPosition, // Windows 悬浮跑马灯「重置位置」
     this.autostartEnabled = false, // 开机自启动当前状态(由壳查询 OS 得到)
     this.onAutostartChanged,
   });
@@ -38,6 +39,7 @@ class SettingsPage extends StatefulWidget {
     Set<String> recoverWindows,
   )? onAlertChanged;
   final Future<void> Function()? onTestNotification; // 发送测试通知
+  final VoidCallback? onResetTickerPosition; // Windows 跑马灯重置到默认位置
   final bool autostartEnabled;
   final void Function(bool)? onAutostartChanged;
 
@@ -79,8 +81,10 @@ class _SettingsPageState extends State<SettingsPage> {
   late ThemeChoice _theme;
   late TrayMode _trayMode;
   late Set<String> _pinnedKeys; // 指定账户(可多选)
-  late int _tickerMs; // macOS 菜单栏滚动速度(ms)
-  late int _tickerWidth; // macOS 菜单栏滚动窗口宽(字符)
+  late int _tickerMs; // 滚动速度(ms):macOS 菜单栏 + Windows 跑马灯共用
+  late int _tickerWidth; // 滚动窗口宽(字符):macOS 菜单栏 + Windows 跑马灯共用
+  late bool _windowsTickerEnabled; // Windows 悬浮跑马灯开关
+  late bool _windowsTickerHideFullscreen; // Windows 跑马灯全屏时隐藏
   late TrayMetric _metric; // 托盘显示量:使用量/剩余量
   late ResetMode _resetMode; // 重置显示:倒计时/绝对
   late bool _alertEnabled; // 用量提醒总开关
@@ -102,6 +106,8 @@ class _SettingsPageState extends State<SettingsPage> {
     _pinnedKeys = widget.initial.tray.pinnedKeys.toSet();
     _tickerMs = widget.initial.tray.tickerMs.clamp(30, 300).toInt();
     _tickerWidth = widget.initial.tray.tickerWidth.clamp(8, 40).toInt();
+    _windowsTickerEnabled = widget.initial.tray.windowsTickerEnabled;
+    _windowsTickerHideFullscreen = widget.initial.tray.windowsTickerHideFullscreen;
     _metric = widget.initial.tray.metric;
     _resetMode = widget.initial.resetMode;
     _alertEnabled = widget.initial.alertEnabled;
@@ -144,6 +150,11 @@ class _SettingsPageState extends State<SettingsPage> {
         tickerMs: _tickerMs,
         tickerWidth: _tickerWidth,
         metric: _metric,
+        windowsTickerEnabled: _windowsTickerEnabled,
+        windowsTickerHideFullscreen: _windowsTickerHideFullscreen,
+        // 保留浮窗位置(拖拽由壳持久化;设置页不持有,故从 initial 透传,避免被置空)。
+        windowsTickerX: widget.initial.tray.windowsTickerX,
+        windowsTickerY: widget.initial.tray.windowsTickerY,
       );
 
   /// 托盘相关改动即时生效(不必保存)。
@@ -460,6 +471,81 @@ class _SettingsPageState extends State<SettingsPage> {
           ]),
           Text('≈ ${(1000 / _tickerMs).round()} 字/秒(间隔越小越顺、也越快)',
               style: theme.textTheme.bodySmall),
+        ],
+
+        // Windows 专属:桌面悬浮跑马灯(原生置顶浮窗,像素级滚动)。
+        if (theme.platform == TargetPlatform.windows) ...[
+          const Divider(height: 24),
+          Text('悬浮跑马灯(Windows)',
+              style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            title: const Text('启用悬浮跑马灯', style: TextStyle(fontSize: 13)),
+            subtitle: Text('桌面常驻一条可拖拽的滚动用量条;左键点开主面板',
+                style: theme.textTheme.bodySmall),
+            value: _windowsTickerEnabled,
+            onChanged: (v) {
+              setState(() => _windowsTickerEnabled = v);
+              _emitTray();
+            },
+          ),
+          if (_windowsTickerEnabled) ...[
+            Row(children: [
+              SizedBox(
+                  width: 76,
+                  child: Text('速度 ${_tickerMs}ms', style: theme.textTheme.bodySmall)),
+              Expanded(
+                child: Slider(
+                  min: 30,
+                  max: 300,
+                  divisions: 27,
+                  value: _tickerMs.toDouble(),
+                  onChanged: (v) {
+                    setState(() => _tickerMs = v.round());
+                    _emitTray();
+                  },
+                ),
+              ),
+            ]),
+            Row(children: [
+              SizedBox(
+                  width: 76,
+                  child: Text('宽度 $_tickerWidth 字', style: theme.textTheme.bodySmall)),
+              Expanded(
+                child: Slider(
+                  min: 8,
+                  max: 40,
+                  divisions: 32,
+                  value: _tickerWidth.toDouble(),
+                  onChanged: (v) {
+                    setState(() => _tickerWidth = v.round());
+                    _emitTray();
+                  },
+                ),
+              ),
+            ]),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              title: const Text('全屏时自动隐藏', style: TextStyle(fontSize: 13)),
+              subtitle: Text('前台应用全屏覆盖整屏时自动藏起,退出再显',
+                  style: theme.textTheme.bodySmall),
+              value: _windowsTickerHideFullscreen,
+              onChanged: (v) {
+                setState(() => _windowsTickerHideFullscreen = v);
+                _emitTray();
+              },
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => widget.onResetTickerPosition?.call(),
+                icon: const Icon(Icons.restart_alt, size: 16),
+                label: const Text('重置位置'),
+              ),
+            ),
+          ],
         ],
 
         const SizedBox(height: 12),

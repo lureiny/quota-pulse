@@ -22,6 +22,7 @@ English · [中文](README.zh-CN.md)
 ### 🖥️ Menu bar / tray
 - **macOS**: a custom `NSStatusItem` with a **fixed icon** + **smoothly scrolling text** (pixel-level, 60 fps) when content overflows; static when it fits. Scroll **width** and **speed** are configurable.
 - **Windows**: a **two-line-per-account tooltip** (status emoji + `instance·account` on line 1, usage + reset on line 2), folding to `…and N more` past the tooltip's length budget.
+- **Windows floating ticker** *(on by default)*: a **draggable, always-on-top desktop strip** showing the same scrolling usage line as the macOS menu bar — drawn natively (Direct2D, pixel-level 60 fps scroll, colored status dots). Click it to open the panel, drag to reposition (persisted), and optionally auto-hide it over fullscreen apps.
 - **Always shows the 5h window** (remaining + reset) regardless of the chosen display mode.
 - Show **usage** or **remaining** percentage — your pick.
 - Tray content scope is configurable: **all accounts** (default) or a **multi-select pinned subset**.
@@ -59,8 +60,10 @@ English · [中文](README.zh-CN.md)
 | Tray scope | all accounts · pinned (multi-select) | **all accounts** |
 | Tray metric | usage % · remaining % | **usage** |
 | Reset display | countdown · absolute | **countdown** |
-| Menu-bar scroll width *(macOS)* | characters | **10** |
-| Menu-bar scroll speed *(macOS)* | ms per step (lower = faster) | **300** |
+| Scroll width *(macOS menu bar / Windows ticker)* | characters | **10** |
+| Scroll speed *(macOS menu bar / Windows ticker)* | ms per step (lower = faster) | **300** |
+| Windows floating ticker | on / off | **on** |
+| Ticker auto-hide on fullscreen *(Windows)* | on / off | off |
 | Usage alerts (master) | on / off | **on** |
 | Alert threshold | 50–100% | **90%** |
 | Over-threshold windows | 5h · 7d (multi-select) | **5h + 7d** |

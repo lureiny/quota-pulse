@@ -10,6 +10,7 @@ import 'package:window_manager/window_manager.dart';
 import 'package:quota_pulse_ui/quota_pulse_ui.dart';
 
 import 'autostart.dart'; // 开机自启动(Windows:注册表 Run 项)
+import 'win_ticker.dart'; // 桌面悬浮跑马灯(原生 Win32 浮层 + D2D 像素级滚动)
 
 // ── Windows 与 macOS 壳的差异(其余逻辑共用 ui 包) ──
 //   · 托盘图标用彩色 .ico(非 macOS 模板图);
@@ -130,16 +131,23 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
 
   PulseSource get _source => widget.source;
 
+  // 悬浮跑马灯滚动参数(与 macOS 菜单栏同源):tickerMs→pps(点/秒),tickerWidth→可见宽(逻辑像素)。
+  double get _scrollPps => 8000.0 / _settings.tray.tickerMs.clamp(20, 1000);
+  double get _scrollWidth => _settings.tray.tickerWidth.clamp(8, 40) * 9.0;
+
   @override
   void initState() {
     super.initState();
     trayManager.addListener(this);
     windowManager.addListener(this);
+    WinTicker.onClick = () => _showPopover(); // 左键点浮窗 → 弹主面板
+    WinTicker.onMoved = _onTickerMoved; // 拖拽结束 → 持久化位置
     Autostart.isEnabled().then((v) {
       if (mounted) setState(() => _autostartEnabled = v);
     });
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _initTray();
+      _updateTicker(); // 启动即按设置建/隐浮窗(数据未到时显示占位)
       if (_settings.configured) {
         _startCore(_settings);
       } else {
@@ -273,9 +281,30 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
     );
   }
 
+  // 悬浮跑马灯:内容与 macOS 菜单栏同源(同一选集 + 5h 用量/重置),状态走原生圆点。
+  void _updateTicker() {
+    final tray = _settings.tray;
+    final pulses = _controller?.pulses ?? const <AccountPulse>[];
+    final segs = tickerSegments(pulses, tray, _settings.resetMode)
+        .map((s) => <String, Object>{'color': s.color, 'text': s.text})
+        .toList();
+    final scroll = trayAccounts(pulses, tray).length > 1; // 多账户才滚(同 macOS)
+    WinTicker.update(
+      segments: segs,
+      enabled: tray.windowsTickerEnabled,
+      scroll: scroll,
+      pps: _scrollPps,
+      width: _scrollWidth,
+      hideOnFullscreen: tray.windowsTickerHideFullscreen,
+      x: tray.windowsTickerX,
+      y: tray.windowsTickerY,
+    );
+  }
+
   void _onPulse() {
     _alerter.check(_controller?.pulses ?? const <AccountPulse>[], _settings);
     _updateTray();
+    _updateTicker();
     if (mounted) setState(() {});
   }
 
@@ -315,13 +344,25 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
     setState(() => _settings = _settings.copyWith(tray: tray));
     SettingsStore.save(_settings);
     _updateTray(); // 立刻按新设置重渲染托盘
+    _updateTicker(); // 跑马灯开关/速度/宽度/全屏隐藏即时生效
   }
+
+  // 浮窗拖拽后:静默持久化新位置(物理像素),不重渲染。
+  void _onTickerMoved(int x, int y) {
+    _settings = _settings.copyWith(
+        tray: _settings.tray.copyWith(windowsTickerX: x, windowsTickerY: y));
+    SettingsStore.save(_settings);
+  }
+
+  // 设置页「重置位置」:原生移回默认位置(其 onMoved 回调会顺带持久化新坐标)。
+  void _onResetTickerPosition() => WinTicker.resetPosition();
 
   // 重置显示(倒计时/绝对):主页随 setState 重建,托盘 tooltip 即时重渲染。
   void _onResetModeChanged(ResetMode mode) {
     setState(() => _settings = _settings.copyWith(resetMode: mode));
     SettingsStore.save(_settings);
     _updateTray();
+    _updateTicker();
   }
 
   // 用量提醒(总开关/阈值/各类监听窗口):即时持久化;下一次快照检测即按新设置生效。
@@ -366,6 +407,7 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
         onResetModeChanged: _onResetModeChanged,
         onAlertChanged: _onAlertChanged,
         onTestNotification: () => _alerter.testNotification(),
+        onResetTickerPosition: _onResetTickerPosition,
         autostartEnabled: _autostartEnabled,
         onAutostartChanged: _onAutostartChanged,
         onCancel: _settings.configured ? () => setState(() => _view = _View.list) : null,

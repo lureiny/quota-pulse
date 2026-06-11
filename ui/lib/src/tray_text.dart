@@ -96,6 +96,37 @@ String renderTrayAccountLine(
   return '${_statusEmoji(a.status)} ${_accountName(a)} ${_metricText(m, metric)}$tail';
 }
 
+/// Windows 悬浮跑马灯的一段:一个账户 = 状态色 + 不含 emoji 的文本。
+/// 原生侧把 [color] 画成圆点(规避 Windows 彩色 emoji 的渲染复杂度)、[text] 用主题色绘制。
+class TickerSeg {
+  final int color; // 状态色 ARGB(0xFFRRGGBB)
+  final String text;
+  const TickerSeg(this.color, this.text);
+}
+
+String _tickerLine(AccountPulse a,
+    {required TrayMetric metric, required ResetMode resetMode}) {
+  final m = _fiveHour(a);
+  final reset = _reset(m, resetMode);
+  final tail = reset.isEmpty ? '' : ' · $reset';
+  return '${_accountName(a)} ${_metricText(m, metric)}$tail';
+}
+
+/// Windows 跑马灯内容:按 [trayAccounts] 选集,逐账户给 (状态色, 文本)。
+/// 与 macOS 菜单栏同源(同一选集 / 同样的 5h 用量+重置),只是去掉 emoji、状态走原生圆点。
+List<TickerSeg> tickerSegments(
+  List<AccountPulse> pulses,
+  TraySettings tray,
+  ResetMode resetMode,
+) =>
+    [
+      for (final a in trayAccounts(pulses, tray))
+        TickerSeg(
+          statusColor(a.status).value,
+          _tickerLine(a, metric: tray.metric, resetMode: resetMode),
+        ),
+    ];
+
 /// Windows 托盘 tooltip:每个账户占两行——
 ///   行1:状态emoji + 实例·账户名;行2(缩进):5h 用量/剩余 · ⏳重置。
 /// 比例字体(Segoe UI,app 改不了)下多账户的"列"无法用空格对齐(空格宽 ≠ 字宽),
