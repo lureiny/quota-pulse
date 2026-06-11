@@ -367,6 +367,7 @@ class _ShellState extends State<Shell> with WindowListener {
       controller: _controller!,
       layout: _settings.layout,
       resetMode: _settings.resetMode,
+      instanceUrls: _settings.instanceUrls(),
       onRefresh: () => _controller?.refreshNow(),
       onSettings: () => setState(() => _view = _View.settings),
     );

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../format.dart';
 import '../models/pulse.dart';
@@ -16,6 +17,7 @@ class PopoverPage extends StatefulWidget {
     required this.onRefresh,
     required this.onSettings,
     this.resetMode = ResetMode.countdown,
+    this.instanceUrls = const {},
   });
 
   final PulseController controller;
@@ -23,6 +25,7 @@ class PopoverPage extends StatefulWidget {
   final VoidCallback onRefresh;
   final VoidCallback onSettings;
   final ResetMode resetMode; // 重置显示:倒计时 / 绝对(随设置,透传到 MeterBar)
+  final Map<String, String> instanceUrls; // 实例名 → 后台 URL(把实例名做成超链接)
 
   @override
   State<PopoverPage> createState() => _PopoverPageState();
@@ -35,6 +38,17 @@ class _PopoverPageState extends State<PopoverPage> {
   void _toggle(String instance) => setState(() {
         if (!_collapsed.remove(instance)) _collapsed.add(instance);
       });
+
+  // 系统默认浏览器打开实例后台(macOS=NSWorkspace / Windows=ShellExecute,共用 url_launcher)。
+  // 收 String?:调用点的 url 经 hasUrl 守卫但 Dart 不据此提升为非空,这里统一判空。
+  Future<void> _open(String? url) async {
+    if (url == null || url.isEmpty) return;
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {}
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -103,6 +117,7 @@ class _PopoverPageState extends State<PopoverPage> {
         collapsible: true,
         collapsed: collapsed,
         onToggle: () => _toggle(instance),
+        url: widget.instanceUrls[instance],
       ));
       if (!collapsed) {
         children.addAll(list.map(
@@ -140,7 +155,7 @@ class _PopoverPageState extends State<PopoverPage> {
                       // 标签页里 Tab 已显示名字,这里不再重复;也不提供折叠。
                       _groupHeader(context, e.key, _groupPeak(e.value),
                           () => widget.controller.refreshInstance(e.key),
-                          showName: false),
+                          showName: false, url: widget.instanceUrls[e.key]),
                       ...e.value.map((p) => AccountTile(p,
                           onRefresh: () => widget.controller.refreshAccount(p.key),
                           resetMode: widget.resetMode)),
@@ -163,8 +178,10 @@ class _PopoverPageState extends State<PopoverPage> {
     bool collapsible = false, // 分组模式可折叠
     bool collapsed = false,
     VoidCallback? onToggle,
+    String? url, // 实例后台 URL:有则把实例名做成超链接(分组)/ 加打开图标(标签页)
   }) {
     final theme = Theme.of(context);
+    final hasUrl = url != null && url.isNotEmpty;
     final row = Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 8, 4),
       child: Row(
@@ -180,17 +197,41 @@ class _PopoverPageState extends State<PopoverPage> {
           ],
           if (showName)
             Flexible(
-              child: Text(instance.toUpperCase(),
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                    letterSpacing: 0.5,
-                  )),
+              child: hasUrl
+                  ? MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: GestureDetector(
+                        onTap: () => _open(url),
+                        child: Text(instance.toUpperCase(),
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              color: theme.colorScheme.primary,
+                              letterSpacing: 0.5,
+                              decoration: TextDecoration.underline,
+                              decorationColor: theme.colorScheme.primary,
+                            )),
+                      ),
+                    )
+                  : Text(instance.toUpperCase(),
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                        letterSpacing: 0.5,
+                      )),
             ),
           const Spacer(),
           if (peak != null)
             Text(fmtPct(peak),
                 style: theme.textTheme.labelSmall?.copyWith(color: meterColor(peak))),
+          if (!showName && hasUrl)
+            IconButton(
+              tooltip: '打开后台',
+              icon: const Icon(Icons.open_in_new, size: 14),
+              padding: const EdgeInsets.only(left: 6),
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+              onPressed: () => _open(url),
+            ),
           IconButton(
             tooltip: '刷新本实例',
             icon: const Icon(Icons.refresh, size: 15),

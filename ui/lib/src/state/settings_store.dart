@@ -159,10 +159,11 @@ class Settings {
         resetMode: resetMode ?? this.resetMode,
       );
 
-  /// 构造核心配置 JSON;实例名唯一化(与核心 facade 的去重一致,避免 key 串号)。
-  String toConfigJson() {
+  /// 已配置实例 → (唯一展示名, 实例)。唯一名规则与核心 facade 去重一致(避免 key 串号),
+  /// 也与 poller 盖到 pulse.instance 上的名字一致 —— 主页据此把实例名匹配到 URL。
+  List<MapEntry<String, Sub2apiInstance>> _uniqueInstances() {
     final used = <String>{};
-    final providers = <Map<String, dynamic>>[];
+    final out = <MapEntry<String, Sub2apiInstance>>[];
     for (var i = 0; i < instances.length; i++) {
       final inst = instances[i];
       if (!inst.configured) continue;
@@ -174,9 +175,19 @@ class Settings {
         k++;
       }
       used.add(unique);
+      out.add(MapEntry(unique, inst));
+    }
+    return out;
+  }
+
+  /// 构造核心配置 JSON。
+  String toConfigJson() {
+    final providers = <Map<String, dynamic>>[];
+    for (final e in _uniqueInstances()) {
+      final inst = e.value;
       providers.add({
         'type': 'sub2api',
-        'name': unique,
+        'name': e.key,
         'base_url': inst.baseUrl.trim(),
         'api_key': inst.apiKey.trim(),
         'accounts': {
@@ -186,6 +197,17 @@ class Settings {
       });
     }
     return jsonEncode({'providers': providers});
+  }
+
+  /// 实例(唯一展示名,与 pulse.instance 一致)→ 后台源站 URL(scheme://host[:port],去路径)。
+  /// 供主页把实例名做成"点击打开后台"超链接。
+  Map<String, String> instanceUrls() {
+    final out = <String, String>{};
+    for (final e in _uniqueInstances()) {
+      final origin = _originOf(e.value.baseUrl.trim());
+      if (origin.isNotEmpty) out[e.key] = origin;
+    }
+    return out;
   }
 
   Map<String, dynamic> toJson() => {
@@ -216,6 +238,18 @@ class Settings {
           orElse: () => ResetMode.countdown,
         ),
       );
+}
+
+/// 从 baseUrl 取源站 "scheme://host[:port]"(去掉路径);无 scheme 时按 https 处理。
+/// 无法解析(无 host)返回空串。
+String _originOf(String raw) {
+  if (raw.isEmpty) return '';
+  final s = (raw.startsWith('http://') || raw.startsWith('https://'))
+      ? raw
+      : 'https://$raw';
+  final u = Uri.tryParse(s);
+  if (u == null || u.host.isEmpty) return '';
+  return '${u.scheme}://${u.host}${u.hasPort ? ':${u.port}' : ''}';
 }
 
 /// 持久化:整个 Settings 存成一个 JSON;兼容迁移旧的单实例键。

@@ -12,6 +12,7 @@ dependencies:
   ffi: ^2.1.0                  # dart:ffi 辅助(native_core)
   shared_preferences: ^2.2.0  # 设置持久化(settings_store)
   system_theme: ^3.3.0        # 读系统强调色(跟随系统 accent)
+  url_launcher: ^6.3.0        # 系统默认浏览器打开实例后台(macOS=NSWorkspace / Windows=ShellExecute)
 
 dev_dependencies:
   flutter_lints: ^4.0.0
