@@ -42,9 +42,14 @@ Future<void> main() async {
   final isDark =
       WidgetsBinding.instance.platformDispatcher.platformBrightness == Brightness.dark;
   await Window.setEffect(effect: WindowEffect.acrylic, dark: isDark);
-  // flutter_acrylic 在 Windows 上套 acrylic 后会把标题栏(连带最小化/最大化/关闭三个按钮)
-  // 加回来,覆盖掉前面的无边框设置;故套完效果再断言一次无边框,确保弹层右上角无窗口按钮。
+  // flutter_acrylic 在 Windows 上套 acrylic 后会把标题栏(连带最小化/最大化/关闭三个按钮)加回来。
+  // 注:flutter_acrylic 的隐藏按钮 API 仅 macOS 有效;window_manager 的 setTitleBarStyle 在
+  // setAsFrameless 之后又会失效(已知问题)。故套完效果后:再断言无边框 + 直接剥掉
+  // 最小化/最大化/关闭三个窗口样式位(WS_MINIMIZEBOX/WS_MAXIMIZEBOX/WS_SYSMENU),多管齐下。
   await windowManager.setAsFrameless();
+  await windowManager.setMinimizable(false);
+  await windowManager.setMaximizable(false);
+  await windowManager.setClosable(false);
 
   final settings = await SettingsStore.load();
   final seed = await loadAccentColor(); // 跟随系统强调色

@@ -190,9 +190,8 @@ class Settings {
         'name': e.key,
         'base_url': inst.baseUrl.trim(),
         'api_key': inst.apiKey.trim(),
-        'accounts': {
-          'filter': {'status': 'active'}
-        },
+        // 不按 status 过滤:账户限流后 sub2api 会把它改成非 active(自动停用),
+        // 过滤会让它从列表消失(网页仍可见)。拉全部账户,真实状态由 UI 状态点体现。
         'poll': {'passive_interval': '60s', 'active_interval': '10m'},
       });
     }

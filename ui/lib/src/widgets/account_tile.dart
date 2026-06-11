@@ -72,7 +72,6 @@ class _AccountTileState extends State<AccountTile> {
   }
 
   Widget _headerRow(ThemeData theme, ColorScheme scheme, AccountPulse p) {
-    final peak = p.peakUtilization;
     return Row(
       children: [
         StatusDot(p.status),
@@ -85,14 +84,6 @@ class _AccountTileState extends State<AccountTile> {
           ),
         ),
         if (p.tier.isNotEmpty) _chip(scheme, p.tier),
-        const SizedBox(width: 6),
-        Text(
-          fmtPct(peak),
-          style: theme.textTheme.labelMedium?.copyWith(
-            color: meterColor(peak),
-            fontWeight: FontWeight.w700,
-          ),
-        ),
         if (widget.onRefresh != null)
           Opacity(
             opacity: _hover ? 1 : 0, // 预留位避免抖动;hover 才可点

@@ -81,16 +81,6 @@ class _PopoverPageState extends State<PopoverPage> {
     return out;
   }
 
-  double? _groupPeak(List<AccountPulse> list) {
-    double? peak;
-    for (final p in list) {
-      final u = p.peakUtilization;
-      if (u == null) continue;
-      if (peak == null || u > peak) peak = u;
-    }
-    return peak;
-  }
-
   Widget _body(BuildContext context, Map<String, List<AccountPulse>> groups) {
     final err = widget.controller.error;
     if (err != null && widget.controller.pulses.isEmpty) {
@@ -112,7 +102,6 @@ class _PopoverPageState extends State<PopoverPage> {
       children.add(_groupHeader(
         context,
         instance,
-        _groupPeak(list),
         () => widget.controller.refreshInstance(instance),
         collapsible: true,
         collapsed: collapsed,
@@ -153,7 +142,7 @@ class _PopoverPageState extends State<PopoverPage> {
                     padding: const EdgeInsets.only(top: 4, bottom: 8),
                     children: [
                       // 标签页里 Tab 已显示名字,这里不再重复;也不提供折叠。
-                      _groupHeader(context, e.key, _groupPeak(e.value),
+                      _groupHeader(context, e.key,
                           () => widget.controller.refreshInstance(e.key),
                           showName: false, url: widget.instanceUrls[e.key]),
                       ...e.value.map((p) => AccountTile(p,
@@ -172,7 +161,6 @@ class _PopoverPageState extends State<PopoverPage> {
   Widget _groupHeader(
     BuildContext context,
     String instance,
-    double? peak,
     VoidCallback onRefresh, {
     bool showName = true, // 标签页里 Tab 已显示名字,这里不再重复
     bool collapsible = false, // 分组模式可折叠
@@ -220,9 +208,6 @@ class _PopoverPageState extends State<PopoverPage> {
                       )),
             ),
           const Spacer(),
-          if (peak != null)
-            Text(fmtPct(peak),
-                style: theme.textTheme.labelSmall?.copyWith(color: meterColor(peak))),
           if (!showName && hasUrl)
             IconButton(
               tooltip: '打开后台',
