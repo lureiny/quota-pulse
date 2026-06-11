@@ -30,7 +30,7 @@ English · [中文](README.zh-CN.md)
 - **Two notification types, each independently configurable** — and for each you pick which windows trigger it (**5h** / **7d**):
   - **Over threshold** (default **on**, 5h + 7d) — fires when usage crosses your threshold (default **90%**), escalating from 🚨 *usage alert* to 🛑 *quota full* at ≥ 100% (rate-limited).
   - **Quota recovered** (default **off**) — ✅ fires when a window falls back below the threshold (a window reset is the typical case).
-- **Once per reset cycle, per type** — de-duplicated by the window's reset time, so it won't spam you each poll.
+- **Once per reset cycle, per type** — de-duplicated by the window's reset time, compared with a ±10s tolerance so jitter in the raw value isn't mistaken for a new cycle (which would otherwise spam you each poll). A real reset starts a new cycle; the recovery notice fires when usage falls back below the threshold.
 - **Silent on first snapshot** (and after re-enabling) so startup doesn't fire a burst for already-high accounts.
 - System sound on each notification; a **Test button** in settings fires a sample of every notification type (🚨 / 🛑 / ✅) so you can verify delivery and preview each, without waiting to hit a threshold.
 

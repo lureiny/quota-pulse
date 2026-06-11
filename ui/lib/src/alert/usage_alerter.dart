@@ -7,11 +7,18 @@ import '../state/settings_store.dart';
 ///   · 超阈值(over):用量上穿阈值 → 提醒;
 ///   · 额度恢复(recover):曾在阈值之上、现回落到阈值之下(含窗口重置)→ 提醒。
 ///
-/// 去重:每类通知在同一个重置周期内只发一次——以 [Meter.resetsAt] 作"周期指纹",
-/// 窗口重置(resetsAt 变化)后可再次提醒;无 resetsAt 的窗口退化为"穿越沿"触发。
+/// 去重:每类通知在同一个重置周期内只发一次,以 [Meter.resetsAt] 作"周期指纹"。
+/// 关键:resets_at 是固定的重置边界,但原始值在每轮轮询之间常有亚秒/秒级抖动(延迟、
+/// 重算、被动/主动取值差异),用"精确相等"会被误判成每轮都是新周期 → 持续告警。
+/// 故改用 ±[_kResetToleranceSecs]s 容差:两次 resets_at 相差不超过该秒数即视为同一周期。
+/// 真正重置(resets_at 大幅前移)→ 容差外 → 新周期,可再次提醒。
+/// 无 resets_at 的窗口退化为"穿越沿"触发。
 /// 首次喂入只 seed 状态、不提醒(避免启动时一堆已超阈值账户同时刷屏);关闭后再开启亦然。
 /// 通知范围只覆盖 [kAlertWindows](当前 5h / 7d),其余窗口不打扰。
 class UsageAlerter {
+  /// 同周期容差:两次 resets_at 相差 ≤ 此秒数即视为"没变"(吸收抖动,避免持续告警)。
+  static const int _kResetToleranceSecs = 10;
+
   static bool _setupDone = false;
 
   /// 初始化通知后端(Windows 需创建快捷方式挂 AppUserModelID 才能弹 toast)。只需调一次。
@@ -25,11 +32,11 @@ class UsageAlerter {
   }
 
   bool _seeded = false;
-  final Map<String, DateTime?> _overReset = {}; // key -> 已发"超阈值"的该周期 resetsAt
-  final Map<String, DateTime?> _recoverReset = {}; // key -> 已发"恢复"的该周期 resetsAt
+  final Map<String, DateTime?> _overCycle = {}; // key -> 已发"超阈值"的该周期 resets_at
+  final Map<String, DateTime?> _recoverCycle = {}; // key -> 已发"恢复"的该周期 resets_at
   final Map<String, bool> _wasAbove = {}; // key -> 上次是否在阈值之上(判穿越沿)
 
-  /// 每次拿到新快照时调用:按设置检测各窗口的超阈值/恢复,去重后发通知。
+  /// 每次拿到新快照时调用:按设置检测各窗口的超阈值/恢复,按周期去重后发通知。
   void check(List<AccountPulse> pulses, Settings settings) {
     final over = settings.alertOverWindows;
     final recover = settings.alertRecoverWindows;
@@ -51,21 +58,22 @@ class UsageAlerter {
         final above = u >= threshold;
         final wasAbove = _wasAbove[key];
 
-        // 超阈值:在阈值之上 + 本周期未发过(无周期信息则取上穿沿)。
+        // 超阈值:在阈值之上 + 本周期还没发过(resets_at 抖动算同周期;无周期信息取上穿沿)。
         if (over.contains(m.id) && above) {
-          final fresh =
-              reset != null ? _overReset[key] != reset : wasAbove != true;
+          final fresh = reset != null
+              ? !_sameCycle(_overCycle[key], reset)
+              : wasAbove != true;
           if (fresh) {
-            _overReset[key] = reset; // 首次也标(只是不弹)
+            _overCycle[key] = reset; // 首次也标(只是不弹)
             if (!firstTime) _fireOver(p, m, u);
           }
         }
 
-        // 额度恢复:曾在阈值之上、现回落到阈值之下 + 本周期未发过。
+        // 额度恢复:曾在阈值之上、现回落到阈值之下(无余量)+ 本周期还没发过。
         if (recover.contains(m.id) && wasAbove == true && !above) {
-          final fresh = reset == null || _recoverReset[key] != reset;
+          final fresh = reset == null || !_sameCycle(_recoverCycle[key], reset);
           if (fresh) {
-            _recoverReset[key] = reset;
+            _recoverCycle[key] = reset;
             if (!firstTime) _fireRecover(p, m, u);
           }
         }
@@ -74,6 +82,12 @@ class UsageAlerter {
       }
     }
     _seeded = true;
+  }
+
+  /// 两个重置时刻是否属于同一周期:都非空且相差 ≤ [_kResetToleranceSecs] 秒。
+  static bool _sameCycle(DateTime? a, DateTime? b) {
+    if (a == null || b == null) return false;
+    return a.difference(b).inMilliseconds.abs() <= _kResetToleranceSecs * 1000;
   }
 
   void _fireOver(AccountPulse p, Meter m, double u) => _showOver(_who(p, m), u);
