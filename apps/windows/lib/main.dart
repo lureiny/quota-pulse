@@ -42,6 +42,9 @@ Future<void> main() async {
   final isDark =
       WidgetsBinding.instance.platformDispatcher.platformBrightness == Brightness.dark;
   await Window.setEffect(effect: WindowEffect.acrylic, dark: isDark);
+  // flutter_acrylic 在 Windows 上套 acrylic 后会把标题栏(连带最小化/最大化/关闭三个按钮)
+  // 加回来,覆盖掉前面的无边框设置;故套完效果再断言一次无边框,确保弹层右上角无窗口按钮。
+  await windowManager.setAsFrameless();
 
   final settings = await SettingsStore.load();
   final seed = await loadAccentColor(); // 跟随系统强调色

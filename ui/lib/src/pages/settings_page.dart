@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/pulse.dart';
 import '../state/settings_store.dart';
+import '../version.dart';
 
 /// SettingsPage:管理多个 sub2api 实例 + 列表布局 + 托盘内容。
 class SettingsPage extends StatefulWidget {
@@ -67,8 +68,7 @@ class _SettingsPageState extends State<SettingsPage> {
   late ListLayout _layout;
   late ThemeChoice _theme;
   late TrayMode _trayMode;
-  String? _pinnedKey;
-  late TextEditingController _template;
+  late Set<String> _pinnedKeys; // 指定账户(可多选)
   late int _tickerMs; // macOS 菜单栏滚动速度(ms)
   late int _tickerWidth; // macOS 菜单栏滚动窗口宽(字符)
   late TrayMetric _metric; // 托盘显示量:使用量/剩余量
@@ -85,8 +85,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _layout = widget.initial.layout;
     _theme = widget.initial.themeMode;
     _trayMode = widget.initial.tray.mode;
-    _pinnedKey = widget.initial.tray.pinnedKey;
-    _template = TextEditingController(text: widget.initial.tray.template ?? '{name} {peak}%');
+    _pinnedKeys = widget.initial.tray.pinnedKeys.toSet();
     _tickerMs = widget.initial.tray.tickerMs.clamp(30, 300).toInt();
     _tickerWidth = widget.initial.tray.tickerWidth.clamp(8, 40).toInt();
     _metric = widget.initial.tray.metric;
@@ -103,7 +102,6 @@ class _SettingsPageState extends State<SettingsPage> {
     for (final d in _drafts) {
       d.dispose();
     }
-    _template.dispose();
     super.dispose();
   }
 
@@ -116,8 +114,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   TraySettings _tray() => TraySettings(
         mode: _trayMode,
-        pinnedKey: _pinnedKey,
-        template: _template.text.trim().isEmpty ? null : _template.text.trim(),
+        pinnedKeys: _pinnedKeys.toList(),
         tickerMs: _tickerMs,
         tickerWidth: _tickerWidth,
         metric: _metric,
@@ -140,16 +137,14 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final accountKeys = widget.accounts.map((a) => a.key).toSet();
-    final pinnedValue =
-        (_pinnedKey != null && accountKeys.contains(_pinnedKey)) ? _pinnedKey : null;
 
-    return ListView(
-      padding: const EdgeInsets.all(14),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // 固定顶栏:返回按钮不随内容滚动,设置页任何位置都能返回。
         if (widget.onCancel != null)
           Padding(
-            padding: const EdgeInsets.only(bottom: 6),
+            padding: const EdgeInsets.fromLTRB(8, 8, 8, 2),
             child: Row(
               children: [
                 IconButton(
@@ -167,6 +162,10 @@ class _SettingsPageState extends State<SettingsPage> {
               ],
             ),
           ),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(14, 6, 14, 14),
+            children: [
         Text('sub2api 实例', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
         for (var i = 0; i < _drafts.length; i++) _instanceCard(i),
@@ -245,12 +244,11 @@ class _SettingsPageState extends State<SettingsPage> {
             isExpanded: true,
             underline: const SizedBox.shrink(),
             items: const [
-              DropdownMenuItem(value: TrayMode.pinnedAccount, child: Text('指定账户·5h 剩余/重置(默认)')),
-              DropdownMenuItem(value: TrayMode.allAccounts, child: Text('全部账户')),
-              DropdownMenuItem(value: TrayMode.custom, child: Text('自定义模板')),
+              DropdownMenuItem(value: TrayMode.allAccounts, child: Text('全部账户(默认)')),
+              DropdownMenuItem(value: TrayMode.pinnedAccounts, child: Text('指定账户(可多选)')),
             ],
             onChanged: (v) {
-              setState(() => _trayMode = v ?? TrayMode.pinnedAccount);
+              setState(() => _trayMode = v ?? TrayMode.allAccounts);
               _emitTray(); // 即时生效
             },
           ),
@@ -270,46 +268,42 @@ class _SettingsPageState extends State<SettingsPage> {
             _emitTray(); // 即时生效
           },
         ),
-        if (_trayMode == TrayMode.pinnedAccount) ...[
+        if (_trayMode == TrayMode.pinnedAccounts) ...[
           const SizedBox(height: 8),
-          _boxed(
-            DropdownButton<String>(
-              value: pinnedValue,
-              isExpanded: true,
-              underline: const SizedBox.shrink(),
-              hint: const Text('选择要钉住的账户'),
-              items: [
+          if (widget.accounts.isEmpty)
+            Text('暂无账户;先保存实例、等拉到数据后再来选',
+                style: theme.textTheme.bodySmall)
+          else
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
                 for (final a in widget.accounts)
-                  DropdownMenuItem(
-                    value: a.key,
-                    child: Text('${a.instance} · ${a.name.isEmpty ? a.accountId : a.name}',
-                        overflow: TextOverflow.ellipsis),
+                  FilterChip(
+                    label: Text(
+                      '${a.instance}·${a.name.isEmpty ? a.accountId : a.name}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    selected: _pinnedKeys.contains(a.key),
+                    onSelected: (sel) {
+                      setState(() {
+                        if (sel) {
+                          _pinnedKeys.add(a.key);
+                        } else {
+                          _pinnedKeys.remove(a.key);
+                        }
+                      });
+                      _emitTray();
+                    },
                   ),
               ],
-              onChanged: (v) {
-                setState(() => _pinnedKey = v);
-                _emitTray();
-              },
             ),
-          ),
-          if (widget.accounts.isEmpty)
+          if (widget.accounts.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 4),
-              child: Text('暂无账户;先保存实例、等拉到数据后再来选', style: theme.textTheme.bodySmall),
+              child: Text('可多选;不选则默认显示最忙的一个',
+                  style: theme.textTheme.bodySmall),
             ),
-        ],
-        if (_trayMode == TrayMode.custom) ...[
-          const SizedBox(height: 8),
-          TextField(
-            controller: _template,
-            decoration: _dec('模板,如 {name} {peak}%'),
-            style: const TextStyle(fontSize: 13),
-            onChanged: (_) => _emitTray(), // 即时生效
-          ),
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Text('变量:{name} {peak} {count}', style: theme.textTheme.bodySmall),
-          ),
         ],
 
         const Divider(height: 24),
@@ -393,6 +387,18 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
         ],
+        const SizedBox(height: 14),
+        Center(
+          child: Text(
+            '版本 $appVersion',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
+            ),
+          ),
+        ),
+            ],
+          ),
+        ),
       ],
     );
   }

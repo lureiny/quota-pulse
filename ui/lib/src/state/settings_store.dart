@@ -45,7 +45,7 @@ extension ThemeChoiceX on ThemeChoice {
 }
 
 /// 托盘显示内容模式。
-enum TrayMode { allAccounts, pinnedAccount, custom }
+enum TrayMode { allAccounts, pinnedAccounts }
 
 /// 托盘显示量:使用量(利用率)或剩余量(1-利用率)。默认使用量。
 enum TrayMetric { usage, remaining }
@@ -56,16 +56,14 @@ enum ResetMode { countdown, absolute }
 /// 托盘内容设置(跨平台;Windows=tooltip,macOS=菜单栏标题)。
 class TraySettings {
   final TrayMode mode;
-  final String? pinnedKey; // "instance|accountId"
-  final String? template; // custom 模式:支持 {name} {peak} {count}
+  final List<String> pinnedKeys; // 指定账户(可多选)的 key 列表 "instance|accountId"
   final int tickerMs; // macOS「全部账户」菜单栏滚动步进间隔(ms;越小越顺也越快)
   final int tickerWidth; // macOS 菜单栏滚动窗口宽(可见字符数)
   final TrayMetric metric; // 显示使用量 / 剩余量(默认使用量)
 
   const TraySettings({
-    this.mode = TrayMode.pinnedAccount, // 默认:选中账户的 5h 使用/重置(未选则取最忙的)
-    this.pinnedKey,
-    this.template,
+    this.mode = TrayMode.allAccounts, // 默认:全部账户
+    this.pinnedKeys = const [],
     this.tickerMs = 300, // 默认最慢/最稳(滑块下限即此值)
     this.tickerWidth = 10, // 默认窗口宽 10 字
     this.metric = TrayMetric.usage, // 默认显示使用量
@@ -73,17 +71,14 @@ class TraySettings {
 
   TraySettings copyWith({
     TrayMode? mode,
-    String? pinnedKey,
-    String? template,
+    List<String>? pinnedKeys,
     int? tickerMs,
     int? tickerWidth,
     TrayMetric? metric,
-    bool clearPinned = false,
   }) =>
       TraySettings(
         mode: mode ?? this.mode,
-        pinnedKey: clearPinned ? null : (pinnedKey ?? this.pinnedKey),
-        template: template ?? this.template,
+        pinnedKeys: pinnedKeys ?? this.pinnedKeys,
         tickerMs: tickerMs ?? this.tickerMs,
         tickerWidth: tickerWidth ?? this.tickerWidth,
         metric: metric ?? this.metric,
@@ -91,21 +86,15 @@ class TraySettings {
 
   Map<String, dynamic> toJson() => {
         'mode': mode.name,
-        'pinned_key': pinnedKey,
-        'template': template,
+        'pinned_keys': pinnedKeys,
         'ticker_ms': tickerMs,
         'ticker_width': tickerWidth,
         'metric': metric.name,
       };
 
   factory TraySettings.fromJson(Map<String, dynamic> j) => TraySettings(
-        mode: TrayMode.values.firstWhere(
-          (m) => m.name == j['mode'],
-          // 老数据若是已移除的 globalPeak/countPeak,迁到新默认(与全新安装一致)。
-          orElse: () => TrayMode.pinnedAccount,
-        ),
-        pinnedKey: j['pinned_key'] as String?,
-        template: j['template'] as String?,
+        mode: _parseTrayMode(j['mode']),
+        pinnedKeys: _parsePinnedKeys(j),
         tickerMs: (j['ticker_ms'] as num?)?.toInt() ?? 300,
         tickerWidth: (j['ticker_width'] as num?)?.toInt() ?? 10,
         metric: TrayMetric.values.firstWhere(
@@ -113,6 +102,28 @@ class TraySettings {
           orElse: () => TrayMetric.usage,
         ),
       );
+}
+
+/// 迁移:老的 pinnedAccount → pinnedAccounts;已移除的 custom/未知 → allAccounts。
+TrayMode _parseTrayMode(Object? raw) {
+  switch (raw) {
+    case 'pinnedAccount':
+    case 'pinnedAccounts':
+      return TrayMode.pinnedAccounts;
+    default:
+      return TrayMode.allAccounts;
+  }
+}
+
+/// 迁移:新 pinned_keys(列表)优先;否则取老的单个 pinned_key。
+List<String> _parsePinnedKeys(Map<String, dynamic> j) {
+  final list = j['pinned_keys'];
+  if (list is List) {
+    return list.map((e) => e.toString()).where((s) => s.isNotEmpty).toList();
+  }
+  final single = j['pinned_key'];
+  if (single is String && single.isNotEmpty) return [single];
+  return const [];
 }
 
 /// 顶层设置:多实例 + 布局 + 托盘内容。

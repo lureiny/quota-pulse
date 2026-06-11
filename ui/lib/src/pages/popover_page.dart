@@ -4,7 +4,6 @@ import '../format.dart';
 import '../models/pulse.dart';
 import '../state/pulse_controller.dart';
 import '../state/settings_store.dart';
-import '../version.dart';
 import '../widgets/account_tile.dart';
 
 /// PopoverPage:账户列表(按实例分组 / 标签页)+ 底部操作条。
@@ -210,16 +209,11 @@ class _PopoverPageState extends State<PopoverPage> {
 
   Widget _footer(BuildContext context) {
     final n = widget.controller.pulses.length;
-    final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: Row(
         children: [
-          Text('$n 个账户', style: theme.textTheme.bodySmall),
-          const SizedBox(width: 6),
-          Text('· $appVersion',
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+          Text('$n 个账户', style: Theme.of(context).textTheme.bodySmall),
           const Spacer(),
           IconButton(
               tooltip: '刷新',
