@@ -13,6 +13,7 @@ dependencies:
   shared_preferences: ^2.2.0  # 设置持久化(settings_store)
   system_theme: ^3.3.0        # 读系统强调色(跟随系统 accent)
   url_launcher: ^6.3.0        # 系统默认浏览器打开实例后台(macOS=NSWorkspace / Windows=ShellExecute)
+  local_notifier: ^0.1.5      # 用量超阈值系统通知(macOS=NSUserNotification / Windows=SnoreToast)
 
 dev_dependencies:
   flutter_lints: ^4.0.0

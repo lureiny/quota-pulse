@@ -133,6 +133,8 @@ class Settings {
   final TraySettings tray;
   final ThemeChoice themeMode;
   final ResetMode resetMode; // 重置时间:倒计时 / 绝对(主页 + 托盘/菜单栏同时生效)
+  final bool alertEnabled; // 用量超阈值系统提醒(默认开)
+  final int alertThreshold; // 提醒阈值(百分比,默认 90)
 
   const Settings({
     this.instances = const [],
@@ -140,6 +142,8 @@ class Settings {
     this.tray = const TraySettings(),
     this.themeMode = ThemeChoice.system,
     this.resetMode = ResetMode.countdown,
+    this.alertEnabled = true,
+    this.alertThreshold = 90,
   });
 
   bool get configured => instances.any((i) => i.configured);
@@ -150,6 +154,8 @@ class Settings {
     TraySettings? tray,
     ThemeChoice? themeMode,
     ResetMode? resetMode,
+    bool? alertEnabled,
+    int? alertThreshold,
   }) =>
       Settings(
         instances: instances ?? this.instances,
@@ -157,6 +163,8 @@ class Settings {
         tray: tray ?? this.tray,
         themeMode: themeMode ?? this.themeMode,
         resetMode: resetMode ?? this.resetMode,
+        alertEnabled: alertEnabled ?? this.alertEnabled,
+        alertThreshold: alertThreshold ?? this.alertThreshold,
       );
 
   /// 已配置实例 → (唯一展示名, 实例)。唯一名规则与核心 facade 去重一致(避免 key 串号),
@@ -215,6 +223,8 @@ class Settings {
         'tray': tray.toJson(),
         'theme_mode': themeMode.name,
         'reset_mode': resetMode.name,
+        'alert_enabled': alertEnabled,
+        'alert_threshold': alertThreshold,
       };
 
   factory Settings.fromJson(Map<String, dynamic> j) => Settings(
@@ -236,6 +246,8 @@ class Settings {
           (r) => r.name == j['reset_mode'],
           orElse: () => ResetMode.countdown,
         ),
+        alertEnabled: j['alert_enabled'] as bool? ?? true,
+        alertThreshold: (j['alert_threshold'] as num?)?.toInt() ?? 90,
       );
 }
 

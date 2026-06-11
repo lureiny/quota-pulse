@@ -37,6 +37,7 @@ Future<void> main() async {
   final isDark =
       WidgetsBinding.instance.platformDispatcher.platformBrightness == Brightness.dark;
   await Window.setEffect(effect: WindowEffect.popover, dark: isDark);
+  await UsageAlerter.setup(); // 通知后端初始化(一次)
 
   final settings = await SettingsStore.load();
   final seed = await loadAccentColor(); // 跟随系统强调色
@@ -106,6 +107,7 @@ class Shell extends StatefulWidget {
 class _ShellState extends State<Shell> with WindowListener {
   late Settings _settings = widget.initialSettings;
   PulseController? _controller;
+  final _alerter = UsageAlerter(); // 用量阈值提醒
   _View _view = _View.list;
   String? _error;
   bool _autostartEnabled = false; // 开机自启动:真值以 OS 为准,启动时查询
@@ -278,6 +280,7 @@ class _ShellState extends State<Shell> with WindowListener {
   }
 
   void _onPulse() {
+    _alerter.check(_controller?.pulses ?? const <AccountPulse>[], _settings);
     _updateTray();
     if (mounted) setState(() {});
   }
@@ -327,6 +330,13 @@ class _ShellState extends State<Shell> with WindowListener {
     _updateTray();
   }
 
+  // 用量提醒(开关/阈值):即时持久化;下一次快照检测即按新设置生效。
+  void _onAlertChanged(bool enabled, int threshold) {
+    setState(() => _settings =
+        _settings.copyWith(alertEnabled: enabled, alertThreshold: threshold));
+    SettingsStore.save(_settings);
+  }
+
   Future<void> _quit() async {
     try {
       _source.stop();
@@ -355,6 +365,8 @@ class _ShellState extends State<Shell> with WindowListener {
         onLayoutChanged: _onLayoutChanged,
         onTrayChanged: _onTrayChanged,
         onResetModeChanged: _onResetModeChanged,
+        onAlertChanged: _onAlertChanged,
+        onTestNotification: () => _alerter.testNotification(),
         autostartEnabled: _autostartEnabled,
         onAutostartChanged: _onAutostartChanged,
         onCancel: _settings.configured ? () => setState(() => _view = _View.list) : null,

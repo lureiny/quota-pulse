@@ -29,6 +29,9 @@ export 'src/pages/settings_page.dart';
 export 'src/state/pulse_controller.dart';
 export 'src/state/settings_store.dart';
 
+// 用量阈值提醒(系统通知)
+export 'src/alert/usage_alerter.dart';
+
 // 桥接(用量来源抽象 + 桌面 FFI 实现)
 export 'src/bridge/pulse_source.dart';
 export 'src/bridge/ffi_pulse_source.dart';

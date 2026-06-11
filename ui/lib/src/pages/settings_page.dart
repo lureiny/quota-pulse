@@ -16,6 +16,8 @@ class SettingsPage extends StatefulWidget {
     this.onLayoutChanged,
     this.onTrayChanged,
     this.onResetModeChanged,
+    this.onAlertChanged,
+    this.onTestNotification,
     this.autostartEnabled = false, // 开机自启动当前状态(由壳查询 OS 得到)
     this.onAutostartChanged,
   });
@@ -28,6 +30,8 @@ class SettingsPage extends StatefulWidget {
   final void Function(ListLayout)? onLayoutChanged;
   final void Function(TraySettings)? onTrayChanged;
   final void Function(ResetMode)? onResetModeChanged; // 重置显示:主页+托盘同时生效
+  final void Function(bool enabled, int threshold)? onAlertChanged; // 用量提醒(开关+阈值)
+  final Future<void> Function()? onTestNotification; // 发送测试通知
   final bool autostartEnabled;
   final void Function(bool)? onAutostartChanged;
 
@@ -73,6 +77,8 @@ class _SettingsPageState extends State<SettingsPage> {
   late int _tickerWidth; // macOS 菜单栏滚动窗口宽(字符)
   late TrayMetric _metric; // 托盘显示量:使用量/剩余量
   late ResetMode _resetMode; // 重置显示:倒计时/绝对
+  late bool _alertEnabled; // 用量提醒开关
+  late int _alertThreshold; // 用量提醒阈值(%)
   int _idSeq = 0;
 
   @override
@@ -90,6 +96,8 @@ class _SettingsPageState extends State<SettingsPage> {
     _tickerWidth = widget.initial.tray.tickerWidth.clamp(8, 40).toInt();
     _metric = widget.initial.tray.metric;
     _resetMode = widget.initial.resetMode;
+    _alertEnabled = widget.initial.alertEnabled;
+    _alertThreshold = widget.initial.alertThreshold;
   }
 
   _Draft _newDraft() {
@@ -131,6 +139,8 @@ class _SettingsPageState extends State<SettingsPage> {
       tray: _tray(),
       themeMode: _theme,
       resetMode: _resetMode,
+      alertEnabled: _alertEnabled,
+      alertThreshold: _alertThreshold,
     ));
   }
 
@@ -326,6 +336,51 @@ class _SettingsPageState extends State<SettingsPage> {
           padding: const EdgeInsets.only(top: 4),
           child: Text('主页与悬浮窗/菜单栏同时生效;倒计时支持到「天」',
               style: theme.textTheme.bodySmall),
+        ),
+
+        const Divider(height: 24),
+        Text('用量提醒',
+            style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: const Text('用量超阈值时系统通知', style: TextStyle(fontSize: 13)),
+          subtitle: Text('所有滚动窗口各自判定;每个窗口一个重置周期内只提醒一次',
+              style: theme.textTheme.bodySmall),
+          value: _alertEnabled,
+          onChanged: (v) {
+            setState(() => _alertEnabled = v);
+            widget.onAlertChanged?.call(_alertEnabled, _alertThreshold);
+          },
+        ),
+        Row(children: [
+          SizedBox(
+              width: 76,
+              child: Text('阈值 $_alertThreshold%', style: theme.textTheme.bodySmall)),
+          Expanded(
+            child: Slider(
+              min: 50,
+              max: 100,
+              divisions: 50,
+              value: _alertThreshold.toDouble(),
+              onChanged: _alertEnabled
+                  ? (v) {
+                      setState(() => _alertThreshold = v.round());
+                      widget.onAlertChanged?.call(_alertEnabled, _alertThreshold);
+                    }
+                  : null,
+            ),
+          ),
+        ]),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: () {
+              widget.onTestNotification?.call(); // fire-and-forget
+            },
+            icon: const Icon(Icons.notifications_active_outlined, size: 16),
+            label: const Text('发送测试通知'),
+          ),
         ),
 
         // macOS 专属:菜单栏「全部账户」流水屏滚动调参(拖动即时预览)。
