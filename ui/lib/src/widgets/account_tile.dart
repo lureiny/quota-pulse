@@ -2,16 +2,19 @@ import 'package:flutter/material.dart';
 
 import '../format.dart';
 import '../models/pulse.dart';
+import '../state/settings_store.dart';
 import 'meter_bar.dart';
 import 'status_dot.dart';
 
 /// AccountTile 渲染一个账户:状态 + 名称 + 全部窗口 + 详情(始终展开,不折叠)。
 /// 桌面端 hover 高亮,并出现「刷新此账户」按钮。
 class AccountTile extends StatefulWidget {
-  const AccountTile(this.pulse, {super.key, this.onRefresh});
+  const AccountTile(this.pulse,
+      {super.key, this.onRefresh, this.resetMode = ResetMode.countdown});
 
   final AccountPulse pulse;
   final VoidCallback? onRefresh; // 只刷新此账户
+  final ResetMode resetMode; // 重置显示:倒计时 / 绝对(随设置)
 
   @override
   State<AccountTile> createState() => _AccountTileState();
@@ -59,7 +62,7 @@ class _AccountTileState extends State<AccountTile> {
                   padding: const EdgeInsets.only(top: 4),
                   child: Text('无窗口数据', style: theme.textTheme.bodySmall),
                 ),
-              ...p.meters.map((m) => MeterBar(m)),
+              ...p.meters.map((m) => MeterBar(m, resetMode: widget.resetMode)),
               _detail(theme, scheme, p),
             ],
           ),

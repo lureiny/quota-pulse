@@ -258,7 +258,8 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
     // Windows:托盘 tooltip 按设置渲染(默认选中账户的 5h 剩余/重置;
     // 悬停延迟由系统控制,无法调)
     trayManager.setToolTip(
-      renderTrayTooltip(_controller?.pulses ?? const [], _settings.tray),
+      renderTrayTooltip(
+          _controller?.pulses ?? const [], _settings.tray, _settings.resetMode),
     );
   }
 
@@ -305,6 +306,13 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
     _updateTray(); // 立刻按新设置重渲染托盘
   }
 
+  // 重置显示(倒计时/绝对):主页随 setState 重建,托盘 tooltip 即时重渲染。
+  void _onResetModeChanged(ResetMode mode) {
+    setState(() => _settings = _settings.copyWith(resetMode: mode));
+    SettingsStore.save(_settings);
+    _updateTray();
+  }
+
   Future<void> _quit() async {
     try {
       _source.stop();
@@ -332,6 +340,7 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
         onThemeChanged: _onThemeChanged,
         onLayoutChanged: _onLayoutChanged,
         onTrayChanged: _onTrayChanged,
+        onResetModeChanged: _onResetModeChanged,
         autostartEnabled: _autostartEnabled,
         onAutostartChanged: _onAutostartChanged,
         onCancel: _settings.configured ? () => setState(() => _view = _View.list) : null,
@@ -343,6 +352,7 @@ class _ShellState extends State<Shell> with TrayListener, WindowListener {
     return PopoverPage(
       controller: _controller!,
       layout: _settings.layout,
+      resetMode: _settings.resetMode,
       onRefresh: () => _controller?.refreshNow(),
       onSettings: () => setState(() => _view = _View.settings),
     );

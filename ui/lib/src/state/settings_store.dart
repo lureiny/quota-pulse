@@ -47,6 +47,12 @@ extension ThemeChoiceX on ThemeChoice {
 /// 托盘显示内容模式。
 enum TrayMode { allAccounts, pinnedAccount, custom }
 
+/// 托盘显示量:使用量(利用率)或剩余量(1-利用率)。默认使用量。
+enum TrayMetric { usage, remaining }
+
+/// 重置时间显示:倒计时(剩余时间)或绝对时刻。主页与托盘/菜单栏同时生效。
+enum ResetMode { countdown, absolute }
+
 /// 托盘内容设置(跨平台;Windows=tooltip,macOS=菜单栏标题)。
 class TraySettings {
   final TrayMode mode;
@@ -54,13 +60,15 @@ class TraySettings {
   final String? template; // custom 模式:支持 {name} {peak} {count}
   final int tickerMs; // macOS「全部账户」菜单栏滚动步进间隔(ms;越小越顺也越快)
   final int tickerWidth; // macOS 菜单栏滚动窗口宽(可见字符数)
+  final TrayMetric metric; // 显示使用量 / 剩余量(默认使用量)
 
   const TraySettings({
-    this.mode = TrayMode.pinnedAccount, // 默认:选中账户的 5h 剩余/重置(未选则取最忙的)
+    this.mode = TrayMode.pinnedAccount, // 默认:选中账户的 5h 使用/重置(未选则取最忙的)
     this.pinnedKey,
     this.template,
     this.tickerMs = 300, // 默认最慢/最稳(滑块下限即此值)
     this.tickerWidth = 10, // 默认窗口宽 10 字
+    this.metric = TrayMetric.usage, // 默认显示使用量
   });
 
   TraySettings copyWith({
@@ -69,6 +77,7 @@ class TraySettings {
     String? template,
     int? tickerMs,
     int? tickerWidth,
+    TrayMetric? metric,
     bool clearPinned = false,
   }) =>
       TraySettings(
@@ -77,6 +86,7 @@ class TraySettings {
         template: template ?? this.template,
         tickerMs: tickerMs ?? this.tickerMs,
         tickerWidth: tickerWidth ?? this.tickerWidth,
+        metric: metric ?? this.metric,
       );
 
   Map<String, dynamic> toJson() => {
@@ -85,6 +95,7 @@ class TraySettings {
         'template': template,
         'ticker_ms': tickerMs,
         'ticker_width': tickerWidth,
+        'metric': metric.name,
       };
 
   factory TraySettings.fromJson(Map<String, dynamic> j) => TraySettings(
@@ -97,6 +108,10 @@ class TraySettings {
         template: j['template'] as String?,
         tickerMs: (j['ticker_ms'] as num?)?.toInt() ?? 300,
         tickerWidth: (j['ticker_width'] as num?)?.toInt() ?? 10,
+        metric: TrayMetric.values.firstWhere(
+          (m) => m.name == j['metric'],
+          orElse: () => TrayMetric.usage,
+        ),
       );
 }
 
@@ -106,12 +121,14 @@ class Settings {
   final ListLayout layout;
   final TraySettings tray;
   final ThemeChoice themeMode;
+  final ResetMode resetMode; // 重置时间:倒计时 / 绝对(主页 + 托盘/菜单栏同时生效)
 
   const Settings({
     this.instances = const [],
     this.layout = ListLayout.grouped,
     this.tray = const TraySettings(),
     this.themeMode = ThemeChoice.system,
+    this.resetMode = ResetMode.countdown,
   });
 
   bool get configured => instances.any((i) => i.configured);
@@ -121,12 +138,14 @@ class Settings {
     ListLayout? layout,
     TraySettings? tray,
     ThemeChoice? themeMode,
+    ResetMode? resetMode,
   }) =>
       Settings(
         instances: instances ?? this.instances,
         layout: layout ?? this.layout,
         tray: tray ?? this.tray,
         themeMode: themeMode ?? this.themeMode,
+        resetMode: resetMode ?? this.resetMode,
       );
 
   /// 构造核心配置 JSON;实例名唯一化(与核心 facade 的去重一致,避免 key 串号)。
@@ -163,6 +182,7 @@ class Settings {
         'layout': layout.name,
         'tray': tray.toJson(),
         'theme_mode': themeMode.name,
+        'reset_mode': resetMode.name,
       };
 
   factory Settings.fromJson(Map<String, dynamic> j) => Settings(
@@ -179,6 +199,10 @@ class Settings {
         themeMode: ThemeChoice.values.firstWhere(
           (t) => t.name == j['theme_mode'],
           orElse: () => ThemeChoice.system,
+        ),
+        resetMode: ResetMode.values.firstWhere(
+          (r) => r.name == j['reset_mode'],
+          orElse: () => ResetMode.countdown,
         ),
       );
 }

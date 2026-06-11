@@ -4,6 +4,7 @@ import '../format.dart';
 import '../models/pulse.dart';
 import '../state/pulse_controller.dart';
 import '../state/settings_store.dart';
+import '../version.dart';
 import '../widgets/account_tile.dart';
 
 /// PopoverPage:账户列表(按实例分组 / 标签页)+ 底部操作条。
@@ -15,12 +16,14 @@ class PopoverPage extends StatefulWidget {
     required this.layout,
     required this.onRefresh,
     required this.onSettings,
+    this.resetMode = ResetMode.countdown,
   });
 
   final PulseController controller;
   final ListLayout layout;
   final VoidCallback onRefresh;
   final VoidCallback onSettings;
+  final ResetMode resetMode; // 重置显示:倒计时 / 绝对(随设置,透传到 MeterBar)
 
   @override
   State<PopoverPage> createState() => _PopoverPageState();
@@ -104,7 +107,9 @@ class _PopoverPageState extends State<PopoverPage> {
       ));
       if (!collapsed) {
         children.addAll(list.map(
-          (p) => AccountTile(p, onRefresh: () => widget.controller.refreshAccount(p.key)),
+          (p) => AccountTile(p,
+              onRefresh: () => widget.controller.refreshAccount(p.key),
+              resetMode: widget.resetMode),
         ));
       }
     });
@@ -138,7 +143,8 @@ class _PopoverPageState extends State<PopoverPage> {
                           () => widget.controller.refreshInstance(e.key),
                           showName: false),
                       ...e.value.map((p) => AccountTile(p,
-                          onRefresh: () => widget.controller.refreshAccount(p.key))),
+                          onRefresh: () => widget.controller.refreshAccount(p.key),
+                          resetMode: widget.resetMode)),
                     ],
                   ),
               ],
@@ -204,11 +210,16 @@ class _PopoverPageState extends State<PopoverPage> {
 
   Widget _footer(BuildContext context) {
     final n = widget.controller.pulses.length;
+    final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: Row(
         children: [
-          Text('$n 个账户', style: Theme.of(context).textTheme.bodySmall),
+          Text('$n 个账户', style: theme.textTheme.bodySmall),
+          const SizedBox(width: 6),
+          Text('· $appVersion',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
           const Spacer(),
           IconButton(
               tooltip: '刷新',

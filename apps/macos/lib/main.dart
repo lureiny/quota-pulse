@@ -264,13 +264,17 @@ class _ShellState extends State<Shell> with WindowListener {
   // 滚不滚由原生按"放不放得下"决定;速度/宽度来自设置(实时)。
   void _updateTray() {
     final pulses = _controller?.pulses ?? const <AccountPulse>[];
+    final tray = _settings.tray;
+    final rm = _settings.resetMode;
     final String text;
     final bool scroll;
-    if (_settings.tray.mode == TrayMode.allAccounts && pulses.isNotEmpty) {
-      text = sortedByAccount(pulses).map(renderTrayAccountLine).join('   ·   ');
+    if (tray.mode == TrayMode.allAccounts && pulses.isNotEmpty) {
+      text = sortedByAccount(pulses)
+          .map((a) => renderTrayAccountLine(a, metric: tray.metric, resetMode: rm))
+          .join('   ·   ');
       scroll = true;
     } else {
-      text = renderTrayText(pulses, _settings.tray);
+      text = renderTrayText(pulses, tray, rm);
       scroll = false;
     }
     MacMenuBar.setTicker(text, scroll: scroll, pps: _scrollPps, width: _scrollWidth);
@@ -319,6 +323,13 @@ class _ShellState extends State<Shell> with WindowListener {
     _updateTray(); // 即时把新文字/速度/宽度发给原生菜单栏
   }
 
+  // 重置显示(倒计时/绝对):主页随 setState 重建,托盘/菜单栏即时重渲染。
+  void _onResetModeChanged(ResetMode mode) {
+    setState(() => _settings = _settings.copyWith(resetMode: mode));
+    SettingsStore.save(_settings);
+    _updateTray();
+  }
+
   Future<void> _quit() async {
     try {
       _source.stop();
@@ -346,6 +357,7 @@ class _ShellState extends State<Shell> with WindowListener {
         onThemeChanged: _onThemeChanged,
         onLayoutChanged: _onLayoutChanged,
         onTrayChanged: _onTrayChanged,
+        onResetModeChanged: _onResetModeChanged,
         autostartEnabled: _autostartEnabled,
         onAutostartChanged: _onAutostartChanged,
         onCancel: _settings.configured ? () => setState(() => _view = _View.list) : null,
@@ -357,6 +369,7 @@ class _ShellState extends State<Shell> with WindowListener {
     return PopoverPage(
       controller: _controller!,
       layout: _settings.layout,
+      resetMode: _settings.resetMode,
       onRefresh: () => _controller?.refreshNow(),
       onSettings: () => setState(() => _view = _View.settings),
     );

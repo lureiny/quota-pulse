@@ -7,6 +7,7 @@ library;
 // 数据模型 + 展示工具
 export 'src/models/pulse.dart';
 export 'src/format.dart';
+export 'src/version.dart';
 
 // 统一主题(跨平台共用:布局/组件/密度一致;字体走系统;配色由系统 accent + 明暗派生)
 export 'src/theme.dart';

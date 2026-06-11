@@ -14,6 +14,7 @@ class SettingsPage extends StatefulWidget {
     this.onThemeChanged, // 以下都是改动即时生效(不必保存)
     this.onLayoutChanged,
     this.onTrayChanged,
+    this.onResetModeChanged,
     this.autostartEnabled = false, // 开机自启动当前状态(由壳查询 OS 得到)
     this.onAutostartChanged,
   });
@@ -25,6 +26,7 @@ class SettingsPage extends StatefulWidget {
   final void Function(ThemeChoice)? onThemeChanged;
   final void Function(ListLayout)? onLayoutChanged;
   final void Function(TraySettings)? onTrayChanged;
+  final void Function(ResetMode)? onResetModeChanged; // 重置显示:主页+托盘同时生效
   final bool autostartEnabled;
   final void Function(bool)? onAutostartChanged;
 
@@ -69,6 +71,8 @@ class _SettingsPageState extends State<SettingsPage> {
   late TextEditingController _template;
   late int _tickerMs; // macOS 菜单栏滚动速度(ms)
   late int _tickerWidth; // macOS 菜单栏滚动窗口宽(字符)
+  late TrayMetric _metric; // 托盘显示量:使用量/剩余量
+  late ResetMode _resetMode; // 重置显示:倒计时/绝对
   int _idSeq = 0;
 
   @override
@@ -85,6 +89,8 @@ class _SettingsPageState extends State<SettingsPage> {
     _template = TextEditingController(text: widget.initial.tray.template ?? '{name} {peak}%');
     _tickerMs = widget.initial.tray.tickerMs.clamp(30, 300).toInt();
     _tickerWidth = widget.initial.tray.tickerWidth.clamp(8, 40).toInt();
+    _metric = widget.initial.tray.metric;
+    _resetMode = widget.initial.resetMode;
   }
 
   _Draft _newDraft() {
@@ -114,6 +120,7 @@ class _SettingsPageState extends State<SettingsPage> {
         template: _template.text.trim().isEmpty ? null : _template.text.trim(),
         tickerMs: _tickerMs,
         tickerWidth: _tickerWidth,
+        metric: _metric,
       );
 
   /// 托盘相关改动即时生效(不必保存)。
@@ -126,6 +133,7 @@ class _SettingsPageState extends State<SettingsPage> {
       layout: _layout,
       tray: _tray(),
       themeMode: _theme,
+      resetMode: _resetMode,
     ));
   }
 
@@ -247,6 +255,21 @@ class _SettingsPageState extends State<SettingsPage> {
             },
           ),
         ),
+        const SizedBox(height: 10),
+        Text('显示量(悬浮窗/菜单栏)', style: theme.textTheme.bodySmall),
+        const SizedBox(height: 4),
+        SegmentedButton<TrayMetric>(
+          showSelectedIcon: false,
+          segments: const [
+            ButtonSegment(value: TrayMetric.usage, label: Text('使用量')),
+            ButtonSegment(value: TrayMetric.remaining, label: Text('剩余量')),
+          ],
+          selected: {_metric},
+          onSelectionChanged: (s) {
+            setState(() => _metric = s.first);
+            _emitTray(); // 即时生效
+          },
+        ),
         if (_trayMode == TrayMode.pinnedAccount) ...[
           const SizedBox(height: 8),
           _boxed(
@@ -288,6 +311,28 @@ class _SettingsPageState extends State<SettingsPage> {
             child: Text('变量:{name} {peak} {count}', style: theme.textTheme.bodySmall),
           ),
         ],
+
+        const Divider(height: 24),
+        Text('重置时间显示',
+            style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+        const SizedBox(height: 8),
+        SegmentedButton<ResetMode>(
+          showSelectedIcon: false,
+          segments: const [
+            ButtonSegment(value: ResetMode.countdown, label: Text('剩余时间')),
+            ButtonSegment(value: ResetMode.absolute, label: Text('绝对时间')),
+          ],
+          selected: {_resetMode},
+          onSelectionChanged: (s) {
+            setState(() => _resetMode = s.first);
+            widget.onResetModeChanged?.call(s.first); // 主页 + 托盘/菜单栏即时生效
+          },
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text('主页与悬浮窗/菜单栏同时生效;倒计时支持到「天」',
+              style: theme.textTheme.bodySmall),
+        ),
 
         // macOS 专属:菜单栏「全部账户」流水屏滚动调参(拖动即时预览)。
         if (theme.platform == TargetPlatform.macOS) ...[

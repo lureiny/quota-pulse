@@ -21,7 +21,11 @@ DYLIB="$SCRIPT_DIR/build/libqp.dylib"
 [[ -f "$DYLIB" ]] || { echo "未找到 $DYLIB" >&2; exit 1; }
 
 echo "==> 2/5 flutter build macos --release"
-flutter build macos --release
+# 版本号编译期注入:优先 git tag(如 v0.3.0),否则 git describe(tag-距离-短SHA)或短 SHA;
+# CI 可用 QP_VERSION 环境变量显式覆盖。
+VERSION="${QP_VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}"
+echo "    version: $VERSION"
+flutter build macos --release --dart-define=QP_VERSION="$VERSION"
 APP="$(find build/macos/Build/Products/Release -maxdepth 1 -name '*.app' | head -n1)"
 [[ -d "$APP" ]] || { echo "未找到构建产物 .app" >&2; exit 1; }
 echo "    app: $APP"

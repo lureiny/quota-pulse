@@ -26,10 +26,21 @@ func key(instance, accountID string) string {
 }
 
 // Put 写入/覆盖一个账户的脉搏。
+//
+// 防回退:被动轮询(source=passive)对"冷账户"常返回空窗口(meters 空、状态 ok、
+// 无 error)。若直接覆盖,会把上一轮 active 拉到的好数据抹成空——表现为部分账户的
+// 5h 窗口/重置/用量忽有忽无。故这种"无意义的空"不覆盖已有好数据;真正的异常
+// (banned/forbidden/needs_reauth/error 等)仍照常写入。
 func (s *Store) Put(p model.AccountPulse) {
 	s.mu.Lock()
-	s.m[key(p.Instance, p.AccountID)] = p
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+	k := key(p.Instance, p.AccountID)
+	if len(p.Meters) == 0 && p.Error == "" && p.Status == model.StatusOK {
+		if old, ok := s.m[k]; ok && len(old.Meters) > 0 {
+			return
+		}
+	}
+	s.m[k] = p
 }
 
 // Snapshot 返回所有账户的稳定排序快照(先按 provider,再按 name)。

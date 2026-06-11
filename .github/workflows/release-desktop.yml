@@ -16,6 +16,8 @@ jobs:
     runs-on: macos-14            # Apple Silicon runner
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 全历史+tag → 构建脚本 git describe 取版本号
 
       - uses: actions/setup-go@v5
         with:
@@ -47,6 +49,8 @@ jobs:
     timeout-minutes: 35          # 防止挂死跑满 6 小时
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 全历史+tag → 构建脚本 git describe 取版本号
 
       - uses: actions/setup-go@v5
         with:

@@ -2,15 +2,17 @@ import 'package:flutter/material.dart';
 
 import '../format.dart';
 import '../models/pulse.dart';
+import '../state/settings_store.dart';
 
 /// MeterBar 渲染单个表盘:标签 + 进度条 + 副标。
 ///
-/// 滚动窗口(rolling_window)显示重置倒计时;累计配额(cumulative)显示 已用/总额。
+/// 滚动窗口(rolling_window)显示重置(倒计时/绝对);累计配额(cumulative)显示 已用/总额。
 /// 两类用同一根进度条,这正是抽象的价值。
 class MeterBar extends StatelessWidget {
-  const MeterBar(this.meter, {super.key});
+  const MeterBar(this.meter, {super.key, this.resetMode = ResetMode.countdown});
 
   final Meter meter;
+  final ResetMode resetMode; // 重置显示:倒计时 / 绝对(随设置)
 
   @override
   Widget build(BuildContext context) {
@@ -66,10 +68,9 @@ class MeterBar extends StatelessWidget {
 
   String _subtitle() {
     final parts = <String>[];
-    final secs = meter.remainingSecs;
-    if (secs != null && secs > 0) {
-      parts.add('${fmtDuration(secs)}后重置');
-    }
+    final reset = fmtResetPhrase(meter.remainingSecs, meter.resetsAt,
+        absolute: resetMode == ResetMode.absolute);
+    if (reset.isNotEmpty) parts.add(reset);
     if (meter.kind == 'cumulative' && meter.used != null && meter.limit != null) {
       final unit = meter.unit == 'usd' ? '\$' : '';
       parts.add('$unit${meter.used} / $unit${meter.limit}');

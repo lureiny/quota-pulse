@@ -14,7 +14,15 @@ $dll = Join-Path $here "build\libqp.dll"
 if (-not (Test-Path $dll)) { Write-Error "未找到 $dll" }
 
 Write-Host "==> 2/4 flutter build windows --release"
-flutter build windows --release
+# 版本号编译期注入:优先 git tag,否则 git describe / 短 SHA;QP_VERSION 环境变量可覆盖。
+$Version = $env:QP_VERSION
+if (-not $Version) {
+  $Version = (git describe --tags --always --dirty 2>$null)
+  if (-not $Version) { $Version = "dev" }
+}
+$Version = "$Version".Trim()
+Write-Host "    version: $Version"
+flutter build windows --release --dart-define=QP_VERSION="$Version"
 
 Write-Host "==> 3/4 把 libqp.dll 拷到 Release 目录(exe 同级,DynamicLibrary.open 即可解析)"
 $exe = Get-ChildItem -Recurse -Path "build\windows" -Filter "quota_pulse.exe" |

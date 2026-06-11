@@ -40,14 +40,34 @@ Color meterColor(double? u) {
   return _green;
 }
 
-/// 把剩余秒数格式化为 "2h13m" / "45m" / "30s"。
+/// 把剩余秒数格式化为 "2天3h" / "3h13m" / "45m" / "30s"。0 天不显示天。
 String fmtDuration(int secs) {
   if (secs <= 0) return '';
-  final h = secs ~/ 3600;
+  final d = secs ~/ 86400;
+  final h = (secs % 86400) ~/ 3600;
   final m = (secs % 3600) ~/ 60;
+  if (d > 0) return h > 0 ? '$d天${h}h' : '$d天';
   if (h > 0) return '${h}h${m}m';
   if (m > 0) return '${m}m';
   return '${secs}s';
+}
+
+/// 绝对重置时刻(本地)"MM-dd HH:mm"。
+String fmtResetAt(DateTime t) {
+  final l = t.toLocal();
+  String two(int n) => n.toString().padLeft(2, '0');
+  return '${two(l.month)}-${two(l.day)} ${two(l.hour)}:${two(l.minute)}';
+}
+
+/// 统一的"重置"短语,供主页 MeterBar 与托盘/菜单栏共用:
+///   倒计时 → "2天3h后重置";绝对 → "06-13 15:42 重置"。无可用数据返回空串。
+String fmtResetPhrase(int? remainingSecs, DateTime? resetsAt,
+    {required bool absolute}) {
+  if (absolute) {
+    return resetsAt == null ? '' : '${fmtResetAt(resetsAt)} 重置';
+  }
+  if (remainingSecs == null || remainingSecs <= 0) return '';
+  return '${fmtDuration(remainingSecs)}后重置';
 }
 
 /// 把 0~1 的使用率格式化为百分比文本。
