@@ -147,17 +147,23 @@ class _ShellState extends State<Shell> with WindowListener {
   Future<void> _initMenuBar() async {
     MacMenuBar.onClick = _toggle;
     MacMenuBar.onMenu = _onMenu;
-    final icon = await rootBundle.load('assets/tray_icon.png');
-    await MacMenuBar.setup(
-      icon: icon.buffer.asUint8List(),
-      menu: [
-        {'key': 'refresh', 'label': '刷新'},
-        {'separator': true},
-        {'key': 'settings', 'label': '设置…'},
-        {'key': 'quit', 'label': '退出 quota-pulse'},
-      ],
-    );
-    _updateTray();
+    final icon = (await rootBundle.load('assets/tray_icon.png')).buffer.asUint8List();
+    final menu = <Map<String, dynamic>>[
+      {'key': 'refresh', 'label': '刷新'},
+      {'separator': true},
+      {'key': 'settings', 'label': '设置…'},
+      {'key': 'quit', 'label': '退出 quota-pulse'},
+    ];
+    // 通道偶发未就绪 → 重试几次,直到原生把状态项建出来。
+    for (var i = 0; i < 20; i++) {
+      try {
+        await MacMenuBar.setup(icon: icon, menu: menu);
+        _updateTray();
+        return;
+      } catch (_) {
+        await Future.delayed(const Duration(milliseconds: 150));
+      }
+    }
   }
 
   Future<void> _toggle() async {

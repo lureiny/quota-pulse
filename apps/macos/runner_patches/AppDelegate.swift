@@ -15,10 +15,9 @@ extension NSRect {
   }
 }
 
+// 菜单栏状态项在 MainFlutterWindow.awakeFromNib 创建(那里直接拿得到 FlutterViewController)。
 @main
 class AppDelegate: FlutterAppDelegate {
-  private var menuBar: MenuBarController?
-
   override func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
     // 关键:窗口隐藏 ≠ 退出。退出走菜单栏右键"退出"。
     return false
@@ -26,32 +25,6 @@ class AppDelegate: FlutterAppDelegate {
 
   override func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
     return true
-  }
-
-  override func applicationDidFinishLaunching(_ notification: Notification) {
-    super.applicationDidFinishLaunching(notification)
-    setupMenuBar(retries: 10)
-  }
-
-  // FlutterViewController 一般在 awakeFromNib 已就绪;万一稍晚则短暂重试。
-  private func setupMenuBar(retries: Int) {
-    if let messenger = flutterMessenger() {
-      menuBar = MenuBarController(messenger: messenger)
-    } else if retries > 0 {
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-        self?.setupMenuBar(retries: retries - 1)
-      }
-    }
-  }
-
-  // 取主 FlutterViewController 的 binaryMessenger(窗口在 awakeFromNib 已创建)。
-  private func flutterMessenger() -> FlutterBinaryMessenger? {
-    for w in NSApp.windows {
-      if let c = w.contentViewController as? FlutterViewController {
-        return c.engine.binaryMessenger
-      }
-    }
-    return nil
   }
 }
 
@@ -83,10 +56,12 @@ class MenuBarController: NSObject {
 
   private func ensureItem() {
     guard statusItem == nil else { return }
-    let item = NSStatusBar.system.statusItem(withLength: MenuBarView.iconArea + 150)
+    let total = MenuBarView.iconArea + 150
+    let item = NSStatusBar.system.statusItem(withLength: total)
     if let button = item.button {
-      let v = MenuBarView(frame: button.bounds)
-      v.autoresizingMask = [.width, .height]
+      // 关键:显式给定非零 frame。statusItem 刚创建时 button.bounds 可能仍是 0,
+      // 用 0 frame + autoresizing 会一直保持 0 → 视图既不可见也收不到点击。
+      let v = MenuBarView(frame: NSRect(x: 0, y: 0, width: total, height: NSStatusBar.system.thickness))
       v.onLeftClick = { [weak self] in self?.channel.invokeMethod("onClick", arguments: nil) }
       v.onRightClick = { [weak self] in self?.showMenu() }
       button.addSubview(v)
@@ -97,10 +72,13 @@ class MenuBarController: NSObject {
 
   private func setup(_ args: [String: Any]) {
     ensureItem()
-    if let icon = args["icon"] as? FlutterStandardTypedData {
-      let img = NSImage(data: icon.data)
-      img?.isTemplate = true
-      view?.icon = img
+    // 图标用 button.image(NSStatusBarButton 原生绘制,最稳、自动模板着色),
+    // 放左侧;右侧文字交给子视图绘制/滚动。
+    if let icon = args["icon"] as? FlutterStandardTypedData, let img = NSImage(data: icon.data) {
+      img.isTemplate = true
+      img.size = NSSize(width: 18, height: 18)
+      statusItem?.button?.image = img
+      statusItem?.button?.imagePosition = .imageLeft
     }
     menuItems = args["menu"] as? [[String: Any]] ?? []
   }
@@ -111,7 +89,9 @@ class MenuBarController: NSObject {
     let scroll = args["scroll"] as? Bool ?? false
     let pps = CGFloat((args["pps"] as? NSNumber)?.doubleValue ?? 100)
     let width = CGFloat((args["width"] as? NSNumber)?.doubleValue ?? 150)
-    statusItem?.length = MenuBarView.iconArea + width
+    let total = MenuBarView.iconArea + width
+    statusItem?.length = total
+    view?.frame = NSRect(x: 0, y: 0, width: total, height: NSStatusBar.system.thickness)
     view?.setContent(text, scroll: scroll, pps: pps, textWidth: width)
   }
 
@@ -170,7 +150,6 @@ class MenuBarView: NSView {
 
   var onLeftClick: (() -> Void)?
   var onRightClick: (() -> Void)?
-  var icon: NSImage? { didSet { needsDisplay = true } }
 
   private var text: String = ""
   private var scrolling = false
@@ -221,19 +200,8 @@ class MenuBarView: NSView {
 
   override func draw(_ dirtyRect: NSRect) {
     let h = bounds.height
-    // 图标:模板图用 labelColor 着色(sourceAtop),自动适配明暗菜单栏。
-    if let icon = icon {
-      let r = NSRect(x: 4, y: (h - 18) / 2, width: 18, height: 18)
-      NSGraphicsContext.saveGraphicsState()
-      icon.draw(in: r)
-      if icon.isTemplate {
-        NSColor.labelColor.set()
-        NSGraphicsContext.current?.compositingOperation = .sourceAtop
-        NSBezierPath(rect: r).fill()
-      }
-      NSGraphicsContext.restoreGraphicsState()
-    }
-    // 文字区:裁剪后绘制,滚动时画多遍接成无缝循环。用 textWidth(不依赖 bounds 时序)。
+    // 图标由 button.image 绘制(左侧);这里只画右侧文字区:裁剪后绘制,
+    // 滚动时画多遍接成无缝循环。用 textWidth(不依赖 bounds 时序)。
     let tx = MenuBarView.iconArea
     let tw = textWidth
     if tw <= 0 || text.isEmpty { return }

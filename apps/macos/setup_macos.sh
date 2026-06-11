@@ -18,6 +18,7 @@ fi
 
 echo "==> 套 runner 补丁"
 cp runner_patches/AppDelegate.swift         macos/Runner/AppDelegate.swift
+cp runner_patches/MainFlutterWindow.swift   macos/Runner/MainFlutterWindow.swift
 cp runner_patches/DebugProfile.entitlements macos/Runner/DebugProfile.entitlements
 cp runner_patches/Release.entitlements      macos/Runner/Release.entitlements
 
