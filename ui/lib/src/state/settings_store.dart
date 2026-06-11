@@ -59,8 +59,8 @@ class TraySettings {
     this.mode = TrayMode.pinnedAccount, // 默认:选中账户的 5h 剩余/重置(未选则取最忙的)
     this.pinnedKey,
     this.template,
-    this.tickerMs = 70,
-    this.tickerWidth = 18,
+    this.tickerMs = 300, // 默认最慢/最稳(滑块下限即此值)
+    this.tickerWidth = 10, // 默认窗口宽 10 字
   });
 
   TraySettings copyWith({
@@ -95,8 +95,8 @@ class TraySettings {
         ),
         pinnedKey: j['pinned_key'] as String?,
         template: j['template'] as String?,
-        tickerMs: (j['ticker_ms'] as num?)?.toInt() ?? 70,
-        tickerWidth: (j['ticker_width'] as num?)?.toInt() ?? 18,
+        tickerMs: (j['ticker_ms'] as num?)?.toInt() ?? 300,
+        tickerWidth: (j['ticker_width'] as num?)?.toInt() ?? 10,
       );
 }
 
