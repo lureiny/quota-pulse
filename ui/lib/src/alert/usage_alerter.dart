@@ -59,9 +59,11 @@ class UsageAlerter {
   void _fire(AccountPulse p, Meter m, double u) {
     final name = p.name.isEmpty ? p.accountId : p.name;
     final label = m.label.isEmpty ? m.id : m.label;
+    final full = u >= 1.0; // 已用满(通常已限流)→ 升级更醒目的标题
     LocalNotification(
-      title: '⚠️ 用量提醒',
+      title: full ? '🛑 用量已满' : '🚨 用量告警',
       body: '${p.instance}·$name 的 $label 已用 ${(u * 100).round()}%',
+      silent: false, // 播放系统提示音,更易察觉
     ).show();
   }
 
@@ -69,8 +71,9 @@ class UsageAlerter {
   Future<void> testNotification() async {
     await setup();
     await LocalNotification(
-      title: '✅ 测试通知',
+      title: '🚨 测试通知',
       body: 'quota-pulse 通知工作正常',
+      silent: false, // 与真实告警一致:带提示音
     ).show();
   }
 }
