@@ -72,13 +72,12 @@ class MenuBarController: NSObject {
 
   private func setup(_ args: [String: Any]) {
     ensureItem()
-    // 图标用 button.image(NSStatusBarButton 原生绘制,最稳、自动模板着色),
-    // 放左侧;右侧文字交给子视图绘制/滚动。
+    // 图标自绘到子视图左侧固定区,不走 button.image:
+    // 按钮无 title 时 AppKit 会把 image 居中到整条状态项 → 正好压在文字上(重叠)。
     if let icon = args["icon"] as? FlutterStandardTypedData, let img = NSImage(data: icon.data) {
       img.isTemplate = true
       img.size = NSSize(width: 18, height: 18)
-      statusItem?.button?.image = img
-      statusItem?.button?.imagePosition = .imageLeft
+      view?.setIcon(img)
     }
     menuItems = args["menu"] as? [[String: Any]] ?? []
   }
@@ -151,6 +150,9 @@ class MenuBarView: NSView {
   var onLeftClick: (() -> Void)?
   var onRightClick: (() -> Void)?
 
+  private var iconRaw: NSImage?    // 原始模板图(随明暗重新着色)
+  private var iconTinted: NSImage? // 按当前外观着成 labelColor 的缓存
+
   private var text: String = ""
   private var scrolling = false
   private var pps: CGFloat = 100
@@ -160,6 +162,28 @@ class MenuBarView: NSView {
   private var timer: Timer?
 
   override var isFlipped: Bool { true }
+
+  // 图标自绘:模板图按当前外观着色后缓存,避免每帧重算。
+  func setIcon(_ img: NSImage?) {
+    iconRaw = img
+    retintIcon()
+    needsDisplay = true
+  }
+
+  private func retintIcon() {
+    guard let raw = iconRaw else { iconTinted = nil; return }
+    let out = NSImage(size: raw.size)
+    out.lockFocus()
+    let saved = NSAppearance.current
+    NSAppearance.current = effectiveAppearance     // 让 labelColor 解析到当前明暗
+    NSColor.labelColor.set()
+    let rect = NSRect(origin: .zero, size: raw.size)
+    raw.draw(in: rect)
+    rect.fill(using: .sourceAtop)                   // 用 labelColor 染模板图的不透明像素
+    NSAppearance.current = saved
+    out.unlockFocus()
+    iconTinted = out
+  }
 
   // 每次数据轮询都会调用(文字常有微变,如倒计时)。已在滚动时只换文字、保留进度,
   // 避免每轮跳回开头;速度/宽度变化即时生效(定时器闭包每帧读 self.pps)。
@@ -200,8 +224,15 @@ class MenuBarView: NSView {
 
   override func draw(_ dirtyRect: NSRect) {
     let h = bounds.height
-    // 图标由 button.image 绘制(左侧);这里只画右侧文字区:裁剪后绘制,
-    // 滚动时画多遍接成无缝循环。用 textWidth(不依赖 bounds 时序)。
+    // 左侧图标:自绘,水平居中于 iconArea、垂直居中(钉死,绝不与文字区重叠)。
+    if let icon = iconTinted {
+      let s = icon.size
+      icon.draw(in: NSRect(x: (MenuBarView.iconArea - s.width) / 2,
+                           y: (h - s.height) / 2,
+                           width: s.width, height: s.height))
+    }
+    // 右侧文字区:裁剪后绘制,滚动时画多遍接成无缝循环。
+    // 用 textWidth(不依赖 bounds 时序)。
     let tx = MenuBarView.iconArea
     let tw = textWidth
     if tw <= 0 || text.isEmpty { return }
@@ -224,8 +255,9 @@ class MenuBarView: NSView {
     NSGraphicsContext.restoreGraphicsState()
   }
 
-  // 明暗切换时重绘(labelColor 重新解析)。
+  // 明暗切换:文字用 labelColor 自动更新;图标需按新外观重新着色。
   override func viewDidChangeEffectiveAppearance() {
+    retintIcon()
     needsDisplay = true
   }
 
