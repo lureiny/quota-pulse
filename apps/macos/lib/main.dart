@@ -330,10 +330,15 @@ class _ShellState extends State<Shell> with WindowListener {
     _updateTray();
   }
 
-  // 用量提醒(开关/阈值):即时持久化;下一次快照检测即按新设置生效。
-  void _onAlertChanged(bool enabled, int threshold) {
-    setState(() => _settings =
-        _settings.copyWith(alertEnabled: enabled, alertThreshold: threshold));
+  // 用量提醒(总开关/阈值/各类监听窗口):即时持久化;下一次快照检测即按新设置生效。
+  void _onAlertChanged(
+      bool enabled, int threshold, Set<String> over, Set<String> recover) {
+    setState(() => _settings = _settings.copyWith(
+          alertEnabled: enabled,
+          alertThreshold: threshold,
+          alertOverWindows: over,
+          alertRecoverWindows: recover,
+        ));
     SettingsStore.save(_settings);
   }
 

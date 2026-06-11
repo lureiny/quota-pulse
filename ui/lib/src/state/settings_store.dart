@@ -53,6 +53,24 @@ enum TrayMetric { usage, remaining }
 /// 重置时间显示:倒计时(剩余时间)或绝对时刻。主页与托盘/菜单栏同时生效。
 enum ResetMode { countdown, absolute }
 
+/// 可作为通知触发源的滚动窗口(id → 展示名);当前支持 Claude 5h / 7d。
+/// id 与 core mapper 一致(five_hour / seven_day)。
+const Map<String, String> kAlertWindows = {
+  'five_hour': '5h',
+  'seven_day': '7d',
+};
+
+/// 超阈值通知默认监听的窗口(5h + 7d 都开)。
+const Set<String> _kDefaultOverWindows = {'five_hour', 'seven_day'};
+
+/// 解析窗口集合;缺省(键不存在)用 fallback,空列表表示"全关"。
+Set<String> _parseWindowSet(Object? raw, Set<String> fallback) {
+  if (raw is List) {
+    return raw.map((e) => e.toString()).where(kAlertWindows.containsKey).toSet();
+  }
+  return {...fallback};
+}
+
 /// 托盘内容设置(跨平台;Windows=tooltip,macOS=菜单栏标题)。
 class TraySettings {
   final TrayMode mode;
@@ -133,8 +151,10 @@ class Settings {
   final TraySettings tray;
   final ThemeChoice themeMode;
   final ResetMode resetMode; // 重置时间:倒计时 / 绝对(主页 + 托盘/菜单栏同时生效)
-  final bool alertEnabled; // 用量超阈值系统提醒(默认开)
-  final int alertThreshold; // 提醒阈值(百分比,默认 90)
+  final bool alertEnabled; // 通知总开关(默认开)
+  final int alertThreshold; // 提醒阈值(百分比,默认 90;超阈值与恢复共用此边界)
+  final Set<String> alertOverWindows; // 超阈值通知监听的窗口(默认 5h+7d)
+  final Set<String> alertRecoverWindows; // 额度恢复通知监听的窗口(默认空=关)
 
   const Settings({
     this.instances = const [],
@@ -144,6 +164,8 @@ class Settings {
     this.resetMode = ResetMode.countdown,
     this.alertEnabled = true,
     this.alertThreshold = 90,
+    this.alertOverWindows = _kDefaultOverWindows,
+    this.alertRecoverWindows = const <String>{},
   });
 
   bool get configured => instances.any((i) => i.configured);
@@ -156,6 +178,8 @@ class Settings {
     ResetMode? resetMode,
     bool? alertEnabled,
     int? alertThreshold,
+    Set<String>? alertOverWindows,
+    Set<String>? alertRecoverWindows,
   }) =>
       Settings(
         instances: instances ?? this.instances,
@@ -165,6 +189,8 @@ class Settings {
         resetMode: resetMode ?? this.resetMode,
         alertEnabled: alertEnabled ?? this.alertEnabled,
         alertThreshold: alertThreshold ?? this.alertThreshold,
+        alertOverWindows: alertOverWindows ?? this.alertOverWindows,
+        alertRecoverWindows: alertRecoverWindows ?? this.alertRecoverWindows,
       );
 
   /// 已配置实例 → (唯一展示名, 实例)。唯一名规则与核心 facade 去重一致(避免 key 串号),
@@ -225,6 +251,8 @@ class Settings {
         'reset_mode': resetMode.name,
         'alert_enabled': alertEnabled,
         'alert_threshold': alertThreshold,
+        'alert_over_windows': alertOverWindows.toList(),
+        'alert_recover_windows': alertRecoverWindows.toList(),
       };
 
   factory Settings.fromJson(Map<String, dynamic> j) => Settings(
@@ -248,6 +276,10 @@ class Settings {
         ),
         alertEnabled: j['alert_enabled'] as bool? ?? true,
         alertThreshold: (j['alert_threshold'] as num?)?.toInt() ?? 90,
+        alertOverWindows:
+            _parseWindowSet(j['alert_over_windows'], _kDefaultOverWindows),
+        alertRecoverWindows:
+            _parseWindowSet(j['alert_recover_windows'], const <String>{}),
       );
 }
 

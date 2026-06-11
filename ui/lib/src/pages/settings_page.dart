@@ -30,7 +30,13 @@ class SettingsPage extends StatefulWidget {
   final void Function(ListLayout)? onLayoutChanged;
   final void Function(TraySettings)? onTrayChanged;
   final void Function(ResetMode)? onResetModeChanged; // 重置显示:主页+托盘同时生效
-  final void Function(bool enabled, int threshold)? onAlertChanged; // 用量提醒(开关+阈值)
+  // 用量提醒:总开关 + 阈值 + 超阈值监听窗口 + 恢复监听窗口
+  final void Function(
+    bool enabled,
+    int threshold,
+    Set<String> overWindows,
+    Set<String> recoverWindows,
+  )? onAlertChanged;
   final Future<void> Function()? onTestNotification; // 发送测试通知
   final bool autostartEnabled;
   final void Function(bool)? onAutostartChanged;
@@ -77,8 +83,10 @@ class _SettingsPageState extends State<SettingsPage> {
   late int _tickerWidth; // macOS 菜单栏滚动窗口宽(字符)
   late TrayMetric _metric; // 托盘显示量:使用量/剩余量
   late ResetMode _resetMode; // 重置显示:倒计时/绝对
-  late bool _alertEnabled; // 用量提醒开关
+  late bool _alertEnabled; // 用量提醒总开关
   late int _alertThreshold; // 用量提醒阈值(%)
+  late Set<String> _alertOverWindows; // 超阈值监听窗口
+  late Set<String> _alertRecoverWindows; // 额度恢复监听窗口
   int _idSeq = 0;
 
   @override
@@ -98,7 +106,17 @@ class _SettingsPageState extends State<SettingsPage> {
     _resetMode = widget.initial.resetMode;
     _alertEnabled = widget.initial.alertEnabled;
     _alertThreshold = widget.initial.alertThreshold;
+    _alertOverWindows = widget.initial.alertOverWindows.toSet();
+    _alertRecoverWindows = widget.initial.alertRecoverWindows.toSet();
   }
+
+  /// 用量提醒任一项改动即时生效(不必"保存并连接")。
+  void _emitAlert() => widget.onAlertChanged?.call(
+        _alertEnabled,
+        _alertThreshold,
+        _alertOverWindows.toSet(),
+        _alertRecoverWindows.toSet(),
+      );
 
   _Draft _newDraft() {
     _idSeq++;
@@ -141,6 +159,8 @@ class _SettingsPageState extends State<SettingsPage> {
       resetMode: _resetMode,
       alertEnabled: _alertEnabled,
       alertThreshold: _alertThreshold,
+      alertOverWindows: _alertOverWindows,
+      alertRecoverWindows: _alertRecoverWindows,
     ));
   }
 
@@ -344,13 +364,13 @@ class _SettingsPageState extends State<SettingsPage> {
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           dense: true,
-          title: const Text('用量超阈值时系统通知', style: TextStyle(fontSize: 13)),
-          subtitle: Text('所有滚动窗口各自判定;每个窗口一个重置周期内只提醒一次',
+          title: const Text('启用用量通知', style: TextStyle(fontSize: 13)),
+          subtitle: Text('关闭后下列通知都不发送;每个窗口同类通知一个重置周期内只提醒一次',
               style: theme.textTheme.bodySmall),
           value: _alertEnabled,
           onChanged: (v) {
             setState(() => _alertEnabled = v);
-            widget.onAlertChanged?.call(_alertEnabled, _alertThreshold);
+            _emitAlert();
           },
         ),
         Row(children: [
@@ -366,12 +386,20 @@ class _SettingsPageState extends State<SettingsPage> {
               onChanged: _alertEnabled
                   ? (v) {
                       setState(() => _alertThreshold = v.round());
-                      widget.onAlertChanged?.call(_alertEnabled, _alertThreshold);
+                      _emitAlert();
                     }
                   : null,
             ),
           ),
         ]),
+        const SizedBox(height: 4),
+        Text('超阈值提醒 · 用量越过阈值时', style: theme.textTheme.bodySmall),
+        const SizedBox(height: 4),
+        _windowChips(_alertOverWindows),
+        const SizedBox(height: 10),
+        Text('额度恢复提醒 · 回落到阈值以下(含窗口重置)时', style: theme.textTheme.bodySmall),
+        const SizedBox(height: 4),
+        _windowChips(_alertRecoverWindows),
         Align(
           alignment: Alignment.centerLeft,
           child: TextButton.icon(
@@ -381,6 +409,11 @@ class _SettingsPageState extends State<SettingsPage> {
             icon: const Icon(Icons.notifications_active_outlined, size: 16),
             label: const Text('发送测试通知'),
           ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(left: 8),
+          child: Text('依次弹出 🚨 告警 / 🛑 已满 / ✅ 恢复 三种样例',
+              style: theme.textTheme.bodySmall),
         ),
 
         // macOS 专属:菜单栏「全部账户」流水屏滚动调参(拖动即时预览)。
@@ -511,6 +544,31 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
     );
   }
+
+  /// 通知监听窗口多选 chips(5h / 7d);总开关关闭时禁用。
+  Widget _windowChips(Set<String> selected) => Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          for (final e in kAlertWindows.entries)
+            FilterChip(
+              label: Text(e.value, style: const TextStyle(fontSize: 12)),
+              selected: selected.contains(e.key),
+              onSelected: _alertEnabled
+                  ? (sel) {
+                      setState(() {
+                        if (sel) {
+                          selected.add(e.key);
+                        } else {
+                          selected.remove(e.key);
+                        }
+                      });
+                      _emitAlert();
+                    }
+                  : null,
+            ),
+        ],
+      );
 
   InputDecoration _dec(String? hint) => InputDecoration(
         isDense: true,
