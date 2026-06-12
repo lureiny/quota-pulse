@@ -39,8 +39,10 @@ func (p PollConfig) withDefaults() PollConfig {
 	if p.PassiveInterval <= 0 {
 		p.PassiveInterval = Duration(60 * time.Second)
 	}
-	if p.ActiveInterval <= 0 {
-		p.ActiveInterval = Duration(10 * time.Minute)
+	// ActiveInterval <= 0 表示关闭自动强制回源(默认即关:周期性回源有明显自动化特征)。
+	// 不再兜底成 10m;手动刷新(Poller.Refresh)仍会强制回源,不受此影响。
+	if p.ActiveInterval < 0 {
+		p.ActiveInterval = 0
 	}
 	return p
 }

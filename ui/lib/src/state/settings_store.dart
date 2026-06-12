@@ -63,6 +63,9 @@ const Map<String, String> kAlertWindows = {
 /// 超阈值通知默认监听的窗口(5h + 7d 都开)。
 const Set<String> _kDefaultOverWindows = {'five_hour', 'seven_day'};
 
+/// 托盘/悬浮窗/菜单栏默认显示的窗口(5h + 7d 都显示;多行模式即 base/5h/7d 三行)。
+const Set<String> _kDefaultDisplayWindows = {'five_hour', 'seven_day'};
+
 /// 解析窗口集合;缺省(键不存在)用 fallback,空列表表示"全关"。
 Set<String> _parseWindowSet(Object? raw, Set<String> fallback) {
   if (raw is List) {
@@ -78,8 +81,10 @@ class TraySettings {
   final int tickerMs; // 滚动步进间隔(ms;越小越顺也越快)。macOS 菜单栏 + Windows 跑马灯共用
   final int tickerWidth; // 滚动可见宽(字符数)。macOS 菜单栏 + Windows 跑马灯共用
   final TrayMetric metric; // 显示使用量 / 剩余量(默认使用量)
+  final Set<String> displayWindows; // 显示哪些滚动窗口(5h/7d,可多选;跨平台生效)
   // Windows 桌面悬浮跑马灯(macOS 无此项;原生浮窗,见 apps/windows/runner_patches/win_ticker)
   final bool windowsTickerEnabled; // 是否启用(默认开)
+  final bool windowsTickerMultiline; // 显示模式:false=单行滚动(默认),true=多行铺开
   final bool windowsTickerHideFullscreen; // 前台全屏时自动隐藏(默认关=始终显示)
   final int? windowsTickerX; // 浮窗位置(物理像素;null=原生用默认右下角)
   final int? windowsTickerY;
@@ -90,7 +95,9 @@ class TraySettings {
     this.tickerMs = 300, // 默认最慢/最稳(滑块下限即此值)
     this.tickerWidth = 10, // 默认窗口宽 10 字
     this.metric = TrayMetric.usage, // 默认显示使用量
+    this.displayWindows = _kDefaultDisplayWindows, // 默认 5h + 7d 都显示
     this.windowsTickerEnabled = true, // 默认开启
+    this.windowsTickerMultiline = false, // 默认单行滚动
     this.windowsTickerHideFullscreen = false,
     this.windowsTickerX,
     this.windowsTickerY,
@@ -102,7 +109,9 @@ class TraySettings {
     int? tickerMs,
     int? tickerWidth,
     TrayMetric? metric,
+    Set<String>? displayWindows,
     bool? windowsTickerEnabled,
+    bool? windowsTickerMultiline,
     bool? windowsTickerHideFullscreen,
     int? windowsTickerX,
     int? windowsTickerY,
@@ -113,7 +122,10 @@ class TraySettings {
         tickerMs: tickerMs ?? this.tickerMs,
         tickerWidth: tickerWidth ?? this.tickerWidth,
         metric: metric ?? this.metric,
+        displayWindows: displayWindows ?? this.displayWindows,
         windowsTickerEnabled: windowsTickerEnabled ?? this.windowsTickerEnabled,
+        windowsTickerMultiline:
+            windowsTickerMultiline ?? this.windowsTickerMultiline,
         windowsTickerHideFullscreen:
             windowsTickerHideFullscreen ?? this.windowsTickerHideFullscreen,
         windowsTickerX: windowsTickerX ?? this.windowsTickerX,
@@ -127,7 +139,9 @@ class TraySettings {
         tickerMs: tickerMs,
         tickerWidth: tickerWidth,
         metric: metric,
+        displayWindows: displayWindows,
         windowsTickerEnabled: windowsTickerEnabled,
+        windowsTickerMultiline: windowsTickerMultiline,
         windowsTickerHideFullscreen: windowsTickerHideFullscreen,
         windowsTickerX: null,
         windowsTickerY: null,
@@ -139,7 +153,9 @@ class TraySettings {
         'ticker_ms': tickerMs,
         'ticker_width': tickerWidth,
         'metric': metric.name,
+        'display_windows': displayWindows.toList(),
         'win_ticker_enabled': windowsTickerEnabled,
+        'win_ticker_multiline': windowsTickerMultiline,
         'win_ticker_hide_fullscreen': windowsTickerHideFullscreen,
         if (windowsTickerX != null) 'win_ticker_x': windowsTickerX,
         if (windowsTickerY != null) 'win_ticker_y': windowsTickerY,
@@ -154,7 +170,10 @@ class TraySettings {
           (m) => m.name == j['metric'],
           orElse: () => TrayMetric.usage,
         ),
+        displayWindows:
+            _parseWindowSet(j['display_windows'], _kDefaultDisplayWindows),
         windowsTickerEnabled: j['win_ticker_enabled'] as bool? ?? true,
+        windowsTickerMultiline: j['win_ticker_multiline'] as bool? ?? false,
         windowsTickerHideFullscreen:
             j['win_ticker_hide_fullscreen'] as bool? ?? false,
         windowsTickerX: (j['win_ticker_x'] as num?)?.toInt(),
@@ -195,6 +214,10 @@ class Settings {
   final int alertThreshold; // 提醒阈值(百分比,默认 90;超阈值与恢复共用此边界)
   final Set<String> alertOverWindows; // 超阈值通知监听的窗口(默认 5h+7d)
   final Set<String> alertRecoverWindows; // 额度恢复通知监听的窗口(默认空=关)
+  // 后台拉取节奏(喂给核心 poll 配置):
+  final int pollPassiveSecs; // 被动刷新间隔(读 sub2api 缓存,始终开;默认 60s)
+  final bool pollActiveEnabled; // 自动强制回源开关(有自动化特征,默认关)
+  final int pollActiveSecs; // 自动回源间隔(仅 pollActiveEnabled 时生效;默认 600s=10m)
 
   const Settings({
     this.instances = const [],
@@ -206,6 +229,9 @@ class Settings {
     this.alertThreshold = 90,
     this.alertOverWindows = _kDefaultOverWindows,
     this.alertRecoverWindows = const <String>{},
+    this.pollPassiveSecs = 60,
+    this.pollActiveEnabled = false,
+    this.pollActiveSecs = 600,
   });
 
   bool get configured => instances.any((i) => i.configured);
@@ -220,6 +246,9 @@ class Settings {
     int? alertThreshold,
     Set<String>? alertOverWindows,
     Set<String>? alertRecoverWindows,
+    int? pollPassiveSecs,
+    bool? pollActiveEnabled,
+    int? pollActiveSecs,
   }) =>
       Settings(
         instances: instances ?? this.instances,
@@ -231,6 +260,9 @@ class Settings {
         alertThreshold: alertThreshold ?? this.alertThreshold,
         alertOverWindows: alertOverWindows ?? this.alertOverWindows,
         alertRecoverWindows: alertRecoverWindows ?? this.alertRecoverWindows,
+        pollPassiveSecs: pollPassiveSecs ?? this.pollPassiveSecs,
+        pollActiveEnabled: pollActiveEnabled ?? this.pollActiveEnabled,
+        pollActiveSecs: pollActiveSecs ?? this.pollActiveSecs,
       );
 
   /// 已配置实例 → (唯一展示名, 实例)。唯一名规则与核心 facade 去重一致(避免 key 串号),
@@ -266,7 +298,11 @@ class Settings {
         'api_key': inst.apiKey.trim(),
         // 不按 status 过滤:账户限流后 sub2api 会把它改成非 active(自动停用),
         // 过滤会让它从列表消失(网页仍可见)。拉全部账户,真实状态由 UI 状态点体现。
-        'poll': {'passive_interval': '60s', 'active_interval': '10m'},
+        // 拉取节奏来自设置:被动刷新固定开;自动回源默认关(active_interval=0s 即关)。
+        'poll': {
+          'passive_interval': '${pollPassiveSecs}s',
+          'active_interval': pollActiveEnabled ? '${pollActiveSecs}s' : '0s',
+        },
       });
     }
     return jsonEncode({'providers': providers});
@@ -293,6 +329,9 @@ class Settings {
         'alert_threshold': alertThreshold,
         'alert_over_windows': alertOverWindows.toList(),
         'alert_recover_windows': alertRecoverWindows.toList(),
+        'poll_passive_secs': pollPassiveSecs,
+        'poll_active_enabled': pollActiveEnabled,
+        'poll_active_secs': pollActiveSecs,
       };
 
   factory Settings.fromJson(Map<String, dynamic> j) => Settings(
@@ -320,6 +359,9 @@ class Settings {
             _parseWindowSet(j['alert_over_windows'], _kDefaultOverWindows),
         alertRecoverWindows:
             _parseWindowSet(j['alert_recover_windows'], const <String>{}),
+        pollPassiveSecs: (j['poll_passive_secs'] as num?)?.toInt() ?? 60,
+        pollActiveEnabled: j['poll_active_enabled'] as bool? ?? false,
+        pollActiveSecs: (j['poll_active_secs'] as num?)?.toInt() ?? 600,
       );
 }
 

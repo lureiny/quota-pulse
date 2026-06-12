@@ -304,18 +304,30 @@ class _ShellState extends State<Shell>
               Brightness.dark,
       };
 
-  // 悬浮窗口:内容与 macOS 菜单栏同源(同一选集 + 5h 用量/重置),状态走原生圆点。
+  // 悬浮窗口:内容与 macOS 菜单栏同源(同一选集 + 选中窗口用量/重置),状态走原生圆点。
+  // 单行滚动用 segments;多行铺开用 lines(每账户 base + 各窗口一行)。两份都构造,
+  // 原生按 multiline 选用哪份,切换模式无需重建数据。
   void _updateTicker() {
     final tray = _settings.tray;
     final pulses = _controller?.pulses ?? const <AccountPulse>[];
     final segs = tickerSegments(pulses, tray, _settings.resetMode)
         .map((s) => <String, Object>{'color': s.color, 'text': s.text})
         .toList();
+    final lines = tickerLines(pulses, tray, _settings.resetMode)
+        .map((l) => <String, Object>{
+              'dot': l.dot,
+              'color': l.color,
+              'indent': l.indent,
+              'text': l.text,
+            })
+        .toList();
     // 是否滚动完全交给原生按"放不放得下"判定(contentWidth > width):哪怕只有
     // 一个账户,只要单行超出可见宽也要滚,否则会一直只露出半截信息(同 macOS)。
     const scroll = true;
     WinTicker.update(
       segments: segs,
+      lines: lines,
+      multiline: tray.windowsTickerMultiline,
       enabled: tray.windowsTickerEnabled,
       scroll: scroll,
       pps: _scrollPps,
@@ -404,6 +416,18 @@ class _ShellState extends State<Shell>
     SettingsStore.save(_settings);
   }
 
+  // 后台拉取节奏改动:持久化并重启核心(poll 配置进 toConfigJson,只能重新 init 生效)。
+  void _onPollChanged(int passiveSecs, bool activeEnabled, int activeSecs) {
+    final s = _settings.copyWith(
+      pollPassiveSecs: passiveSecs,
+      pollActiveEnabled: activeEnabled,
+      pollActiveSecs: activeSecs,
+    );
+    SettingsStore.save(s);
+    setState(() => _settings = s);
+    if (s.configured) _startCore(s); // 已配置才有核心可重启
+  }
+
   Future<void> _quit() async {
     try {
       _source.stop();
@@ -433,6 +457,7 @@ class _ShellState extends State<Shell>
         onTrayChanged: _onTrayChanged,
         onResetModeChanged: _onResetModeChanged,
         onAlertChanged: _onAlertChanged,
+        onPollChanged: _onPollChanged,
         onTestNotification: () => _alerter.testNotification(),
         onResetTickerPosition: _onResetTickerPosition,
         autostartEnabled: _autostartEnabled,

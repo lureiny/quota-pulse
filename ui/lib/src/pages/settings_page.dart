@@ -4,6 +4,10 @@ import '../models/pulse.dart';
 import '../state/settings_store.dart';
 import '../version.dart';
 
+// 后台拉取间隔的下拉预设(秒):被动刷新 / 自动回源。
+const List<int> _kPassivePresets = [30, 60, 120, 300];
+const List<int> _kActivePresets = [300, 600, 1800, 3600];
+
 /// SettingsPage:管理多个 sub2api 实例 + 列表布局 + 托盘内容。
 class SettingsPage extends StatefulWidget {
   const SettingsPage({
@@ -17,6 +21,7 @@ class SettingsPage extends StatefulWidget {
     this.onTrayChanged,
     this.onResetModeChanged,
     this.onAlertChanged,
+    this.onPollChanged, // 后台拉取节奏(改后重启核心生效)
     this.onTestNotification,
     this.onResetTickerPosition, // Windows 悬浮窗口「重置位置」
     this.autostartEnabled = false, // 开机自启动当前状态(由壳查询 OS 得到)
@@ -38,6 +43,12 @@ class SettingsPage extends StatefulWidget {
     Set<String> overWindows,
     Set<String> recoverWindows,
   )? onAlertChanged;
+  // 后台拉取:被动刷新间隔(秒) + 自动回源开关 + 自动回源间隔(秒)。改后壳重启核心生效。
+  final void Function(
+    int passiveSecs,
+    bool activeEnabled,
+    int activeSecs,
+  )? onPollChanged;
   final Future<void> Function()? onTestNotification; // 发送测试通知
   final VoidCallback? onResetTickerPosition; // Windows 跑马灯重置到默认位置
   final bool autostartEnabled;
@@ -84,13 +95,18 @@ class _SettingsPageState extends State<SettingsPage> {
   late int _tickerMs; // 滚动速度(ms):macOS 菜单栏 + Windows 跑马灯共用
   late int _tickerWidth; // 滚动窗口宽(字符):macOS 菜单栏 + Windows 跑马灯共用
   late bool _windowsTickerEnabled; // Windows 悬浮窗口开关
+  late bool _windowsTickerMultiline; // Windows 悬浮窗口显示模式:false=滚动,true=多行
   late bool _windowsTickerHideFullscreen; // Windows 跑马灯全屏时隐藏
   late TrayMetric _metric; // 托盘显示量:使用量/剩余量
+  late Set<String> _displayWindows; // 显示窗口(5h/7d,可多选;跨平台)
   late ResetMode _resetMode; // 重置显示:倒计时/绝对
   late bool _alertEnabled; // 用量提醒总开关
   late int _alertThreshold; // 用量提醒阈值(%)
   late Set<String> _alertOverWindows; // 超阈值监听窗口
   late Set<String> _alertRecoverWindows; // 额度恢复监听窗口
+  late int _pollPassiveSecs; // 被动刷新间隔(秒)
+  late bool _pollActiveEnabled; // 自动强制回源开关
+  late int _pollActiveSecs; // 自动回源间隔(秒)
   int _idSeq = 0;
 
   @override
@@ -107,13 +123,23 @@ class _SettingsPageState extends State<SettingsPage> {
     _tickerMs = widget.initial.tray.tickerMs.clamp(30, 300).toInt();
     _tickerWidth = widget.initial.tray.tickerWidth.clamp(8, 40).toInt();
     _windowsTickerEnabled = widget.initial.tray.windowsTickerEnabled;
+    _windowsTickerMultiline = widget.initial.tray.windowsTickerMultiline;
     _windowsTickerHideFullscreen = widget.initial.tray.windowsTickerHideFullscreen;
     _metric = widget.initial.tray.metric;
+    _displayWindows = widget.initial.tray.displayWindows.toSet();
     _resetMode = widget.initial.resetMode;
     _alertEnabled = widget.initial.alertEnabled;
     _alertThreshold = widget.initial.alertThreshold;
     _alertOverWindows = widget.initial.alertOverWindows.toSet();
     _alertRecoverWindows = widget.initial.alertRecoverWindows.toSet();
+    // 吸附到下拉预设值(防御手改 prefs 出现非预设值导致 DropdownButton 断言)。
+    _pollPassiveSecs = _kPassivePresets.contains(widget.initial.pollPassiveSecs)
+        ? widget.initial.pollPassiveSecs
+        : 60;
+    _pollActiveEnabled = widget.initial.pollActiveEnabled;
+    _pollActiveSecs = _kActivePresets.contains(widget.initial.pollActiveSecs)
+        ? widget.initial.pollActiveSecs
+        : 600;
   }
 
   /// 用量提醒任一项改动即时生效(不必"保存并连接")。
@@ -122,6 +148,13 @@ class _SettingsPageState extends State<SettingsPage> {
         _alertThreshold,
         _alertOverWindows.toSet(),
         _alertRecoverWindows.toSet(),
+      );
+
+  /// 后台拉取节奏改动:通知壳重启核心生效(改动较重,非即时)。
+  void _emitPoll() => widget.onPollChanged?.call(
+        _pollPassiveSecs,
+        _pollActiveEnabled,
+        _pollActiveSecs,
       );
 
   _Draft _newDraft() {
@@ -150,7 +183,9 @@ class _SettingsPageState extends State<SettingsPage> {
         tickerMs: _tickerMs,
         tickerWidth: _tickerWidth,
         metric: _metric,
+        displayWindows: _displayWindows.toSet(),
         windowsTickerEnabled: _windowsTickerEnabled,
+        windowsTickerMultiline: _windowsTickerMultiline,
         windowsTickerHideFullscreen: _windowsTickerHideFullscreen,
         // 保留浮窗位置(拖拽由壳持久化;设置页不持有,故从 initial 透传,避免被置空)。
         windowsTickerX: widget.initial.tray.windowsTickerX,
@@ -172,6 +207,9 @@ class _SettingsPageState extends State<SettingsPage> {
       alertThreshold: _alertThreshold,
       alertOverWindows: _alertOverWindows,
       alertRecoverWindows: _alertRecoverWindows,
+      pollPassiveSecs: _pollPassiveSecs,
+      pollActiveEnabled: _pollActiveEnabled,
+      pollActiveSecs: _pollActiveSecs,
     ));
   }
 
@@ -309,6 +347,10 @@ class _SettingsPageState extends State<SettingsPage> {
             _emitTray(); // 即时生效
           },
         ),
+        const SizedBox(height: 10),
+        Text('显示窗口(悬浮窗/菜单栏)', style: theme.textTheme.bodySmall),
+        const SizedBox(height: 4),
+        _displayWindowChips(),
         if (_trayMode == TrayMode.pinnedAccounts) ...[
           const SizedBox(height: 8),
           if (widget.accounts.isEmpty)
@@ -427,6 +469,78 @@ class _SettingsPageState extends State<SettingsPage> {
               style: theme.textTheme.bodySmall),
         ),
 
+        const Divider(height: 24),
+        Text('后台拉取',
+            style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+        const SizedBox(height: 8),
+        // 被动刷新:读 sub2api 缓存,始终开,仅周期可配。
+        Row(
+          children: [
+            const Expanded(child: Text('刷新间隔', style: TextStyle(fontSize: 13))),
+            _boxed(
+              DropdownButton<int>(
+                value: _pollPassiveSecs,
+                isDense: true,
+                underline: const SizedBox.shrink(),
+                items: const [
+                  DropdownMenuItem(value: 30, child: Text('30 秒')),
+                  DropdownMenuItem(value: 60, child: Text('1 分钟(默认)')),
+                  DropdownMenuItem(value: 120, child: Text('2 分钟')),
+                  DropdownMenuItem(value: 300, child: Text('5 分钟')),
+                ],
+                onChanged: (v) {
+                  if (v == null) return;
+                  setState(() => _pollPassiveSecs = v);
+                  _emitPoll();
+                },
+              ),
+            ),
+          ],
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Text('读取 sub2api 缓存的节奏(面板打开自动提速、电池供电降速)',
+              style: theme.textTheme.bodySmall),
+        ),
+        const SizedBox(height: 4),
+        // 自动强制回源:有自动化特征,默认关;手动刷新按钮不受影响。
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: const Text('自动强制回源', style: TextStyle(fontSize: 13)),
+          subtitle: Text('定期强制 sub2api 回源刷新上游;有明显自动化特征,默认关闭(手动刷新不受影响)',
+              style: theme.textTheme.bodySmall),
+          value: _pollActiveEnabled,
+          onChanged: (v) {
+            setState(() => _pollActiveEnabled = v);
+            _emitPoll();
+          },
+        ),
+        if (_pollActiveEnabled)
+          Row(
+            children: [
+              const Expanded(child: Text('回源间隔', style: TextStyle(fontSize: 13))),
+              _boxed(
+                DropdownButton<int>(
+                  value: _pollActiveSecs,
+                  isDense: true,
+                  underline: const SizedBox.shrink(),
+                  items: const [
+                    DropdownMenuItem(value: 300, child: Text('5 分钟')),
+                    DropdownMenuItem(value: 600, child: Text('10 分钟(默认)')),
+                    DropdownMenuItem(value: 1800, child: Text('30 分钟')),
+                    DropdownMenuItem(value: 3600, child: Text('1 小时')),
+                  ],
+                  onChanged: (v) {
+                    if (v == null) return;
+                    setState(() => _pollActiveSecs = v);
+                    _emitPoll();
+                  },
+                ),
+              ),
+            ],
+          ),
+
         // macOS 专属:菜单栏「全部账户」流水屏滚动调参(拖动即时预览)。
         if (theme.platform == TargetPlatform.macOS) ...[
           const Divider(height: 24),
@@ -482,7 +596,7 @@ class _SettingsPageState extends State<SettingsPage> {
             contentPadding: EdgeInsets.zero,
             dense: true,
             title: const Text('启用悬浮窗口', style: TextStyle(fontSize: 13)),
-            subtitle: Text('桌面常驻一条可拖拽的滚动用量条;左键点开主面板',
+            subtitle: Text('桌面常驻一个可拖拽的用量浮窗(滚动/多行);左键点开主面板',
                 style: theme.textTheme.bodySmall),
             value: _windowsTickerEnabled,
             onChanged: (v) {
@@ -491,40 +605,69 @@ class _SettingsPageState extends State<SettingsPage> {
             },
           ),
           if (_windowsTickerEnabled) ...[
-            Row(children: [
-              SizedBox(
-                  width: 76,
-                  child: Text('速度 ${_tickerMs}ms', style: theme.textTheme.bodySmall)),
-              Expanded(
-                child: Slider(
-                  min: 30,
-                  max: 300,
-                  divisions: 27,
-                  value: _tickerMs.toDouble(),
-                  onChanged: (v) {
-                    setState(() => _tickerMs = v.round());
-                    _emitTray();
-                  },
-                ),
+            const SizedBox(height: 4),
+            Text('显示模式', style: theme.textTheme.bodySmall),
+            const SizedBox(height: 4),
+            SegmentedButton<bool>(
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(value: false, label: Text('滚动')),
+                ButtonSegment(value: true, label: Text('多行')),
+              ],
+              selected: {_windowsTickerMultiline},
+              onSelectionChanged: (s) {
+                setState(() => _windowsTickerMultiline = s.first);
+                _emitTray();
+              },
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 4, bottom: 2),
+              child: Text(
+                _windowsTickerMultiline
+                    ? '多行:每账户铺开「基础信息 + 各窗口一行」,不滚动'
+                    : '滚动:单行像素级滚动,放不下时自动滚',
+                style: theme.textTheme.bodySmall,
               ),
-            ]),
-            Row(children: [
-              SizedBox(
-                  width: 76,
-                  child: Text('宽度 $_tickerWidth 字', style: theme.textTheme.bodySmall)),
-              Expanded(
-                child: Slider(
-                  min: 8,
-                  max: 40,
-                  divisions: 32,
-                  value: _tickerWidth.toDouble(),
-                  onChanged: (v) {
-                    setState(() => _tickerWidth = v.round());
-                    _emitTray();
-                  },
+            ),
+            // 速度/宽度仅对滚动模式有意义;多行模式按内容自动排版。
+            if (!_windowsTickerMultiline) ...[
+              Row(children: [
+                SizedBox(
+                    width: 76,
+                    child:
+                        Text('速度 ${_tickerMs}ms', style: theme.textTheme.bodySmall)),
+                Expanded(
+                  child: Slider(
+                    min: 30,
+                    max: 300,
+                    divisions: 27,
+                    value: _tickerMs.toDouble(),
+                    onChanged: (v) {
+                      setState(() => _tickerMs = v.round());
+                      _emitTray();
+                    },
+                  ),
                 ),
-              ),
-            ]),
+              ]),
+              Row(children: [
+                SizedBox(
+                    width: 76,
+                    child: Text('宽度 $_tickerWidth 字',
+                        style: theme.textTheme.bodySmall)),
+                Expanded(
+                  child: Slider(
+                    min: 8,
+                    max: 40,
+                    divisions: 32,
+                    value: _tickerWidth.toDouble(),
+                    onChanged: (v) {
+                      setState(() => _tickerWidth = v.round());
+                      _emitTray();
+                    },
+                  ),
+                ),
+              ]),
+            ],
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               dense: true,
@@ -630,6 +773,30 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
     );
   }
+
+  /// 显示窗口多选 chips(5h / 7d);跨平台生效,至少保留一个(禁止删到空)。
+  Widget _displayWindowChips() => Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          for (final e in kAlertWindows.entries)
+            FilterChip(
+              label: Text(e.value, style: const TextStyle(fontSize: 12)),
+              selected: _displayWindows.contains(e.key),
+              onSelected: (sel) {
+                if (!sel && _displayWindows.length <= 1) return; // 至少保留一个
+                setState(() {
+                  if (sel) {
+                    _displayWindows.add(e.key);
+                  } else {
+                    _displayWindows.remove(e.key);
+                  }
+                });
+                _emitTray();
+              },
+            ),
+        ],
+      );
 
   /// 通知监听窗口多选 chips(5h / 7d);总开关关闭时禁用。
   Widget _windowChips(Set<String> selected) => Wrap(

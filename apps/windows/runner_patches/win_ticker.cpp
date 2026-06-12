@@ -29,7 +29,9 @@ using Microsoft::WRL::ComPtr;
 
 // ---- 逻辑尺寸常量(DIP,96dpi 基准)----
 constexpr float kPadX = 12.0f;       // 文字区左右内边距
-constexpr float kHeight = 30.0f;     // 浮窗逻辑高
+constexpr float kHeight = 30.0f;     // 浮窗逻辑高(单行模式)
+constexpr float kPadYMulti = 8.0f;   // 多行模式上下内边距
+constexpr float kMaxContentW = 600.0f; // 多行模式卡片最大内容宽(超出按卡片边缘截断)
 constexpr float kFontSize = 14.0f;
 constexpr float kGap = 44.0f;        // 滚动一圈尾到头的空隙(与 macOS 一致)
 constexpr float kCorner = 9.0f;      // 圆角
@@ -94,6 +96,14 @@ struct Seg {
   std::wstring text;
 };
 
+// 多行模式的一行:可选前导状态圆点 + 缩进 + 文本。
+struct Line {
+  bool dot;
+  UINT32 color;
+  int indent;
+  std::wstring text;
+};
+
 // ---- 单例浮窗 ----
 class Ticker {
  public:
@@ -114,6 +124,7 @@ class Ticker {
     width_ = (float)GetDouble(args, "width", 150.0);
     if (width_ < 1.0f) width_ = 1.0f;
     scrollPref_ = GetBool(args, "scroll", false);
+    multiline_ = GetBool(args, "multiline", false);
     hideOnFullscreen_ = GetBool(args, "hideOnFullscreen", false);
     bool dark = GetBool(args, "dark", dark_);
     if (dark != dark_) {
@@ -124,11 +135,18 @@ class Ticker {
     }
 
     ParseSegments(args);
+    ParseLines(args);
 
     bool created = EnsureCreated(GetInt(args, "x", -1), GetInt(args, "y", -1));
     (void)created;
 
     RebuildLayout();
+    // 尺寸在 RebuildLayout 后才确定(多行高度随行数变):默认位置据此重算贴右下角;
+    // 已拖拽/已保存的位置则按当前尺寸夹回工作区,避免变高后越出屏幕。
+    if (posIsDefault_)
+      pos_ = DefaultPos();
+    else
+      ClampToWork();
     UpdateScrollState();
     UpdateFsTimer();
     Render();
@@ -140,6 +158,7 @@ class Ticker {
 
   void ResetPosition() {
     if (!hwnd_) return;
+    posIsDefault_ = true;  // 回归默认位置:后续随内容高度变化继续贴右下角
     pos_ = DefaultPos();
     // 只移动、不动 z-order(SWP_NOZORDER):若此时主面板开着,浮窗保持在其下方,
     // 不能像以前那样强制 HWND_TOPMOST 又把自己顶到面板上面;面板关闭后由
@@ -216,6 +235,7 @@ class Ticker {
           if (!dragged_ && (std::abs(dx) >= ::GetSystemMetrics(SM_CXDRAG) ||
                             std::abs(dy) >= ::GetSystemMetrics(SM_CYDRAG))) {
             dragged_ = true;
+            posIsDefault_ = false;  // 用户接管位置 → 不再自动贴右下角
           }
           if (dragged_) {
             pos_.x = winAtDown_.x + dx;
@@ -280,6 +300,30 @@ class Ticker {
     if (segs_.empty()) segs_.push_back({0xFF8E8E93, L"quota-pulse"});
   }
 
+  void ParseLines(const flutter::EncodableMap& args) {
+    lines_.clear();
+    if (auto v = Find(args, "lines")) {
+      if (auto list = std::get_if<flutter::EncodableList>(v)) {
+        for (const auto& e : *list) {
+          if (auto lm = std::get_if<flutter::EncodableMap>(&e)) {
+            Line ln;
+            ln.dot = GetBool(*lm, "dot", false);
+            ln.color = (UINT32)GetInt(*lm, "color", (int)0xFF8E8E93);
+            ln.color |= 0xFF000000;  // 圆点不透明
+            ln.indent = GetInt(*lm, "indent", 0);
+            const flutter::EncodableValue* t = Find(*lm, "text");
+            std::string txt = (t && std::get_if<std::string>(t))
+                                  ? *std::get_if<std::string>(t)
+                                  : std::string();
+            ln.text = Utf8ToWide(txt);
+            lines_.push_back(std::move(ln));
+          }
+        }
+      }
+    }
+    if (lines_.empty()) lines_.push_back({false, 0xFF8E8E93, 0, L"quota-pulse"});
+  }
+
   bool EnsureCreated(int savedX, int savedY) {
     if (hwnd_) return false;
     EnsureClass();
@@ -294,9 +338,10 @@ class Ticker {
     dpi_ = QueryDpi();
     if (savedX >= 0 && savedY >= 0) {
       pos_ = {savedX, savedY};
-      ClampToWork();
+      posIsDefault_ = false;  // 用保存位置;夹回工作区延后到 RebuildLayout 后(尺寸才定)
     } else {
-      pos_ = DefaultPos();
+      posIsDefault_ = true;  // 默认右下角:RebuildLayout 后据真实尺寸算
+      pos_ = {0, 0};
     }
     memDC_ = ::CreateCompatibleDC(nullptr);
     return true;
@@ -333,15 +378,38 @@ class Ticker {
     return d ? d : 96;
   }
 
+  // 当前逻辑尺寸(DIP):单行=2*kPadX+width_ × kHeight;
+  // 多行=2*kPadX+内容宽(封顶 kMaxContentW) × 2*kPadYMulti+内容高。
+  void CurrentLogicalSize(float* w, float* h) const {
+    if (multiline_) {
+      float cw = contentWidth_ > kMaxContentW ? kMaxContentW : contentWidth_;
+      *w = 2 * kPadX + cw;
+      *h = 2 * kPadYMulti + contentHeight_;
+    } else {
+      *w = 2 * kPadX + width_;
+      *h = kHeight;
+    }
+  }
+
+  // 当前物理尺寸(像素,按 DPI 取整,至少 1)。
+  void CurrentPhysSize(int* w, int* h) const {
+    float lw, lh;
+    CurrentLogicalSize(&lw, &lh);
+    float scale = dpi_ / 96.0f;
+    *w = (int)std::ceil(lw * scale);
+    *h = (int)std::ceil(lh * scale);
+    if (*w < 1) *w = 1;
+    if (*h < 1) *h = 1;
+  }
+
   POINT DefaultPos() {
     HMONITOR mon = ::MonitorFromWindow(owner_ ? owner_ : hwnd_,
                                        MONITOR_DEFAULTTOPRIMARY);
     MONITORINFO mi = {sizeof(mi)};
     ::GetMonitorInfoW(mon, &mi);
-    float scale = dpi_ / 96.0f;
-    int w = (int)std::ceil((2 * kPadX + width_) * scale);
-    int h = (int)std::ceil(kHeight * scale);
-    int m = (int)std::ceil(kMargin * scale);
+    int w, h;
+    CurrentPhysSize(&w, &h);
+    int m = (int)std::ceil(kMargin * dpi_ / 96.0f);
     return {mi.rcWork.right - w - m, mi.rcWork.bottom - h - m};
   }
 
@@ -349,9 +417,8 @@ class Ticker {
     HMONITOR mon = ::MonitorFromPoint(pos_, MONITOR_DEFAULTTONEAREST);
     MONITORINFO mi = {sizeof(mi)};
     ::GetMonitorInfoW(mon, &mi);
-    float scale = dpi_ / 96.0f;
-    int w = (int)std::ceil((2 * kPadX + width_) * scale);
-    int h = (int)std::ceil(kHeight * scale);
+    int w, h;
+    CurrentPhysSize(&w, &h);
     if (pos_.x > mi.rcWork.right - w) pos_.x = mi.rcWork.right - w;
     if (pos_.y > mi.rcWork.bottom - h) pos_.y = mi.rcWork.bottom - h;
     if (pos_.x < mi.rcWork.left) pos_.x = mi.rcWork.left;
@@ -437,9 +504,17 @@ class Ticker {
     layoutDirty_ = true;
   }
 
-  // 由 segs_ 组装一行文本:每段前一个 ●(状态色)+ 文本,段间 "   ·   "。
   void RebuildLayout() {
     if (!EnsureDevice()) return;
+    if (multiline_)
+      RebuildLayoutMulti();
+    else
+      RebuildLayoutSingle();
+  }
+
+  // 单行滚动:由 segs_ 组装一行文本,每段前一个 ●(状态色)+ 文本,段间 "   ·   ";
+  // CENTER(继承自 textFormat_)在 kHeight 内垂直居中。
+  void RebuildLayoutSingle() {
     std::wstring s;
     struct Mark {
       UINT32 start;
@@ -470,8 +545,46 @@ class Ticker {
     layoutDirty_ = false;
   }
 
+  // 多行:每行 = 缩进(每级 4 空格)+ (可选 ● 状态点) + 文本,行间 '\n';NEAR 顶对齐。
+  void RebuildLayoutMulti() {
+    std::wstring s;
+    struct Mark {
+      UINT32 start;
+      UINT32 color;
+    };
+    std::vector<Mark> marks;
+    for (size_t i = 0; i < lines_.size(); ++i) {
+      if (i) s += L'\n';
+      const Line& ln = lines_[i];
+      for (int k = 0; k < ln.indent; ++k) s += L"    ";
+      if (ln.dot) {
+        marks.push_back({(UINT32)s.size(), ln.color});
+        s += kDot;
+        s += L' ';
+      }
+      s += ln.text;
+    }
+    content_ = s;
+    layout_.Reset();
+    if (FAILED(dwrite_->CreateTextLayout(content_.c_str(), (UINT32)content_.size(),
+                                         textFormat_.Get(), 100000.0f, 100000.0f,
+                                         layout_.GetAddressOf()))) {
+      return;
+    }
+    layout_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);  // 顶对齐(覆写)
+    DWRITE_TEXT_METRICS dm = {};
+    layout_->GetMetrics(&dm);
+    contentWidth_ = dm.widthIncludingTrailingWhitespace;
+    contentHeight_ = dm.height;
+    for (const auto& mk : marks) {
+      layout_->SetDrawingEffect(ColorBrush(mk.color),
+                                DWRITE_TEXT_RANGE{mk.start, 1});
+    }
+    layoutDirty_ = false;
+  }
+
   void UpdateScrollState() {
-    bool want = scrollPref_ && contentWidth_ > width_;
+    bool want = !multiline_ && scrollPref_ && contentWidth_ > width_;
     if (want && !scrolling_) {
       offset_ = 0;
       scrolling_ = true;
@@ -553,12 +666,10 @@ class Ticker {
     if (!EnsureDevice()) return;
     if (layoutDirty_ || !layout_) RebuildLayout();
 
-    float scale = dpi_ / 96.0f;
-    float logicalW = 2 * kPadX + width_;
-    int physW = (int)std::ceil(logicalW * scale);
-    int physH = (int)std::ceil(kHeight * scale);
-    if (physW < 1) physW = 1;
-    if (physH < 1) physH = 1;
+    float logicalW, logicalH;
+    CurrentLogicalSize(&logicalW, &logicalH);
+    int physW, physH;
+    CurrentPhysSize(&physW, &physH);
     EnsureDib(physW, physH);
 
     RECT rc = {0, 0, physW, physH};
@@ -568,30 +679,37 @@ class Ticker {
     target_->SetTransform(D2D1::Matrix3x2F::Identity());
     target_->Clear(D2D1::ColorF(0, 0, 0, 0));
 
-    D2D1_ROUNDED_RECT rr = {{0.5f, 0.5f, logicalW - 0.5f, kHeight - 0.5f}, kCorner,
+    D2D1_ROUNDED_RECT rr = {{0.5f, 0.5f, logicalW - 0.5f, logicalH - 0.5f}, kCorner,
                             kCorner};
     target_->FillRoundedRectangle(rr, bgBrush_.Get());
     target_->DrawRoundedRectangle(rr, outlineBrush_.Get(), 1.0f);
 
-    target_->PushAxisAlignedClip(
-        D2D1::RectF(kPadX, 0, kPadX + width_, kHeight),
-        D2D1_ANTIALIAS_MODE_ALIASED);
-    if (layout_) {
-      if (scrolling_) {
-        float loop = contentWidth_ + kGap;
-        float x = kPadX - (float)offset_;
-        while (x < kPadX + width_) {
-          target_->DrawTextLayout(D2D1::Point2F(x, 0), layout_.Get(),
-                                  textBrush_.Get());
-          if (loop <= 0) break;
-          x += loop;
-        }
-      } else {
-        target_->DrawTextLayout(D2D1::Point2F(kPadX, 0), layout_.Get(),
+    if (multiline_) {
+      // 多行:顶对齐铺开,不裁剪不滚动(超出卡片宽的极端长行由 DIB 边界自然截断)。
+      if (layout_)
+        target_->DrawTextLayout(D2D1::Point2F(kPadX, kPadYMulti), layout_.Get(),
                                 textBrush_.Get());
+    } else {
+      target_->PushAxisAlignedClip(
+          D2D1::RectF(kPadX, 0, kPadX + width_, kHeight),
+          D2D1_ANTIALIAS_MODE_ALIASED);
+      if (layout_) {
+        if (scrolling_) {
+          float loop = contentWidth_ + kGap;
+          float x = kPadX - (float)offset_;
+          while (x < kPadX + width_) {
+            target_->DrawTextLayout(D2D1::Point2F(x, 0), layout_.Get(),
+                                    textBrush_.Get());
+            if (loop <= 0) break;
+            x += loop;
+          }
+        } else {
+          target_->DrawTextLayout(D2D1::Point2F(kPadX, 0), layout_.Get(),
+                                  textBrush_.Get());
+        }
       }
+      target_->PopAxisAlignedClip();
     }
-    target_->PopAxisAlignedClip();
 
     HRESULT hr = target_->EndDraw();
     if (hr == D2DERR_RECREATE_TARGET) {
@@ -620,14 +738,18 @@ class Ticker {
   bool scrollPref_ = false;
   bool scrolling_ = false;
   double offset_ = 0;
+  bool multiline_ = false;       // 显示模式:false=单行滚动,true=多行铺开
+  bool posIsDefault_ = false;    // 位置是否取默认(尺寸变化时随之重算贴右下角)
   bool hideOnFullscreen_ = false;
   bool fsHidden_ = false;
   bool shown_ = false;
   bool dark_ = false;  // 明暗:由 app 主题设置决定(每次 update 传入)
 
   std::vector<Seg> segs_;
+  std::vector<Line> lines_;          // 多行模式内容
   std::wstring content_;
   float contentWidth_ = 0;
+  float contentHeight_ = kHeight;    // 多行模式内容总高(逻辑 DIP)
   bool layoutDirty_ = true;
 
   // 拖拽

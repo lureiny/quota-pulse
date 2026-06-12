@@ -270,10 +270,12 @@ class _ShellState extends State<Shell> with WindowListener {
     final rm = _settings.resetMode;
     // 全部账户 / 指定账户(多选)统一取展示集合,拼成一行交给原生。
     final accounts = trayAccounts(pulses, tray);
+    final windows = displayWindowIds(tray); // 按设置显示 5h / 7d(可多选)
     final text = accounts.isEmpty
         ? 'quota-pulse'
         : accounts
-            .map((a) => renderTrayAccountLine(a, metric: tray.metric, resetMode: rm))
+            .map((a) => renderTrayAccountLine(a,
+                metric: tray.metric, resetMode: rm, windows: windows))
             .join('   ·   ');
     // 是否滚动完全交给原生按"放不放得下"判定(contentWidth > width):哪怕只有
     // 一个账户,只要单行超出可见宽也要滚,否则会一直只露出半截信息。
@@ -344,6 +346,18 @@ class _ShellState extends State<Shell> with WindowListener {
     SettingsStore.save(_settings);
   }
 
+  // 后台拉取节奏改动:持久化并重启核心(poll 配置进 toConfigJson,只能重新 init 生效)。
+  void _onPollChanged(int passiveSecs, bool activeEnabled, int activeSecs) {
+    final s = _settings.copyWith(
+      pollPassiveSecs: passiveSecs,
+      pollActiveEnabled: activeEnabled,
+      pollActiveSecs: activeSecs,
+    );
+    SettingsStore.save(s);
+    setState(() => _settings = s);
+    if (s.configured) _startCore(s); // 已配置才有核心可重启
+  }
+
   Future<void> _quit() async {
     try {
       _source.stop();
@@ -373,6 +387,7 @@ class _ShellState extends State<Shell> with WindowListener {
         onTrayChanged: _onTrayChanged,
         onResetModeChanged: _onResetModeChanged,
         onAlertChanged: _onAlertChanged,
+        onPollChanged: _onPollChanged,
         onTestNotification: () => _alerter.testNotification(),
         autostartEnabled: _autostartEnabled,
         onAutostartChanged: _onAutostartChanged,

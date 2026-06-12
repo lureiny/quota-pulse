@@ -145,8 +145,9 @@ func (p *Poller) refreshOne(ctx context.Context, b binding, accountID string) {
 }
 
 func (p *Poller) loop(ctx context.Context, b binding) {
-	// 启动首次用 active 强制回源:被动缓存对"冷账户"常为空,会导致首屏加载不出来。
-	p.pollOnce(ctx, b, provider.FetchOptions{Fresh: true})
+	// 启动首次:仅当开启自动强制回源(active>0)才回源。被动缓存对"冷账户"常为空、
+	// 首屏可能加载不出来;但默认关闭回源以避免周期性自动化特征,冷账户可手动刷新拿数据。
+	p.pollOnce(ctx, b, provider.FetchOptions{Fresh: b.sched.ActiveInterval() > 0})
 
 	timer := time.NewTimer(b.sched.NextInterval())
 	defer timer.Stop()
@@ -160,7 +161,9 @@ func (p *Poller) loop(ctx context.Context, b binding) {
 
 		case <-timer.C:
 			if !b.sched.Paused() {
-				fresh := time.Since(lastActive) >= b.sched.ActiveInterval()
+				// active<=0:关闭自动回源,本循环只走被动缓存(Fresh=false)。
+				active := b.sched.ActiveInterval()
+				fresh := active > 0 && time.Since(lastActive) >= active
 				if fresh {
 					lastActive = time.Now()
 				}

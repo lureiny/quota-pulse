@@ -21,9 +21,12 @@ English · [中文](README.zh-CN.md)
 
 ### 🖥️ Menu bar / tray
 - **macOS**: a custom `NSStatusItem` with a **fixed icon** + **smoothly scrolling text** (pixel-level, 60 fps) when content overflows; static when it fits. Scroll **width** and **speed** are configurable.
-- **Windows**: a **two-line-per-account tooltip** (status emoji + `instance·account` on line 1, usage + reset on line 2), folding to `…and N more` past the tooltip's length budget.
-- **Windows floating ticker** *(on by default)*: a **draggable, always-on-top desktop strip** showing the same scrolling usage line as the macOS menu bar — drawn natively (Direct2D, pixel-level 60 fps scroll, colored status dots). Click it to open the panel, drag to reposition (persisted), and optionally auto-hide it over fullscreen apps.
-- **Always shows the 5h window** (remaining + reset) regardless of the chosen display mode.
+- **Windows**: a **per-account tooltip** (status emoji + `instance·account`, then one indented line per selected window), folding to `…and N more` past the tooltip's length budget.
+- **Windows floating window** *(on by default)*: a **draggable, always-on-top desktop strip** drawn natively (Direct2D, colored status dots). Two modes:
+  - **Scroll** — a single line with pixel-level 60 fps scrolling (same content as the macOS menu bar); scrolls whenever it overflows, even for a single account.
+  - **Multi-line** — no scrolling; each account is laid out as a base line + one line per selected window (e.g. base / 5h / 7d); the window auto-sizes its height.
+  Click it to open the panel, drag to reposition (persisted), and optionally auto-hide it over fullscreen apps.
+- **Configurable display windows (5h / 7d, multi-select)** — cross-platform; the menu bar, tray tooltip, and floating window all show exactly the windows you pick (both by default).
 - Show **usage** or **remaining** percentage — your pick.
 - Tray content scope is configurable: **all accounts** (default) or a **multi-select pinned subset**.
 
@@ -59,15 +62,19 @@ English · [中文](README.zh-CN.md)
 | Theme | system · light · dark | **system** |
 | Tray scope | all accounts · pinned (multi-select) | **all accounts** |
 | Tray metric | usage % · remaining % | **usage** |
+| Display windows *(menu bar / tray / floating window)* | 5h · 7d (multi-select) | **5h + 7d** |
 | Reset display | countdown · absolute | **countdown** |
-| Scroll width *(macOS menu bar / Windows ticker)* | characters | **10** |
-| Scroll speed *(macOS menu bar / Windows ticker)* | ms per step (lower = faster) | **300** |
-| Windows floating ticker | on / off | **on** |
+| Scroll width *(macOS menu bar / Windows scroll mode)* | characters | **10** |
+| Scroll speed *(macOS menu bar / Windows scroll mode)* | ms per step (lower = faster) | **300** |
+| Windows floating window | on / off | **on** |
+| Windows floating mode | scroll · multi-line | **scroll** |
 | Ticker auto-hide on fullscreen *(Windows)* | on / off | off |
 | Usage alerts (master) | on / off | **on** |
 | Alert threshold | 50–100% | **90%** |
 | Over-threshold windows | 5h · 7d (multi-select) | **5h + 7d** |
 | Quota-recovered windows | 5h · 7d (multi-select) | **none (off)** |
+| Refresh interval *(passive cache read)* | 30s · 1m · 2m · 5m | **1m** |
+| Auto force-refresh (upstream re-source) | off · 5m · 10m · 30m · 1h | **off** |
 | Start at login | on / off | off |
 
 Settings persist to a single JSON blob in `SharedPreferences` (`qp.settings`); a legacy single-instance config is migrated automatically.
@@ -77,7 +84,7 @@ Settings persist to a single JSON blob in `SharedPreferences` (`qp.settings`); a
 - **Windows**: an `HKCU\…\Run` registry value pointing at the executable.
 
 ### 🧩 Engine internals (Go core)
-- **Adaptive passive/active polling** — cheap cached reads (default **60s**) with periodic forced refreshes (default **10m**); the engine accepts foreground / on-battery / asleep signals to modulate cadence.
+- **Adaptive passive/active polling** — cheap cached reads on a **configurable interval** (default **60s**), plus **optional** periodic forced upstream refreshes (**off by default** — periodic re-sourcing has an obvious automation fingerprint; interval configurable when enabled). The manual refresh button always re-sources. The engine accepts foreground / on-battery / asleep signals to modulate cadence.
 - **ETag / `If-None-Match` 304** conditional requests to save upstream bandwidth.
 - **Anti-regression cache guard** — an empty passive response never overwrites good data already fetched (no flicker / data loss); real errors still write through.
 - **Bounded concurrency** — accounts polled in parallel (≤ 6) with per-account timeouts; one failing account keeps its previous snapshot.

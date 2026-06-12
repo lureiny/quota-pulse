@@ -23,18 +23,33 @@ AccountPulse? _topAccount(List<AccountPulse> pulses) {
   return top;
 }
 
-/// 取"5 小时"窗口表盘:优先 id=five_hour;兜底标签含 5、再兜底第一个滚动窗口/第一个表盘。
-Meter? _fiveHour(AccountPulse a) {
+/// 取指定窗口表盘(id=five_hour / seven_day):
+///   精确 id 优先;再按标签兜底(5h→含"5";7d→含"7"/"周"/"week")。
+///   5h 再兜底第一个滚动窗口/第一个表盘;7d 取不到返回 null(不回退到 5h 表盘,
+///   以免两个窗口取到同一个 meter)。
+Meter? _windowMeter(AccountPulse a, String id) {
   for (final m in a.meters) {
-    if (m.id == 'five_hour') return m;
+    if (m.id == id) return m;
   }
+  bool labelMatch(Meter m) {
+    if (id == 'five_hour') return m.label.contains('5');
+    if (id == 'seven_day') {
+      final l = m.label.toLowerCase();
+      return m.label.contains('7') || l.contains('周') || l.contains('week');
+    }
+    return false;
+  }
+
   for (final m in a.meters) {
-    if (m.label.contains('5')) return m;
+    if (labelMatch(m)) return m;
   }
-  for (final m in a.meters) {
-    if (m.kind == 'rolling_window') return m;
+  if (id == 'five_hour') {
+    for (final m in a.meters) {
+      if (m.kind == 'rolling_window') return m;
+    }
+    return a.meters.isEmpty ? null : a.meters.first;
   }
-  return a.meters.isEmpty ? null : a.meters.first;
+  return null;
 }
 
 /// 状态 emoji(托盘/菜单栏一眼看出账户健康度)。
@@ -83,17 +98,47 @@ List<AccountPulse> trayAccounts(List<AccountPulse> pulses, TraySettings tray) {
   return top == null ? const [] : [top];
 }
 
-/// 单个账户的菜单栏单行(无实例前缀,更短):emoji 名称 用量 · ⏳重置。
+/// 按固定顺序(5h→7d,即 [kAlertWindows] 键序)返回要显示的窗口 id;空集合兜底 five_hour。
+/// 托盘 tooltip / 菜单栏 / 悬浮窗共用,保证多平台显示窗口一致。
+List<String> displayWindowIds(TraySettings tray) {
+  final out = [
+    for (final id in kAlertWindows.keys)
+      if (tray.displayWindows.contains(id)) id,
+  ];
+  return out.isEmpty ? const ['five_hour'] : out;
+}
+
+/// 一个账户在选中窗口集上的用量短语,窗口间用 " · " 连接。
+/// [hourglass]=true 时重置前加 ⏳(macOS 菜单栏风格);窗口多于 1 个时各加短标签(5h/7d),
+/// 单窗口省略前缀以保持原有观感。
+String _windowsPhrase(
+  AccountPulse a,
+  List<String> windows, {
+  required TrayMetric metric,
+  required ResetMode resetMode,
+  required bool hourglass,
+}) {
+  final multi = windows.length > 1;
+  return windows.map((id) {
+    final m = _windowMeter(a, id);
+    final reset = _reset(m, resetMode);
+    final label = multi ? '${kAlertWindows[id]} ' : '';
+    final tail = reset.isEmpty ? '' : (hourglass ? ' · ⏳$reset' : ' · $reset');
+    return '$label${_metricText(m, metric)}$tail';
+  }).join(' · ');
+}
+
+/// 单个账户的菜单栏单行(无实例前缀,更短):emoji 名称 + 各选中窗口的 用量 · ⏳重置。
 /// 供 macOS「全部账户/指定账户」流水屏拼接复用(单行滚动,无需列对齐)。
 String renderTrayAccountLine(
   AccountPulse a, {
   required TrayMetric metric,
   required ResetMode resetMode,
+  required List<String> windows,
 }) {
-  final m = _fiveHour(a);
-  final reset = _reset(m, resetMode);
-  final tail = reset.isEmpty ? '' : ' · ⏳$reset';
-  return '${_statusEmoji(a.status)} ${_accountName(a)} ${_metricText(m, metric)}$tail';
+  final body = _windowsPhrase(a, windows,
+      metric: metric, resetMode: resetMode, hourglass: true);
+  return '${_statusEmoji(a.status)} ${_accountName(a)} $body';
 }
 
 /// Windows 悬浮跑马灯的一段:一个账户 = 状态色 + 不含 emoji 的文本。
@@ -105,54 +150,116 @@ class TickerSeg {
 }
 
 String _tickerLine(AccountPulse a,
-    {required TrayMetric metric, required ResetMode resetMode}) {
-  final m = _fiveHour(a);
-  final reset = _reset(m, resetMode);
-  final tail = reset.isEmpty ? '' : ' · $reset';
-  return '${_accountName(a)} ${_metricText(m, metric)}$tail';
+    {required TrayMetric metric,
+    required ResetMode resetMode,
+    required List<String> windows}) {
+  final body = _windowsPhrase(a, windows,
+      metric: metric, resetMode: resetMode, hourglass: false);
+  return '${_accountName(a)} $body';
 }
 
-/// Windows 跑马灯内容:按 [trayAccounts] 选集,逐账户给 (状态色, 文本)。
-/// 与 macOS 菜单栏同源(同一选集 / 同样的 5h 用量+重置),只是去掉 emoji、状态走原生圆点。
+/// Windows 跑马灯(单行滚动)内容:按 [trayAccounts] 选集,逐账户给 (状态色, 文本)。
+/// 与 macOS 菜单栏同源(同一选集 / 同样的选中窗口用量+重置),只是去掉 emoji、状态走原生圆点。
 List<TickerSeg> tickerSegments(
   List<AccountPulse> pulses,
   TraySettings tray,
   ResetMode resetMode,
-) =>
-    [
-      for (final a in trayAccounts(pulses, tray))
-        TickerSeg(
-          statusColor(a.status).value,
-          _tickerLine(a, metric: tray.metric, resetMode: resetMode),
-        ),
-    ];
+) {
+  final windows = displayWindowIds(tray);
+  return [
+    for (final a in trayAccounts(pulses, tray))
+      TickerSeg(
+        statusColor(a.status).value,
+        _tickerLine(a, metric: tray.metric, resetMode: resetMode, windows: windows),
+      ),
+  ];
+}
 
-/// Windows 托盘 tooltip:每个账户占两行——
-///   行1:状态emoji + 实例·账户名;行2(缩进):5h 用量/剩余 · ⏳重置。
+/// Windows 浮窗「多行模式」的一行:状态点(可选)+ 缩进 + 文本。
+/// 原生侧 dot=true 时画前导状态圆点([color] ARGB);indent 为缩进级别(0/1)。
+class TickerLine {
+  final bool dot;
+  final int color;
+  final int indent;
+  final String text;
+  const TickerLine({
+    required this.dot,
+    required this.color,
+    required this.indent,
+    required this.text,
+  });
+}
+
+/// Windows 浮窗多行模式内容:每账户 1 行基础信息(状态点 + 实例·名)
+/// + 每个选中窗口 1 行(缩进:标签 用量 · ⏳重置)。默认两窗口都选 → base/5h/7d 三行。
+List<TickerLine> tickerLines(
+  List<AccountPulse> pulses,
+  TraySettings tray,
+  ResetMode resetMode,
+) {
+  final windows = displayWindowIds(tray);
+  final out = <TickerLine>[];
+  for (final a in trayAccounts(pulses, tray)) {
+    out.add(TickerLine(
+      dot: true,
+      color: statusColor(a.status).value,
+      indent: 0,
+      text: '${a.instance}·${_accountName(a)}',
+    ));
+    for (final id in windows) {
+      final m = _windowMeter(a, id);
+      final reset = _reset(m, resetMode);
+      final tail = reset.isEmpty ? '' : ' · ⏳$reset';
+      out.add(TickerLine(
+        dot: false,
+        color: 0,
+        indent: 1,
+        text: '${kAlertWindows[id]} ${_metricText(m, tray.metric)}$tail',
+      ));
+    }
+  }
+  if (out.isEmpty) {
+    out.add(const TickerLine(
+        dot: false, color: 0xFF8E8E93, indent: 0, text: 'quota-pulse'));
+  }
+  return out;
+}
+
+/// Windows 托盘 tooltip:每个账户占「1 行基础信息 + 每个选中窗口 1 行」——
+///   行1:状态emoji + 实例·账户名;随后每个选中窗口一行(缩进:标签 用量/剩余 · ⏳重置)。
 /// 比例字体(Segoe UI,app 改不了)下多账户的"列"无法用空格对齐(空格宽 ≠ 字宽),
-/// 故改用每账户独立两行块:块结构一致即视觉整齐。按 [trayAccounts] 选集渲染;
+/// 故改用每账户独立块:块结构一致即视觉整齐。按 [trayAccounts] 选集 + [displayWindowIds] 窗口渲染;
 /// tooltip 约 128 字上限,放不下折叠为"…还有 N 个"。
 String renderTrayTooltip(
     List<AccountPulse> pulses, TraySettings tray, ResetMode resetMode) {
   final accounts = trayAccounts(pulses, tray);
   if (accounts.isEmpty) return 'quota-pulse';
+  final windows = displayWindowIds(tray);
+  final multi = windows.length > 1;
   final lines = <String>[];
   var total = 0;
   for (var i = 0; i < accounts.length; i++) {
     final a = accounts[i];
-    final m = _fiveHour(a);
-    final reset = _reset(m, resetMode);
     final l1 = '${_statusEmoji(a.status)} ${a.instance}·${_accountName(a)}';
-    final l2 = reset.isEmpty
-        ? '    ${_metricText(m, tray.metric)}'
-        : '    ${_metricText(m, tray.metric)} · ⏳$reset';
-    final cost = l1.length + l2.length + 2; // 两行各含一个换行
+    final wlines = windows.map((id) {
+      final m = _windowMeter(a, id);
+      final reset = _reset(m, resetMode);
+      final label = multi ? '${kAlertWindows[id]} ' : '';
+      return reset.isEmpty
+          ? '    $label${_metricText(m, tray.metric)}'
+          : '    $label${_metricText(m, tray.metric)} · ⏳$reset';
+    }).toList();
+    // 每行各含一个换行:基础行 + N 个窗口行。
+    final cost = l1.length +
+        wlines.fold<int>(0, (s, w) => s + w.length) +
+        1 +
+        wlines.length;
     if (total + cost > 118 && lines.isNotEmpty) {
       lines.add('…还有 ${accounts.length - i} 个');
       break;
     }
     lines.add(l1);
-    lines.add(l2);
+    lines.addAll(wlines);
     total += cost;
   }
   return lines.join('\n');

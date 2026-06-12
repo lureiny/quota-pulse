@@ -29,11 +29,16 @@ class WinTicker {
   }
 
   /// 推送一次内容/状态。enabled=false 时隐藏浮窗;首次 enabled=true 惰性创建。
+  /// [multiline]=false 走单行滚动([segments]),true 走多行铺开([lines])。
   /// [segments] 每项 `{'color': int(ARGB), 'text': String}`(状态色 + 无 emoji 文本)。
+  /// [lines] 每项 `{'dot': bool, 'color': int(ARGB), 'indent': int, 'text': String}`
+  ///   (dot=true 画前导状态圆点;indent 缩进级别)。
   /// scroll=true 且放不下时原生做像素级滚动;pps=点/秒(越大越快),width=可见宽(逻辑像素)。
   /// x/y 为已保存的浮窗位置(物理像素);null → 传 -1,原生用默认右下角(仅创建时采用)。
   static Future<void> update({
     required List<Map<String, Object>> segments,
+    required List<Map<String, Object>> lines,
+    required bool multiline,
     required bool enabled,
     required bool scroll,
     required double pps,
@@ -46,6 +51,8 @@ class WinTicker {
     _ensureHandler();
     return _ch.invokeMethod('update', {
       'segments': segments,
+      'lines': lines,
+      'multiline': multiline,
       'enabled': enabled,
       'scroll': scroll,
       'pps': pps,
