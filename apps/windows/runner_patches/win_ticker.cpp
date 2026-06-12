@@ -141,8 +141,11 @@ class Ticker {
   void ResetPosition() {
     if (!hwnd_) return;
     pos_ = DefaultPos();
-    ::SetWindowPos(hwnd_, HWND_TOPMOST, pos_.x, pos_.y, 0, 0,
-                   SWP_NOSIZE | SWP_NOACTIVATE);
+    // 只移动、不动 z-order(SWP_NOZORDER):若此时主面板开着,浮窗保持在其下方,
+    // 不能像以前那样强制 HWND_TOPMOST 又把自己顶到面板上面;面板关闭后由
+    // setPopoverOpen(false) 恢复置顶。
+    ::SetWindowPos(hwnd_, nullptr, pos_.x, pos_.y, 0, 0,
+                   SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     ReportMoved();
     Render();
   }
