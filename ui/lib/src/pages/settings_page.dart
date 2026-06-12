@@ -508,7 +508,8 @@ class _SettingsPageState extends State<SettingsPage> {
           contentPadding: EdgeInsets.zero,
           dense: true,
           title: const Text('自动强制回源', style: TextStyle(fontSize: 13)),
-          subtitle: Text('定期强制 sub2api 回源刷新上游;有明显自动化特征,默认关闭(手动刷新不受影响)',
+          subtitle: Text('周期性强制 sub2api 回源刷新上游;有明显自动化特征,默认关闭。'
+              '启动加载与手动刷新仍会回源一次(加载全部账户),不受此开关影响',
               style: theme.textTheme.bodySmall),
           value: _pollActiveEnabled,
           onChanged: (v) {
