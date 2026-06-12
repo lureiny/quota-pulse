@@ -311,7 +311,9 @@ class _ShellState extends State<Shell>
     final segs = tickerSegments(pulses, tray, _settings.resetMode)
         .map((s) => <String, Object>{'color': s.color, 'text': s.text})
         .toList();
-    final scroll = trayAccounts(pulses, tray).length > 1; // 多账户才滚(同 macOS)
+    // 是否滚动完全交给原生按"放不放得下"判定(contentWidth > width):哪怕只有
+    // 一个账户,只要单行超出可见宽也要滚,否则会一直只露出半截信息(同 macOS)。
+    const scroll = true;
     WinTicker.update(
       segments: segs,
       enabled: tray.windowsTickerEnabled,

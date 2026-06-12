@@ -268,14 +268,16 @@ class _ShellState extends State<Shell> with WindowListener {
     final pulses = _controller?.pulses ?? const <AccountPulse>[];
     final tray = _settings.tray;
     final rm = _settings.resetMode;
-    // 全部账户 / 指定账户(多选)统一取展示集合;>1 个才流水屏滚动,单个静态。
+    // 全部账户 / 指定账户(多选)统一取展示集合,拼成一行交给原生。
     final accounts = trayAccounts(pulses, tray);
     final text = accounts.isEmpty
         ? 'quota-pulse'
         : accounts
             .map((a) => renderTrayAccountLine(a, metric: tray.metric, resetMode: rm))
             .join('   ·   ');
-    final scroll = accounts.length > 1;
+    // 是否滚动完全交给原生按"放不放得下"判定(contentWidth > width):哪怕只有
+    // 一个账户,只要单行超出可见宽也要滚,否则会一直只露出半截信息。
+    const scroll = true;
     MacMenuBar.setTicker(text, scroll: scroll, pps: _scrollPps, width: _scrollWidth);
   }
 
