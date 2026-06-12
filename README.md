@@ -51,7 +51,7 @@ English · [中文](README.zh-CN.md)
 - **System-native look**: system font (SF Pro on macOS; embedded MiSans on Windows) and **system accent color**.
 - **Light / dark / follow-system** theme.
 - Clear **empty / loading / error** states.
-- App **version** shown at the bottom of the settings page (injected at build time from the git tag).
+- App **version** shown at the bottom of the settings page.
 
 ### ⚙️ Configuration (with defaults)
 
@@ -88,7 +88,7 @@ Settings persist to a single JSON blob in `SharedPreferences` (`qp.settings`); a
 - **ETag / `If-None-Match` 304** conditional requests to save upstream bandwidth.
 - **Anti-regression cache guard** — an empty passive response never overwrites good data already fetched (no flicker / data loss); real errors still write through.
 - **Bounded concurrency** — accounts polled in parallel (≤ 6) with per-account timeouts; one failing account keeps its previous snapshot.
-- **Provider plugin architecture** — providers self-register; sub2api is implemented today, with the model designed so one-api / new-api can be added by writing only a mapper (no UI changes).
+- **Provider plugin architecture** — providers self-register; sub2api is the implemented provider.
 - **Native bindings** — compiled to a C-shared library (`libqp.dylib` / `.dll` / `.so`) called over `dart:ffi`; a `gomobile` binding is also present for future iOS/Android.
 - **`qpctl`** debug CLI — run one polling round against a config and dump the snapshot JSON.
 
@@ -145,23 +145,7 @@ cd core
 go build ./... && go vet ./... && go test ./...
 ```
 
-The app version is injected at compile time via `--dart-define=QP_VERSION=$(git describe --tags --always --dirty)` — exactly on a tag → `v0.4.0`; past a tag → `v0.4.0-2-gabc1234`; otherwise the short SHA (or `dev` for a plain `flutter run`).
-
 See [`apps/macos/SETUP.md`](apps/macos/SETUP.md), [`apps/windows/SETUP.md`](apps/windows/SETUP.md), and [`core/README.md`](core/README.md) for details.
-
----
-
-## Releases (GitHub Actions)
-
-Push a `v*` tag and the cloud macOS / Windows runners build and publish to Releases automatically:
-
-```bash
-git tag v0.4.0 && git push origin v0.4.0
-```
-
-A manual **`workflow_dispatch`** run (Actions tab) builds the same artifacts **without** creating a Release — handy for verifying a commit before tagging. Workflow: [`.github/workflows/release-desktop.yml`](.github/workflows/release-desktop.yml).
-
-> Builds are **not** paid-signed/notarized: macOS needs the first-run right-click→open, Windows the first-run SmartScreen bypass.
 
 ---
 
@@ -173,4 +157,4 @@ The **Windows** build embeds [MiSans](https://hyperos.mi.com/font/download) (Xia
 
 ## Status
 
-Both platforms ship from CI as `.dmg` / `.zip` (latest: **v0.4.0**). sub2api is the only provider implemented today; the model and engine are built so one-api / new-api drop in with just a mapper. Design rationale and milestones live in [DESIGN.md](DESIGN.md).
+Both platforms ship from CI as `.dmg` / `.zip`. sub2api is the implemented provider. Design rationale and milestones live in [DESIGN.md](DESIGN.md).

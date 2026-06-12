@@ -1,68 +1,160 @@
 # quota-pulse
 
-一个跨平台的「用量脉搏」预览栏:在系统菜单栏 / 托盘里快速查看
-[sub2api](https://github.com/Wei-Shaw/sub2api) 各账户的用量窗口(5h / 7d 等),
-只读展示。抽象做了分层,未来可扩展到 one-api / new-api 等平台。
+**跨平台的「用量脉搏」预览栏,常驻菜单栏 / 系统托盘。**
+不开浏览器就能扫一眼 [sub2api](https://github.com/Wei-Shaw/sub2api) 各账户的用量窗口(5h / 7d、Gemini 日/分钟 等)。只读——绝不改动上游任何东西。
 
 [English](README.md) · 中文
 
+> macOS 常驻**菜单栏**,Windows 常驻**系统托盘**。点一下弹出毛玻璃面板,展示每个账户的用量。重活由共享的 **Go** 核心扛;UI 是共享的 **Flutter** 包;每个平台只是一层薄壳。
+
+---
+
 ## 功能
 
-- **用量表盘**:Claude 5h / 7d / 7d-Sonnet、Gemini 日/分钟 等滚动窗口,颜色分级进度条(≤80% 绿 / 80–99% 黄 / ≥100% 红),含利用率、重置时间与请求/Token/费用明细。
-- **状态一眼可见**:状态点 + emoji(🟢 正常 · 🟡 预警 · 🔴 限流 · ⛔ 禁用 · 🚫 封禁 · 🔑 待重认证 · ⚪ 错误)+ 订阅等级徽标;**限流账户照常可见**(不再因被自动停用而消失)。
-- **重置时间**:可选倒计时(`2天3h`,天为 0 时省略)或绝对时刻(`MM-dd HH:mm`),主页与托盘/菜单栏同时生效。
-- **菜单栏 / 托盘**:macOS 自绘 `NSStatusItem`(固定图标 + 文字溢出时像素级滚动,宽度/速度可配);Windows 每账户 tooltip(基础行 + 每个选中窗口一行);可选显示用量或剩余量;范围支持全部账户(默认)或多选钉住子集。
-- **显示窗口可配(5h / 7d,可多选)**:跨平台生效——菜单栏、托盘 tooltip、悬浮窗都只展示你勾选的窗口(默认两个都显示)。
-- **Windows 悬浮窗口**(默认开):桌面常驻一个**可拖拽的置顶浮窗**,原生 Direct2D 自绘 + 彩色状态圆点;两种模式——**滚动**(单行,像素级 60fps 滚动,放不下就滚,单账户超宽也滚)、**多行**(不滚动,每账户铺「基础信息 + 各窗口一行」,如 base/5h/7d,窗口高度随行数自适应);左键点开主面板,拖动改位置(记忆),可选全屏时自动隐藏。
-- **用量提醒**:两类可独立配置的通知,每类各自可选监听 **5h / 7d** 窗口——**超阈值**(默认开,5h+7d;🚨 告警 → 🛑 用量已满)与**额度恢复**(默认关,✅ 回落到阈值以下/窗口重置时);同类通知在同一重置周期内只弹一次(以 resets_at 为周期指纹,±10s 容差吸收抖动、避免误判成新周期而持续告警);用量回落到阈值以下即发"恢复";首次快照静默;带系统提示音;设置页「发送测试通知」一键依次弹出三种样例(🚨/🛑/✅)核验送达。
-- **后台拉取**:被动读 sub2api 缓存的**刷新间隔可配**(默认 1 分钟);**自动强制回源默认关闭**——周期性回源有明显自动化特征,需要时再开并配置间隔(5m/10m/30m/1h);手动刷新按钮始终回源,不受此开关影响。
-- **多实例**:可配置任意多个 sub2api 后台,分组或标签页展示;`实例|账户` 唯一键避免串号;实例名可点击用系统浏览器打开后台。
-- **外观**:毛玻璃透明无边框弹层;行内展开查看全部窗口;系统字体 + 系统强调色 + 跟随明暗;版本号显示在设置页底部。
-- **开机自启**:macOS 写用户级 LaunchAgent;Windows 写注册表 Run 键。
-- **Go 核心**:被动/主动自适应轮询(被动 60s 可配;主动回源默认关、可配)、ETag/304 条件请求、空响应防回退缓存、限流并发(≤6)、Provider 插件化、`dart:ffi` + gomobile 桥、`qpctl` 调试 CLI。
+### 📊 用量一览
+- **滚动窗口表盘**:从 sub2api 映射的 Claude **5h / 7d / 7d-Sonnet**、Gemini **日 / 分钟** 等窗口——每个一根颜色分级进度条(≤80% 绿 / 80–99% 琥珀 / ≥100% 红)。
+- **每窗口明细**:利用率 %、重置时间,以及请求 / Token / 费用统计(如 `1.2M tok · $3.4`)。
+- **账户状态一眼可见**:彩色圆点 + emoji:🟢 正常 · 🟡 预警 · 🔴 限流 · ⛔ 禁用 · 🚫 封禁 · 🔑 待重认证 · ⚪ 错误。
+- **订阅等级**徽标(FREE / PRO / ULTRA …)按账户显示。
+- **限流账户照常可见**——被 sub2api 因限流自动停用的账户仍会被拉取并显示(状态由状态点体现),不会被悄悄丢弃。
+- **重置时间随你**:倒计时(`2天3h`、`3h13m`;到「天」级,为 0 时省略天)或绝对时刻(`MM-dd HH:mm`)。该选择对主页**和**托盘/菜单栏同时生效。
 
-## 结构
+### 🖥️ 菜单栏 / 托盘
+- **macOS**:自绘 `NSStatusItem`,**固定图标** + 内容溢出时**像素级丝滑滚动**(60 fps),放得下则静态。滚动**宽度**与**速度**可配。
+- **Windows**:**每账户 tooltip**(状态 emoji + `实例·账户`,随后每个选中窗口一行缩进),超出 tooltip 长度预算时折叠为 `…还有 N 个`。
+- **Windows 悬浮窗**(默认开):一个**可拖拽、置顶的桌面浮条**,原生自绘(Direct2D + 彩色状态圆点)。两种模式:
+  - **滚动**——单行,像素级 60 fps 滚动(内容与 macOS 菜单栏同源);放不下就滚,单账户超宽也滚。
+  - **多行**——不滚动,每账户铺成「基础行 + 每个选中窗口一行」(如 base / 5h / 7d),窗口高度自适应。
+  左键点开主面板,拖动改位置(记忆),可选前台全屏时自动隐藏。
+- **显示窗口可配(5h / 7d,可多选)**——跨平台;菜单栏、托盘 tooltip、悬浮窗都只展示你勾选的窗口(默认两个都选)。
+- 可显示**用量**或**剩余**百分比,随你。
+- 托盘内容范围可配:**全部账户**(默认)或**多选钉住的子集**。
+
+### 🔔 用量提醒
+- **两类通知,各自独立可配**——每类还可分别选哪些窗口触发(**5h** / **7d**):
+  - **超阈值**(默认**开**,5h + 7d)——用量越过你设的阈值(默认 **90%**)时触发,≥ 100%(限流)时从 🚨 *用量告警* 升级为 🛑 *额度已满*。
+  - **额度恢复**(默认**关**)——✅ 当某窗口回落到阈值以下时触发(典型场景是窗口重置)。
+- **每个重置周期、每类只提醒一次**——以窗口的重置时间去重,并按 ±10s 容差比较,避免把原始值的抖动误判成新周期(否则每次轮询都会刷屏)。真正重置才开启新周期;恢复通知在用量回落到阈值以下时发出。
+- **首次快照静默**(以及重新启用后),避免启动时对已在高位的账户炸出一串通知。
+- 每条通知带系统提示音;设置页的**测试按钮**会依次发出每一类的样例(🚨 / 🛑 / ✅),无需等触发阈值即可验证送达并预览。
+
+### 🗂️ 多个 sub2api 后台
+- 可配置**任意多个实例**(名称 + Base URL + API key);在设置里增 / 改 / 删。
+- **分组**(每实例标题)或**标签页**展示,随你。
+- 每个实例的账户以 `实例|账户ID` 为键,**两个后台下相同的账户 ID 也不会串号**。
+- **实例名是超链接**——点它用系统浏览器打开该后台。
+- 每实例一个**刷新**按钮,强制回源拉取。
+
+### 🎨 外观与交互
+- **毛玻璃**面板,透明无边框窗口(`flutter_acrylic` + `window_manager`)。
+- **行内展开**某行查看该账户全部窗口;桌面端**悬停**露出刷新操作。
+- **系统原生观感**:系统字体(macOS 用 SF Pro;Windows 内嵌 MiSans)与**系统强调色**。
+- **浅色 / 深色 / 跟随系统**主题。
+- 清晰的**空 / 加载中 / 错误**状态。
+- 应用**版本号**显示在设置页底部。
+
+### ⚙️ 配置项(及默认值)
+
+| 设置 | 选项 | 默认 |
+|---|---|---|
+| sub2api 实例 | 名称 + Base URL + API key(可多个) | — |
+| 列表布局 | 分组 · 标签页 | **分组** |
+| 主题 | 系统 · 浅色 · 深色 | **系统** |
+| 托盘范围 | 全部账户 · 钉住(多选) | **全部账户** |
+| 托盘显示量 | 用量 % · 剩余 % | **用量** |
+| 显示窗口 *(菜单栏 / 托盘 / 悬浮窗)* | 5h · 7d(多选) | **5h + 7d** |
+| 重置显示 | 倒计时 · 绝对 | **倒计时** |
+| 滚动宽度 *(macOS 菜单栏 / Windows 滚动模式)* | 字符数 | **10** |
+| 滚动速度 *(macOS 菜单栏 / Windows 滚动模式)* | 毫秒/步(越小越快) | **300** |
+| Windows 悬浮窗 | 开 / 关 | **开** |
+| Windows 悬浮模式 | 滚动 · 多行 | **滚动** |
+| 全屏时自动隐藏 *(Windows)* | 开 / 关 | 关 |
+| 用量提醒(总开关) | 开 / 关 | **开** |
+| 提醒阈值 | 50–100% | **90%** |
+| 超阈值监听窗口 | 5h · 7d(多选) | **5h + 7d** |
+| 额度恢复监听窗口 | 5h · 7d(多选) | **无(关)** |
+| 刷新间隔 *(被动读缓存)* | 30s · 1m · 2m · 5m | **1m** |
+| 自动强制回源(回源上游) | 关 · 5m · 10m · 30m · 1h | **关** |
+| 开机自启 | 开 / 关 | 关 |
+
+设置持久化为 `SharedPreferences` 里的单个 JSON(`qp.settings`);旧的单实例配置会自动迁移。
+
+### 🚀 开机自启
+- **macOS**:用户级 `LaunchAgent` plist(`~/Library/LaunchAgents`)——纯 Dart,无 helper。(应用刻意**不沙箱**以便写入。)
+- **Windows**:一个指向可执行文件的 `HKCU\…\Run` 注册表项。
+
+### 🧩 引擎内幕(Go 核心)
+- **被动 / 主动自适应轮询**——廉价的缓存读取走**可配间隔**(默认 **60s**),外加**可选的**周期性强制回源(**默认关**——周期性回源有明显的自动化特征;开启后间隔可配)。手动刷新按钮始终回源。引擎接受前台 / 电池 / 休眠信号来调节节奏。
+- **ETag / `If-None-Match` 304** 条件请求,省上游带宽。
+- **防回退缓存**——空的被动响应绝不覆盖已拉到的好数据(无闪烁 / 不丢数据);真实错误仍照常写入。
+- **并发受限**——账户并行拉取(≤ 6)且每账户带超时;单个账户失败时保留它上次的快照。
+- **Provider 插件架构**——provider 自注册;当前实现 sub2api。
+- **原生绑定**——编译成 C 共享库(`libqp.dylib` / `.dll` / `.so`)经 `dart:ffi` 调用;另含 `gomobile` 绑定,为将来 iOS/Android 预留。
+- **`qpctl`** 调试 CLI——按一份配置跑一轮轮询并打印快照 JSON。
+
+---
+
+## 架构
 
 ```
 core/          平台无关 Go 核心(provider 抽象 · 轮询 · 缓存 · C-ABI/gomobile 桥)
-ui/            跨平台 Flutter 共享包 package:quota_pulse_ui(模型 / UI / 状态 / FFI 桥)
-apps/macos/    macOS 菜单栏薄壳 + 打包(.dmg)
-apps/windows/  Windows 托盘薄壳 + 打包(.zip)
+ui/            跨平台 Flutter 共享包 package:quota_pulse_ui(模型 / 组件 / 状态 / FFI 桥)
+apps/macos/    macOS 菜单栏薄壳 + 打包(.dmg)   — 自绘 Swift NSStatusItem runner
+apps/windows/  Windows 托盘薄壳 + 打包(.zip)   — tray_manager
 DESIGN.md      总体设计:选型 · 架构 · Provider 抽象 · 里程碑
 ```
 
-> 复用边界:`core/` + `ui/` 跨平台 100% 复用;`apps/<platform>/` 只是各自的薄外壳(托盘/窗口/打包)。
+> **复用边界**:`core/` + `ui/` 跨平台 100% 复用;`apps/<platform>/` 只是各自的薄外壳(托盘 / 窗口 / 打包)。
 
-## 本地构建
+**技术栈**:Go 核心 ↔ Flutter UI 经 `dart:ffi`,菜单栏掺一点原生 Swift。主要 Flutter 插件:`window_manager`、`flutter_acrylic`、`screen_retriever`、`tray_manager`(Windows)、`url_launcher`、`local_notifier`、`shared_preferences`、`system_theme`、`win32_registry`(Windows)。
 
-- **macOS**:见 [`apps/macos/SETUP.md`](apps/macos/SETUP.md) — `./setup_macos.sh && ./build_app.sh` → `.dmg`
-- **Windows**:见 [`apps/windows/SETUP.md`](apps/windows/SETUP.md) — `./setup_windows.ps1; ./build_app.ps1` → `.zip`
-- **Go 核心**:见 [`core/README.md`](core/README.md) — `go build ./... && go test ./...`
+---
 
-版本号编译期注入:`--dart-define=QP_VERSION=$(git describe --tags --always --dirty)`(优先 tag,其次 tag-距离-短SHA,再次短 SHA;`flutter run` 直跑为 `dev`)。
+## 安装
 
-## 自动构建(GitHub Actions)
+从 [**Releases**](https://github.com/lureiny/quota-pulse/releases) 下载最新构建:
 
-推一个 `v*` tag 即在云端 macOS / Windows runner 上自动编译并发布到 Releases:
+- **macOS** — `quota_pulse.dmg`,拖进 Applications。它是 ad-hoc 签名(无付费 Apple 账号),首次启动**右键 → 打开**以绕过 Gatekeeper。
+- **Windows** — `quota_pulse-windows.zip`,解压到任意位置运行 `quota_pulse.exe`。绿色免安装。SmartScreen 首次可能告警 → **更多信息 → 仍要运行**。
 
+然后打开**设置**,添加一个 sub2api 实例(它的 **Base URL** + 一个**管理员 API key**),点**保存并连接**。
+
+---
+
+## 从源码构建
+
+需要 **Flutter SDK**(≥ 3.4)与 **Go 1.24**。每个平台需在各自的 OS 上构建。
+
+**macOS** → `.dmg`
 ```bash
-git tag v0.4.0 && git push origin v0.4.0
+cd apps/macos
+./setup_macos.sh     # 一次性:生成 runner、打补丁、设置部署目标
+./build_app.sh       # 编译 libqp.dylib(universal)+ .app,ad-hoc 签名,打 .dmg
 ```
 
-工作流见 [`.github/workflows/release-desktop.yml`](.github/workflows/release-desktop.yml)。
-也可在 Actions 页手动触发(workflow_dispatch),只产出构件、不建 Release。
+**Windows** → 绿色 `.zip`(PowerShell)
+```powershell
+cd apps\windows
+./setup_windows.ps1  # 一次性:生成 runner、pub get
+./build_app.ps1      # 编译 libqp.dll(mingw-w64)、.exe,再打包整个文件夹
+```
 
-> 产物未做付费签名/公证:macOS 首次「右键→打开」,Windows 首次 SmartScreen「仍要运行」。
+**Go 核心**(任意 OS 可验证)
+```bash
+cd core
+go build ./... && go vet ./... && go test ./...
+```
+
+详见 [`apps/macos/SETUP.md`](apps/macos/SETUP.md)、[`apps/windows/SETUP.md`](apps/windows/SETUP.md) 与 [`core/README.md`](core/README.md)。
+
+---
 
 ## 字体
 
-**Windows 端**打包内嵌 [MiSans](https://hyperos.mi.com/font/download)(小米,免费商用):
-系统中文字体雅黑缺 Medium/Semibold,会把 `w500/w600` 就近吸附成 Regular/Bold,
-字重忽粗忽细;内嵌 MiSans 修正。**macOS** 用系统 SF Pro(字重本就齐全,无需替换,也不增体积)。
-字体版权归小米所有,许可见 [`ui/lib/fonts/MiSans-LICENSE.txt`](ui/lib/fonts/MiSans-LICENSE.txt)。
+**Windows** 端打包内嵌 [MiSans](https://hyperos.mi.com/font/download)(小米,免费商用):系统中文字体缺 Medium/Semibold,会把 `w500/w600` 就近吸附成 Regular/Bold、字重忽粗忽细,内嵌 MiSans 修正。**macOS** 用系统 **SF Pro**(字重本就齐全,也不增体积)。MiSans 版权归小米所有,许可见 [`ui/lib/fonts/MiSans-LICENSE.txt`](ui/lib/fonts/MiSans-LICENSE.txt)。
+
+---
 
 ## 状态
 
-macOS / Windows 均由 CI 出包(`.dmg` / `.zip`,最新 **v0.4.0**)。目前仅实现 sub2api provider;
-模型与核心已按"加一个 mapper 即可接入"的方式设计,future one-api / new-api 无需改 UI。
-详见 [DESIGN.md §9 里程碑](DESIGN.md)。
+macOS / Windows 均由 CI 出包(`.dmg` / `.zip`)。目前实现 sub2api provider。设计理念与里程碑见 [DESIGN.md](DESIGN.md)。
