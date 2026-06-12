@@ -311,7 +311,11 @@ class _ShellState extends State<Shell>
     final tray = _settings.tray;
     final pulses = _controller?.pulses ?? const <AccountPulse>[];
     final segs = tickerSegments(pulses, tray, _settings.resetMode)
-        .map((s) => <String, Object>{'color': s.color, 'text': s.text})
+        .map((s) => <String, Object>{
+              'color': s.color,
+              'text': s.text,
+              'newAccount': s.newAccount,
+            })
         .toList();
     final lines = tickerLines(pulses, tray, _settings.resetMode)
         .map((l) => <String, Object>{

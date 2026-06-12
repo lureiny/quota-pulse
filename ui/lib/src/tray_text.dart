@@ -141,42 +141,48 @@ String renderTrayAccountLine(
   return '${_statusEmoji(a.status)} ${_accountName(a)} $body';
 }
 
-/// Windows 悬浮跑马灯的一段:一个账户 = 状态色 + 不含 emoji 的文本。
+/// Windows 悬浮跑马灯的一段:一个着色圆点 + 不含 emoji 的文本。
 /// 原生侧把 [color] 画成圆点(规避 Windows 彩色 emoji 的渲染复杂度)、[text] 用主题色绘制。
+/// 账户段([newAccount]=true)= 状态色 + 账户名;窗口段 = 用量分级色 + 标签/用量/重置。
 class TickerSeg {
-  final int color; // 状态色 ARGB(0xFFRRGGBB)
+  final int color; // 圆点色 ARGB(0xFFRRGGBB):账户段=状态色,窗口段=用量分级色
   final String text;
-  const TickerSeg(this.color, this.text);
+  final bool newAccount; // 是否一个账户的起始段(滚动行账户间用更大间隔)
+  const TickerSeg(this.color, this.text, {this.newAccount = false});
 }
 
-String _tickerLine(AccountPulse a,
-    {required TrayMetric metric,
-    required ResetMode resetMode,
-    required List<String> windows}) {
-  final body = _windowsPhrase(a, windows,
-      metric: metric, resetMode: resetMode, hourglass: false);
-  return '${_accountName(a)} $body';
-}
-
-/// Windows 跑马灯(单行滚动)内容:按 [trayAccounts] 选集,逐账户给 (状态色, 文本)。
-/// 与 macOS 菜单栏同源(同一选集 / 同样的选中窗口用量+重置),只是去掉 emoji、状态走原生圆点。
+/// Windows 跑马灯(单行滚动)内容:每个账户先一段(状态色圆点 + 名),再对每个选中窗口
+/// 一段(用量分级色圆点 + 标签 用量 · 重置)。账户起始段标 [TickerSeg.newAccount],
+/// 供原生在账户之间用更大间隔。与 macOS 菜单栏同源(选集/窗口一致),只是状态/用量走原生圆点。
 List<TickerSeg> tickerSegments(
   List<AccountPulse> pulses,
   TraySettings tray,
   ResetMode resetMode,
 ) {
   final windows = displayWindowIds(tray);
-  return [
-    for (final a in trayAccounts(pulses, tray))
-      TickerSeg(
-        statusColor(a.status).value,
-        _tickerLine(a, metric: tray.metric, resetMode: resetMode, windows: windows),
-      ),
-  ];
+  final multi = windows.length > 1;
+  final out = <TickerSeg>[];
+  for (final a in trayAccounts(pulses, tray)) {
+    out.add(TickerSeg(statusColor(a.status).value, _accountName(a),
+        newAccount: true));
+    for (final id in windows) {
+      final m = _windowMeter(a, id);
+      final reset = _reset(m, resetMode);
+      final label = multi ? '${kAlertWindows[id]} ' : '';
+      final tail = reset.isEmpty ? '' : ' · $reset';
+      out.add(TickerSeg(meterColor(m?.utilization).value,
+          '$label${_metricText(m, tray.metric)}$tail'));
+    }
+  }
+  if (out.isEmpty) {
+    out.add(const TickerSeg(0xFF8E8E93, 'quota-pulse', newAccount: true));
+  }
+  return out;
 }
 
-/// Windows 浮窗「多行模式」的一行:状态点(可选)+ 缩进 + 文本。
-/// 原生侧 dot=true 时画前导状态圆点([color] ARGB);indent 为缩进级别(0/1)。
+/// Windows 浮窗「多行模式」的一行:着色圆点(可选)+ 缩进 + 文本。
+/// 原生侧 dot=true 时画前导圆点([color] ARGB:account 行=状态色,窗口行=用量分级色);
+/// indent 为缩进级别(0/1);[text] 内若含制表符 \t,原生按列对齐(实现 account 内重置列对齐)。
 class TickerLine {
   final bool dot;
   final int color;
@@ -190,8 +196,9 @@ class TickerLine {
   });
 }
 
-/// Windows 浮窗多行模式内容:每账户 1 行基础信息(状态点 + 实例·名)
-/// + 每个选中窗口 1 行(缩进:标签 用量 · ⏳重置)。默认两窗口都选 → base/5h/7d 三行。
+/// Windows 浮窗多行模式内容:每账户 1 行基础信息(状态色圆点 + 实例·名)
+/// + 每个选中窗口 1 行(用量分级色圆点 + 缩进:`标签 用量` \t `· ⏳重置`)。
+/// 默认两窗口都选 → base/5h/7d 三行;窗口行以 \t 分两列,原生按列对齐(各窗口行重置列对齐)。
 List<TickerLine> tickerLines(
   List<AccountPulse> pulses,
   TraySettings tray,
@@ -209,12 +216,14 @@ List<TickerLine> tickerLines(
     for (final id in windows) {
       final m = _windowMeter(a, id);
       final reset = _reset(m, resetMode);
-      final tail = reset.isEmpty ? '' : ' · ⏳$reset';
+      final col1 = '${kAlertWindows[id]} ${_metricText(m, tray.metric)}';
+      // 用 \t 把「标签 用量」与「· ⏳重置」分成两列,原生设制表位让重置列对齐。
+      final text = reset.isEmpty ? col1 : '$col1\t· ⏳$reset';
       out.add(TickerLine(
-        dot: false,
-        color: 0,
+        dot: true,
+        color: meterColor(m?.utilization).value,
         indent: 1,
-        text: '${kAlertWindows[id]} ${_metricText(m, tray.metric)}$tail',
+        text: text,
       ));
     }
   }

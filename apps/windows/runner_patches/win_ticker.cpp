@@ -32,6 +32,7 @@ constexpr float kPadX = 12.0f;       // 文字区左右内边距
 constexpr float kHeight = 30.0f;     // 浮窗逻辑高(单行模式)
 constexpr float kPadYMulti = 8.0f;   // 多行模式上下内边距
 constexpr float kMaxContentW = 600.0f; // 多行模式卡片最大内容宽(超出按卡片边缘截断)
+constexpr float kTabGap = 14.0f;     // 多行模式列间距(第一列「标签 用量」与「· 重置」之间)
 constexpr float kFontSize = 14.0f;
 constexpr float kGap = 44.0f;        // 滚动一圈尾到头的空隙(与 macOS 一致)
 constexpr float kCorner = 9.0f;      // 圆角
@@ -94,6 +95,7 @@ D2D1_COLOR_F ColorFromArgb(UINT32 c) {
 struct Seg {
   UINT32 color;
   std::wstring text;
+  bool newAccount;  // 账户起始段:滚动行账户之间用更大间隔
 };
 
 // 多行模式的一行:可选前导状态圆点 + 缩进 + 文本。
@@ -287,6 +289,7 @@ class Ticker {
             Seg s;
             s.color = (UINT32)GetInt(*sm, "color", (int)0xFF8E8E93);
             s.color |= 0xFF000000;  // 圆点不透明
+            s.newAccount = GetBool(*sm, "newAccount", false);
             const flutter::EncodableValue* t = Find(*sm, "text");
             std::string txt = (t && std::get_if<std::string>(t))
                                   ? *std::get_if<std::string>(t)
@@ -297,7 +300,7 @@ class Ticker {
         }
       }
     }
-    if (segs_.empty()) segs_.push_back({0xFF8E8E93, L"quota-pulse"});
+    if (segs_.empty()) segs_.push_back({0xFF8E8E93, L"quota-pulse", true});
   }
 
   void ParseLines(const flutter::EncodableMap& args) {
@@ -522,7 +525,8 @@ class Ticker {
     };
     std::vector<Mark> marks;
     for (size_t i = 0; i < segs_.size(); ++i) {
-      if (i) s += L"   \x00B7   ";  // 段间分隔 · (与 macOS join 一致风格)
+      // 账户之间用「   ·   」、账户内各窗口段之间用双空格,圆点颜色已区分状态/用量。
+      if (i) s += segs_[i].newAccount ? L"   \x00B7   " : L"  ";
       marks.push_back({(UINT32)s.size(), segs_[i].color});
       s += kDot;
       s += L' ';
@@ -545,7 +549,22 @@ class Ticker {
     layoutDirty_ = false;
   }
 
-  // 多行:每行 = 缩进(每级 4 空格)+ (可选 ● 状态点) + 文本,行间 '\n';NEAR 顶对齐。
+  // 测一段文本在当前字体下的宽度(DIP);用于多行模式列对齐(NO_WRAP 已在 textFormat_ 上)。
+  float MeasureWidth(const std::wstring& t) {
+    if (t.empty() || !dwrite_ || !textFormat_) return 0.0f;
+    ComPtr<IDWriteTextLayout> tmp;
+    if (FAILED(dwrite_->CreateTextLayout(t.c_str(), (UINT32)t.size(),
+                                         textFormat_.Get(), 100000.0f, kHeight,
+                                         tmp.GetAddressOf())))
+      return 0.0f;
+    DWRITE_TEXT_METRICS m = {};
+    tmp->GetMetrics(&m);
+    return m.widthIncludingTrailingWhitespace;
+  }
+
+  // 多行:每行 = 缩进(每级 4 空格)+ (可选 ● 圆点) + 文本,行间 '\n';NEAR 顶对齐。
+  // 窗口行 text 内以 '\t' 分「标签 用量」与「· 重置」两列;测最长第一列宽设增量制表位,
+  // 使各行 \t 后的重置列对齐到同一 x(比例字体下空格无法对齐,故走制表位)。
   void RebuildLayoutMulti() {
     std::wstring s;
     struct Mark {
@@ -553,16 +572,27 @@ class Ticker {
       UINT32 color;
     };
     std::vector<Mark> marks;
+    float maxCol1 = 0.0f;  // 含 \t 的行,第一列(到 \t 前,含缩进+圆点)最大宽
     for (size_t i = 0; i < lines_.size(); ++i) {
       if (i) s += L'\n';
       const Line& ln = lines_[i];
-      for (int k = 0; k < ln.indent; ++k) s += L"    ";
+      std::wstring prefix;
+      for (int k = 0; k < ln.indent; ++k) prefix += L"    ";
+      s += prefix;
+      std::wstring dotPrefix;
       if (ln.dot) {
         marks.push_back({(UINT32)s.size(), ln.color});
         s += kDot;
         s += L' ';
+        dotPrefix.push_back(kDot);
+        dotPrefix.push_back(L' ');
       }
       s += ln.text;
+      size_t tabIdx = ln.text.find(L'\t');
+      if (tabIdx != std::wstring::npos) {
+        float w = MeasureWidth(prefix + dotPrefix + ln.text.substr(0, tabIdx));
+        if (w > maxCol1) maxCol1 = w;
+      }
     }
     content_ = s;
     layout_.Reset();
@@ -572,6 +602,10 @@ class Ticker {
       return;
     }
     layout_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);  // 顶对齐(覆写)
+    if (maxCol1 > 0.0f) {
+      // 增量制表位 > 最长第一列 → 每行 \t 都推进到同一制表位 x,重置列全局对齐。
+      layout_->SetIncrementalTabStop(maxCol1 + kTabGap);
+    }
     DWRITE_TEXT_METRICS dm = {};
     layout_->GetMetrics(&dm);
     contentWidth_ = dm.widthIncludingTrailingWhitespace;

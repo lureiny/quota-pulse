@@ -30,7 +30,8 @@ class WinTicker {
 
   /// 推送一次内容/状态。enabled=false 时隐藏浮窗;首次 enabled=true 惰性创建。
   /// [multiline]=false 走单行滚动([segments]),true 走多行铺开([lines])。
-  /// [segments] 每项 `{'color': int(ARGB), 'text': String}`(状态色 + 无 emoji 文本)。
+  /// [segments] 每项 `{'color': int(ARGB), 'text': String, 'newAccount': bool}`
+  ///   (圆点色 + 无 emoji 文本;newAccount=账户起始段,原生在账户之间用更大间隔)。
   /// [lines] 每项 `{'dot': bool, 'color': int(ARGB), 'indent': int, 'text': String}`
   ///   (dot=true 画前导状态圆点;indent 缩进级别)。
   /// scroll=true 且放不下时原生做像素级滚动;pps=点/秒(越大越快),width=可见宽(逻辑像素)。
