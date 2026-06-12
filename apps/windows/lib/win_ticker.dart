@@ -61,6 +61,10 @@ class WinTicker {
   static Future<void> setPopoverOpen(bool open) =>
       _ch.invokeMethod('setPopoverOpen', open);
 
+  /// 点击浮窗唤起主面板时调:把主面板移到浮窗附近(以浮窗为锚点)。
+  static Future<void> positionNearTicker() =>
+      _ch.invokeMethod('positionNearTicker');
+
   /// 把浮窗移回默认位置(设置页「重置位置」用)。
   static Future<void> resetPosition() => _ch.invokeMethod('resetPosition');
 

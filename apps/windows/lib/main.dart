@@ -142,7 +142,7 @@ class _ShellState extends State<Shell>
     trayManager.addListener(this);
     windowManager.addListener(this);
     WidgetsBinding.instance.addObserver(this); // 跟随系统明暗(themeMode=system 时)
-    WinTicker.onClick = () => _showPopover(); // 左键点浮窗 → 弹主面板
+    WinTicker.onClick = () => _showPopover(fromTicker: true); // 左键点浮窗 → 以浮窗为锚点弹主面板
     WinTicker.onMoved = _onTickerMoved; // 拖拽结束 → 持久化位置
     Autostart.isEnabled().then((v) {
       if (mounted) setState(() => _autostartEnabled = v);
@@ -217,9 +217,14 @@ class _ShellState extends State<Shell>
 
   // ---------- 窗口(弹层) ----------
 
-  Future<void> _showPopover() async {
+  // fromTicker=true:点击悬浮窗唤起 → 以悬浮窗为锚点定位;否则(托盘图标唤起)贴托盘。
+  Future<void> _showPopover({bool fromTicker = false}) async {
     WinTicker.setPopoverOpen(true); // 面板弹出时把浮窗降到面板之下(仍压住其他程序)
-    await _positionNearTray();
+    if (fromTicker) {
+      await WinTicker.positionNearTicker(); // 以悬浮窗为锚点
+    } else {
+      await _positionNearTray(); // 以托盘图标为锚点
+    }
     await windowManager.show();
     await windowManager.focus();
     _source.setForeground(true);

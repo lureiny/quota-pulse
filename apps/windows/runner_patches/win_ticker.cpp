@@ -154,6 +154,29 @@ class Ticker {
                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
   }
 
+  // 点击浮窗唤起主面板时:把主面板(owner_=主窗口 HWND)移到浮窗附近。
+  // 全程物理像素 + 真实 HWND,规避 Dart/window_manager 的坐标系换算。
+  void PositionOwnerNearTicker() {
+    if (!hwnd_ || !owner_) return;
+    RECT tr, pr;
+    if (!::GetWindowRect(hwnd_, &tr)) return;   // 浮窗矩形
+    if (!::GetWindowRect(owner_, &pr)) return;  // 主面板矩形(取当前尺寸)
+    int pw = pr.right - pr.left, ph = pr.bottom - pr.top;
+    int gap = (int)std::ceil(8 * dpi_ / 96.0);
+    int x = (tr.left + tr.right) / 2 - pw / 2;  // 水平居中对齐浮窗
+    int y = tr.top - ph - gap;                  // 默认放浮窗上方
+    HMONITOR mon = ::MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi = {sizeof(mi)};
+    ::GetMonitorInfoW(mon, &mi);
+    if (y < mi.rcWork.top) y = tr.bottom + gap;  // 上方放不下 → 放下方
+    if (x + pw > mi.rcWork.right) x = mi.rcWork.right - pw;
+    if (x < mi.rcWork.left) x = mi.rcWork.left;
+    if (y + ph > mi.rcWork.bottom) y = mi.rcWork.bottom - ph;
+    if (y < mi.rcWork.top) y = mi.rcWork.top;
+    ::SetWindowPos(owner_, nullptr, x, y, 0, 0,
+                   SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+  }
+
   void Destroy() {
     StopAnim();
     if (hwnd_) {
@@ -650,6 +673,9 @@ void Attach(flutter::BinaryMessenger* messenger, HWND owner) {
         } else if (method == "setPopoverOpen") {
           if (auto b = std::get_if<bool>(call.arguments()))
             g_ticker->SetPopoverOpen(*b);
+          result->Success();
+        } else if (method == "positionNearTicker") {
+          g_ticker->PositionOwnerNearTicker();
           result->Success();
         } else if (method == "resetPosition") {
           g_ticker->ResetPosition();
