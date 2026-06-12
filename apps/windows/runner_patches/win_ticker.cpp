@@ -257,10 +257,13 @@ class Ticker {
   bool EnsureCreated(int savedX, int savedY) {
     if (hwnd_) return false;
     EnsureClass();
+    // owner 必须为 nullptr:owned window 会被系统强制置于其 owner 之上(MSDN:
+    // "An owned window is always above its owner"),那样主面板永远盖不住浮窗。
+    // WS_EX_TOOLWINDOW 已保证不进任务栏/Alt-Tab,无需 owner。owner_ 仅留作默认定位用。
     hwnd_ = ::CreateWindowExW(
         WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-        kClassName, L"quota-pulse", WS_POPUP, 0, 0, 10, 10, owner_, nullptr,
-        ::GetModuleHandleW(nullptr), this);
+        kClassName, L"quota-pulse", WS_POPUP, 0, 0, 10, 10, /*owner*/ nullptr,
+        nullptr, ::GetModuleHandleW(nullptr), this);
     if (!hwnd_) return false;
     dpi_ = QueryDpi();
     if (savedX >= 0 && savedY >= 0) {

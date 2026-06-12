@@ -14,6 +14,8 @@ apps/macos/macos/
 apps/windows/windows/
 
 # ---- 本地 / IDE / 系统 ----
+# 本地推广草稿,不入库
+PROMO.md
 .claude/
 .idea/
 .vscode/
