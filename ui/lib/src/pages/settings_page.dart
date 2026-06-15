@@ -100,6 +100,7 @@ class _SettingsPageState extends State<SettingsPage> {
   late bool _windowsTickerEnabled; // Windows 悬浮窗口开关
   late bool _windowsTickerMultiline; // Windows 悬浮窗口显示模式:false=滚动,true=多行
   late bool _windowsTickerHideFullscreen; // Windows 跑马灯全屏时隐藏
+  late int _windowsTickerIdleTransparency; // Windows 浮窗空闲透明度%(0=关闭)
   late TrayMetric _metric; // 托盘显示量:使用量/剩余量
   late Set<String> _displayWindows; // 显示窗口(5h/7d,可多选;跨平台)
   late ResetMode _resetMode; // 重置显示:倒计时/绝对
@@ -136,6 +137,8 @@ class _SettingsPageState extends State<SettingsPage> {
     _windowsTickerEnabled = widget.initial.tray.windowsTickerEnabled;
     _windowsTickerMultiline = widget.initial.tray.windowsTickerMultiline;
     _windowsTickerHideFullscreen = widget.initial.tray.windowsTickerHideFullscreen;
+    _windowsTickerIdleTransparency =
+        widget.initial.tray.windowsTickerIdleTransparency.clamp(0, 90).toInt();
     _metric = widget.initial.tray.metric;
     _displayWindows = widget.initial.tray.displayWindows.toSet();
     _resetMode = widget.initial.resetMode;
@@ -210,6 +213,7 @@ class _SettingsPageState extends State<SettingsPage> {
         windowsTickerMultiline: _windowsTickerMultiline,
         windowsTickerHideFullscreen: _windowsTickerHideFullscreen,
         windowsTickerWidth: _windowsTickerWidth,
+        windowsTickerIdleTransparency: _windowsTickerIdleTransparency,
         // 保留浮窗位置(拖拽由壳持久化;设置页不持有,故从 initial 透传,避免被置空)。
         windowsTickerX: widget.initial.tray.windowsTickerX,
         windowsTickerY: widget.initial.tray.windowsTickerY,
@@ -653,6 +657,30 @@ class _SettingsPageState extends State<SettingsPage> {
                 style: theme.textTheme.bodySmall,
               ),
             ),
+            // 空闲透明度(滚动/多行均生效):鼠标不在浮窗上时整窗透明度;0=关闭(常亮)。
+            Row(children: [
+              SizedBox(
+                  width: 76,
+                  child: Text(
+                      _windowsTickerIdleTransparency <= 0
+                          ? '空闲透明 关'
+                          : '空闲透明 $_windowsTickerIdleTransparency%',
+                      style: theme.textTheme.bodySmall)),
+              Expanded(
+                child: Slider(
+                  min: 0,
+                  max: 90,
+                  divisions: 18,
+                  value: _windowsTickerIdleTransparency.toDouble(),
+                  onChanged: (v) {
+                    setState(() => _windowsTickerIdleTransparency = v.round());
+                    _emitTray();
+                  },
+                ),
+              ),
+            ]),
+            Text('鼠标移开浮窗时变透明(看清背后),移上去变清晰;0=关闭',
+                style: theme.textTheme.bodySmall),
             // 速度/宽度仅对滚动模式有意义;多行模式按内容自动排版。
             if (!_windowsTickerMultiline) ...[
               Row(children: [

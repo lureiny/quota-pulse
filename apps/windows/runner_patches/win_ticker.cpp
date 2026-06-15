@@ -39,7 +39,7 @@ constexpr float kCorner = 9.0f;      // 圆角
 constexpr float kDotRadius = 4.0f;   // 状态圆点半径
 constexpr float kMargin = 16.0f;     // 默认贴边留白
 // 悬停淡入淡出:鼠标不在窗口上时整窗更透明(看清背后内容),移上去时变清晰。
-constexpr int kAlphaIdle = 110;      // 鼠标离开:整窗透明度(0-255,越小越透)
+// 空闲档透明度由 Dart 经 idleAlpha 下发(可配置;255=关闭=常亮)。
 constexpr int kAlphaHover = 255;     // 鼠标悬停:不透明
 constexpr int kFadeStep = 28;        // 每帧透明度步进(16ms/帧,约 130ms 完成过渡)
 constexpr UINT_PTR kAnimTimer = 1;
@@ -145,6 +145,14 @@ class Ticker {
     scrollPref_ = GetBool(args, "scroll", false);
     multiline_ = GetBool(args, "multiline", false);
     hideOnFullscreen_ = GetBool(args, "hideOnFullscreen", false);
+    // 空闲透明度(鼠标不在窗口上时的整窗 alpha;255=关闭=常亮)。设置滑块改了即时贴合。
+    int newIdle = GetInt(args, "idleAlpha", 255);
+    if (newIdle < 0) newIdle = 0;
+    if (newIdle > 255) newIdle = 255;
+    bool idleChanged = (newIdle != idleAlpha_);
+    idleAlpha_ = newIdle;
+    alphaTarget_ = hovered_ ? kAlphaHover : idleAlpha_;
+    if (idleChanged && !hovered_) alpha_ = idleAlpha_;  // 非悬停:即时反映滑块
     bool dark = GetBool(args, "dark", dark_);
     if (dark != dark_) {
       dark_ = dark;  // 主题切换 → 丢弃基础画刷,EnsureDevice 会按新明暗重建
@@ -333,10 +341,10 @@ class Ticker {
         resizeEdge_ = 0;
         return 0;
       case WM_MOUSELEAVE:
-        // 鼠标离开窗口 → 淡出到更透明;下次进入时 WM_MOUSEMOVE 重新订阅。
+        // 鼠标离开窗口 → 淡出到空闲透明度;下次进入时 WM_MOUSEMOVE 重新订阅。
         leaveArmed_ = false;
         hovered_ = false;
-        alphaTarget_ = kAlphaIdle;
+        alphaTarget_ = idleAlpha_;
         StartFade();
         return 0;
       case WM_DPICHANGED:
@@ -921,10 +929,11 @@ class Ticker {
   bool shown_ = false;
   bool dark_ = false;  // 明暗:由 app 主题设置决定(每次 update 传入)
   // 悬停淡入淡出
-  bool hovered_ = false;          // 鼠标是否在窗口上
-  bool leaveArmed_ = false;       // 是否已订阅 WM_MOUSELEAVE(每次进入重订阅)
-  int alpha_ = kAlphaIdle;        // 当前整窗透明度(初始 idle:鼠标未在上面)
-  int alphaTarget_ = kAlphaIdle;  // 目标透明度
+  bool hovered_ = false;       // 鼠标是否在窗口上
+  bool leaveArmed_ = false;    // 是否已订阅 WM_MOUSELEAVE(每次进入重订阅)
+  int idleAlpha_ = 255;        // 空闲档透明度(由 Dart idleAlpha 下发;255=关闭)
+  int alpha_ = 255;            // 当前整窗透明度(首帧 Apply 会贴到 idleAlpha_)
+  int alphaTarget_ = 255;      // 目标透明度
 
   std::vector<Seg> segs_;
   std::vector<Line> lines_;          // 多行模式内容

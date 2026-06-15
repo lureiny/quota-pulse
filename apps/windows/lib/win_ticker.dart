@@ -58,6 +58,7 @@ class WinTicker {
     required double width,
     required bool dark, // 生效后的明暗(跟随 app 主题设置,而非系统)
     required bool hideOnFullscreen,
+    required int idleAlpha, // 鼠标不在窗口上时的整窗透明度(0-255;255=关闭=常亮不透明)
     int? x,
     int? y,
   }) {
@@ -72,6 +73,7 @@ class WinTicker {
       'width': width,
       'dark': dark,
       'hideOnFullscreen': hideOnFullscreen,
+      'idleAlpha': idleAlpha,
       'x': x ?? -1,
       'y': y ?? -1,
     });

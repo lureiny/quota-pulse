@@ -91,6 +91,9 @@ class TraySettings {
   // Windows 滚动浮窗可见宽(逻辑像素;可拖拽浮窗边缘或设置滑块调到整屏宽)。
   // null=沿用 tickerWidth*9 兜底,保证老用户无回归;一经拖拽/拉滑块即写入具体像素值。
   final int? windowsTickerWidth;
+  // Windows 浮窗「空闲透明度」百分比(鼠标不在窗口上时):0=关闭(常亮不透明),越大越透。
+  // 默认 40(≈60% 不透明)。滚动/多行均生效。
+  final int windowsTickerIdleTransparency;
 
   const TraySettings({
     this.mode = TrayMode.allAccounts, // 默认:全部账户
@@ -105,6 +108,7 @@ class TraySettings {
     this.windowsTickerX,
     this.windowsTickerY,
     this.windowsTickerWidth,
+    this.windowsTickerIdleTransparency = 40,
   });
 
   TraySettings copyWith({
@@ -120,6 +124,7 @@ class TraySettings {
     int? windowsTickerX,
     int? windowsTickerY,
     int? windowsTickerWidth,
+    int? windowsTickerIdleTransparency,
   }) =>
       TraySettings(
         mode: mode ?? this.mode,
@@ -136,6 +141,8 @@ class TraySettings {
         windowsTickerX: windowsTickerX ?? this.windowsTickerX,
         windowsTickerY: windowsTickerY ?? this.windowsTickerY,
         windowsTickerWidth: windowsTickerWidth ?? this.windowsTickerWidth,
+        windowsTickerIdleTransparency:
+            windowsTickerIdleTransparency ?? this.windowsTickerIdleTransparency,
       );
 
   /// 清掉浮窗位置(「重置位置」用;copyWith 无法把字段置回 null)。
@@ -152,6 +159,7 @@ class TraySettings {
         windowsTickerX: null,
         windowsTickerY: null,
         windowsTickerWidth: windowsTickerWidth, // 重置位置不动宽度
+        windowsTickerIdleTransparency: windowsTickerIdleTransparency,
       );
 
   Map<String, dynamic> toJson() => {
@@ -167,6 +175,7 @@ class TraySettings {
         if (windowsTickerX != null) 'win_ticker_x': windowsTickerX,
         if (windowsTickerY != null) 'win_ticker_y': windowsTickerY,
         if (windowsTickerWidth != null) 'win_ticker_width': windowsTickerWidth,
+        'win_ticker_idle_transparency': windowsTickerIdleTransparency,
       };
 
   factory TraySettings.fromJson(Map<String, dynamic> j) => TraySettings(
@@ -187,6 +196,8 @@ class TraySettings {
         windowsTickerX: (j['win_ticker_x'] as num?)?.toInt(),
         windowsTickerY: (j['win_ticker_y'] as num?)?.toInt(),
         windowsTickerWidth: (j['win_ticker_width'] as num?)?.toInt(),
+        windowsTickerIdleTransparency:
+            (j['win_ticker_idle_transparency'] as num?)?.toInt() ?? 40,
       );
 }
 

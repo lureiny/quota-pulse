@@ -341,6 +341,10 @@ class _ShellState extends State<Shell>
     // 是否滚动完全交给原生按"放不放得下"判定(contentWidth > width):哪怕只有
     // 一个账户,只要单行超出可见宽也要滚,否则会一直只露出半截信息(同 macOS)。
     const scroll = true;
+    // 空闲透明度%(0=关闭)→ 整窗 alpha(0-255):t=0 → 255(不透明=关闭),t 越大越透。
+    // t 已夹到 [0,95],(255*(100-t)/100).round() 必落 [13,255],无需再夹。
+    final t = tray.windowsTickerIdleTransparency.clamp(0, 95);
+    final idleAlpha = (255 * (100 - t) / 100).round();
     final pushed = _scrollWidth.round();
     final nativeW = await WinTicker.update(
       segments: segs,
@@ -352,6 +356,7 @@ class _ShellState extends State<Shell>
       width: _scrollWidth,
       dark: _effectiveDark(),
       hideOnFullscreen: tray.windowsTickerHideFullscreen,
+      idleAlpha: idleAlpha,
       x: tray.windowsTickerX,
       y: tray.windowsTickerY,
     );
