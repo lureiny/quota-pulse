@@ -402,19 +402,27 @@ class _ShellState extends State<Shell>
     _updateTicker(); // 跑马灯开关/速度/宽度/全屏隐藏即时生效
   }
 
-  // 浮窗拖拽后:静默持久化新位置(物理像素),不重渲染。
+  // 浮窗拖拽后:持久化新位置(物理像素)。setState 让打开着的设置页拿到新 initial,
+  // 避免设置页用旧位置(其 _tray() 从 initial 透传 X/Y)把刚拖好的位置覆盖回去。
   void _onTickerMoved(int x, int y) {
     _settings = _settings.copyWith(
         tray: _settings.tray.copyWith(windowsTickerX: x, windowsTickerY: y));
     SettingsStore.save(_settings);
+    if (mounted) setState(() {});
   }
 
   // 拖拽浮窗边缘改宽结束:持久化新宽(逻辑像素)+ 新位置(左边缘拖会同时移动浮窗)。
+  // ① setState → 打开着的设置页据新 initial 重建,didUpdateWidget 把宽度滑块同步过去,
+  //   否则设置页仍持旧宽,下次 _emitTray 会把拖出来的宽度覆盖回去;
+  // ② 立刻 _updateTicker 按新宽重推一次 —— Apply 每个 tick 都用 width 参数重置 width_,
+  //   不重推的话下一拍(轮询/前台)就会用旧宽把浮窗弹回原状。
   void _onTickerResized(int w, int x, int y) {
     _settings = _settings.copyWith(
         tray: _settings.tray.copyWith(
             windowsTickerWidth: w, windowsTickerX: x, windowsTickerY: y));
     SettingsStore.save(_settings);
+    if (mounted) setState(() {});
+    _updateTicker();
   }
 
   // 设置页「重置位置」:原生移回默认位置(其 onMoved 回调会顺带持久化新坐标)。

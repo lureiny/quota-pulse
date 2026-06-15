@@ -153,6 +153,17 @@ class _SettingsPageState extends State<SettingsPage> {
         : 600;
   }
 
+  @override
+  void didUpdateWidget(SettingsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 浮窗被拖拽改宽后,壳会带新的 initial 重建本页:把宽度滑块同步到新值,
+    // 否则设置页仍持旧宽,一旦再 _emitTray 就会把拖出来的宽度覆盖回去(与拖拽不同步)。
+    final nw = widget.initial.tray.windowsTickerWidth;
+    if (nw != null && nw != oldWidget.initial.tray.windowsTickerWidth) {
+      _windowsTickerWidth = nw;
+    }
+  }
+
   /// 用量提醒任一项改动即时生效(不必"保存并连接")。
   void _emitAlert() => widget.onAlertChanged?.call(
         _alertEnabled,
