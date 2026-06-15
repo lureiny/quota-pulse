@@ -23,7 +23,7 @@ English · [中文](README.zh-CN.md)
 - **macOS**: a custom `NSStatusItem` with a **fixed icon** + **smoothly scrolling text** (pixel-level, 60 fps) when content overflows; static when it fits. Scroll **width** and **speed** are configurable.
 - **Windows**: a **per-account tooltip** (status emoji + `instance·account`, then one indented line per selected window), folding to `…and N more` past the tooltip's length budget.
 - **Windows floating window** *(on by default)*: a **draggable, always-on-top desktop strip** drawn natively (Direct2D, colored status dots). Two modes:
-  - **Scroll** — a single line with pixel-level 60 fps scrolling (same content as the macOS menu bar); scrolls whenever it overflows, even for a single account.
+  - **Scroll** — a single line with pixel-level 60 fps scrolling (same content as the macOS menu bar); scrolls whenever it overflows, even for a single account. **Drag either edge to resize its width** (up to full screen) — or set the width from the slider in settings.
   - **Multi-line** — no scrolling; each account is laid out as a base line + one line per selected window (e.g. base / 5h / 7d); the window auto-sizes its height.
   Click it to open the panel, drag to reposition (persisted), and optionally auto-hide it over fullscreen apps.
 - **Configurable display windows (5h / 7d, multi-select)** — cross-platform; the menu bar, tray tooltip, and floating window all show exactly the windows you pick (both by default).
@@ -64,10 +64,11 @@ English · [中文](README.zh-CN.md)
 | Tray metric | usage % · remaining % | **usage** |
 | Display windows *(menu bar / tray / floating window)* | 5h · 7d (multi-select) | **5h + 7d** |
 | Reset display | countdown · absolute | **countdown** |
-| Scroll width *(macOS menu bar / Windows scroll mode)* | characters | **10** |
+| Scroll width *(macOS menu bar)* | characters | **10** |
 | Scroll speed *(macOS menu bar / Windows scroll mode)* | ms per step (lower = faster) | **300** |
 | Windows floating window | on / off | **on** |
 | Windows floating mode | scroll · multi-line | **scroll** |
+| Windows floating width *(scroll mode)* | pixels — drag either edge, up to full screen | **~90px** |
 | Ticker auto-hide on fullscreen *(Windows)* | on / off | off |
 | Usage alerts (master) | on / off | **on** |
 | Alert threshold | 50–100% | **90%** |

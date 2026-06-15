@@ -24,6 +24,7 @@ class SettingsPage extends StatefulWidget {
     this.onPollChanged, // 后台拉取节奏(改后重启核心生效)
     this.onTestNotification,
     this.onResetTickerPosition, // Windows 悬浮窗口「重置位置」
+    this.tickerMaxWidth, // Windows 滚动浮窗「宽度」滑块上限(=主屏逻辑宽;null 用兜底)
     this.autostartEnabled = false, // 开机自启动当前状态(由壳查询 OS 得到)
     this.onAutostartChanged,
   });
@@ -51,6 +52,7 @@ class SettingsPage extends StatefulWidget {
   )? onPollChanged;
   final Future<void> Function()? onTestNotification; // 发送测试通知
   final VoidCallback? onResetTickerPosition; // Windows 跑马灯重置到默认位置
+  final double? tickerMaxWidth; // Windows 滚动浮窗宽度滑块上限(主屏逻辑宽)
   final bool autostartEnabled;
   final void Function(bool)? onAutostartChanged;
 
@@ -93,7 +95,8 @@ class _SettingsPageState extends State<SettingsPage> {
   late TrayMode _trayMode;
   late Set<String> _pinnedKeys; // 指定账户(可多选)
   late int _tickerMs; // 滚动速度(ms):macOS 菜单栏 + Windows 跑马灯共用
-  late int _tickerWidth; // 滚动窗口宽(字符):macOS 菜单栏 + Windows 跑马灯共用
+  late int _tickerWidth; // 滚动窗口宽(字符):仅 macOS 菜单栏
+  late int _windowsTickerWidth; // Windows 滚动浮窗宽(逻辑像素;可拖拽/滑块到整屏宽)
   late bool _windowsTickerEnabled; // Windows 悬浮窗口开关
   late bool _windowsTickerMultiline; // Windows 悬浮窗口显示模式:false=滚动,true=多行
   late bool _windowsTickerHideFullscreen; // Windows 跑马灯全屏时隐藏
@@ -109,6 +112,11 @@ class _SettingsPageState extends State<SettingsPage> {
   late int _pollActiveSecs; // 自动回源间隔(秒)
   int _idSeq = 0;
 
+  // Windows 滚动浮窗「宽度」滑块上限:主屏逻辑宽(壳传入),缺省兜底 1920,下限保底 240
+  // 防滑块退化。原生侧还会把宽度硬夹到整屏宽。
+  double get _winWidthSliderMax =>
+      ((widget.tickerMaxWidth ?? 1920.0).clamp(240.0, 100000.0)).toDouble();
+
   @override
   void initState() {
     super.initState();
@@ -122,6 +130,9 @@ class _SettingsPageState extends State<SettingsPage> {
     _pinnedKeys = widget.initial.tray.pinnedKeys.toSet();
     _tickerMs = widget.initial.tray.tickerMs.clamp(30, 300).toInt();
     _tickerWidth = widget.initial.tray.tickerWidth.clamp(8, 40).toInt();
+    // Windows 浮窗宽:缺省回退共享 tickerWidth*9(老用户无回归),滑块/拖拽后为具体像素。
+    _windowsTickerWidth = widget.initial.tray.windowsTickerWidth ??
+        (widget.initial.tray.tickerWidth.clamp(8, 40) * 9).toInt();
     _windowsTickerEnabled = widget.initial.tray.windowsTickerEnabled;
     _windowsTickerMultiline = widget.initial.tray.windowsTickerMultiline;
     _windowsTickerHideFullscreen = widget.initial.tray.windowsTickerHideFullscreen;
@@ -187,6 +198,7 @@ class _SettingsPageState extends State<SettingsPage> {
         windowsTickerEnabled: _windowsTickerEnabled,
         windowsTickerMultiline: _windowsTickerMultiline,
         windowsTickerHideFullscreen: _windowsTickerHideFullscreen,
+        windowsTickerWidth: _windowsTickerWidth,
         // 保留浮窗位置(拖拽由壳持久化;设置页不持有,故从 initial 透传,避免被置空)。
         windowsTickerX: widget.initial.tray.windowsTickerX,
         windowsTickerY: widget.initial.tray.windowsTickerY,
@@ -653,21 +665,25 @@ class _SettingsPageState extends State<SettingsPage> {
               Row(children: [
                 SizedBox(
                     width: 76,
-                    child: Text('宽度 $_tickerWidth 字',
+                    child: Text('宽度 ${_windowsTickerWidth}px',
                         style: theme.textTheme.bodySmall)),
                 Expanded(
                   child: Slider(
-                    min: 8,
-                    max: 40,
-                    divisions: 32,
-                    value: _tickerWidth.toDouble(),
+                    min: 72,
+                    max: _winWidthSliderMax,
+                    value: _windowsTickerWidth
+                        .toDouble()
+                        .clamp(72.0, _winWidthSliderMax)
+                        .toDouble(),
                     onChanged: (v) {
-                      setState(() => _tickerWidth = v.round());
+                      setState(() => _windowsTickerWidth = v.round());
                       _emitTray();
                     },
                   ),
                 ),
               ]),
+              Text('可拖到整屏宽;也可直接拖拽浮窗左/右边缘改宽',
+                  style: theme.textTheme.bodySmall),
             ],
             SwitchListTile(
               contentPadding: EdgeInsets.zero,

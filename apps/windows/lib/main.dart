@@ -132,9 +132,16 @@ class _ShellState extends State<Shell>
 
   PulseSource get _source => widget.source;
 
-  // 悬浮跑马灯滚动参数(与 macOS 菜单栏同源):tickerMs→pps(点/秒),tickerWidth→可见宽(逻辑像素)。
+  // 悬浮跑马灯滚动参数:速度仍与 macOS 菜单栏同源(tickerMs→pps 点/秒);
+  // 宽度改用 Windows 浮窗独立字段 windowsTickerWidth(逻辑像素),缺省回退共享 tickerWidth*9
+  // 兜底(老用户无回归)。原生再把宽度硬夹到整屏宽。可拖拽浮窗边缘改宽,经 onResized 回写。
   double get _scrollPps => 8000.0 / _settings.tray.tickerMs.clamp(20, 1000);
-  double get _scrollWidth => _settings.tray.tickerWidth.clamp(8, 40) * 9.0;
+  double get _scrollWidth =>
+      (_settings.tray.windowsTickerWidth ??
+              (_settings.tray.tickerWidth.clamp(8, 40) * 9))
+          .toDouble();
+
+  double? _screenWidth; // 主屏逻辑宽(异步查询回填);供设置页宽度滑块上限=整屏宽
 
   @override
   void initState() {
@@ -144,9 +151,14 @@ class _ShellState extends State<Shell>
     WidgetsBinding.instance.addObserver(this); // 跟随系统明暗(themeMode=system 时)
     WinTicker.onClick = () => _showPopover(fromTicker: true); // 左键点浮窗 → 以浮窗为锚点弹主面板
     WinTicker.onMoved = _onTickerMoved; // 拖拽结束 → 持久化位置
+    WinTicker.onResized = _onTickerResized; // 拖拽边缘改宽结束 → 持久化新宽(+位置)
     Autostart.isEnabled().then((v) {
       if (mounted) setState(() => _autostartEnabled = v);
     });
+    // 主屏逻辑宽:供设置页「宽度」滑块上限=整屏宽(异步回填,失败则设置页用兜底值)。
+    screenRetriever.getPrimaryDisplay().then((d) {
+      if (mounted) setState(() => _screenWidth = d.size.width);
+    }).catchError((_) {});
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _initTray();
       _updateTicker(); // 启动即按设置建/隐浮窗(数据未到时显示占位)
@@ -397,6 +409,14 @@ class _ShellState extends State<Shell>
     SettingsStore.save(_settings);
   }
 
+  // 拖拽浮窗边缘改宽结束:持久化新宽(逻辑像素)+ 新位置(左边缘拖会同时移动浮窗)。
+  void _onTickerResized(int w, int x, int y) {
+    _settings = _settings.copyWith(
+        tray: _settings.tray.copyWith(
+            windowsTickerWidth: w, windowsTickerX: x, windowsTickerY: y));
+    SettingsStore.save(_settings);
+  }
+
   // 设置页「重置位置」:原生移回默认位置(其 onMoved 回调会顺带持久化新坐标)。
   void _onResetTickerPosition() => WinTicker.resetPosition();
 
@@ -464,6 +484,7 @@ class _ShellState extends State<Shell>
         onPollChanged: _onPollChanged,
         onTestNotification: () => _alerter.testNotification(),
         onResetTickerPosition: _onResetTickerPosition,
+        tickerMaxWidth: _screenWidth, // 宽度滑块上限=整屏宽(null 时设置页用兜底)
         autostartEnabled: _autostartEnabled,
         onAutostartChanged: _onAutostartChanged,
         onCancel: _settings.configured ? () => setState(() => _view = _View.list) : null,

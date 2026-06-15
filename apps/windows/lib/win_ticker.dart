@@ -9,6 +9,8 @@ class WinTicker {
   static const _ch = MethodChannel('quota_pulse/ticker');
   static void Function()? onClick; // 左键单击浮窗 → 弹主面板
   static void Function(int x, int y)? onMoved; // 拖拽结束 → 持久化新位置(物理像素)
+  // 拖拽浮窗边缘改宽结束 → 持久化新宽(逻辑像素)+ 新位置(左边缘拖会同时移动)。
+  static void Function(int w, int x, int y)? onResized;
   static bool _handlerSet = false;
 
   static void _ensureHandler() {
@@ -22,6 +24,11 @@ class WinTicker {
           final m = (call.arguments as Map).cast<String, dynamic>();
           onMoved?.call((m['x'] as num).toInt(), (m['y'] as num).toInt());
           break;
+        case 'onResized':
+          final m = (call.arguments as Map).cast<String, dynamic>();
+          onResized?.call((m['w'] as num).toInt(), (m['x'] as num).toInt(),
+              (m['y'] as num).toInt());
+          break;
       }
       return null;
     });
@@ -34,7 +41,8 @@ class WinTicker {
   ///   (圆点色 + 无 emoji 文本;newAccount=账户起始段,原生在账户之间用更大间隔)。
   /// [lines] 每项 `{'dot': bool, 'color': int(ARGB), 'indent': int, 'text': String}`
   ///   (dot=true 画前导状态圆点;indent 缩进级别)。
-  /// scroll=true 且放不下时原生做像素级滚动;pps=点/秒(越大越快),width=可见宽(逻辑像素)。
+  /// scroll=true 且放不下时原生做像素级滚动;pps=点/秒(越大越快),width=可见宽(逻辑像素;
+  /// 来自 windowsTickerWidth ?? tickerWidth*9,原生再硬夹到整屏宽,可拖边缘改宽回报 onResized)。
   /// x/y 为已保存的浮窗位置(物理像素);null → 传 -1,原生用默认右下角(仅创建时采用)。
   static Future<void> update({
     required List<Map<String, Object>> segments,

@@ -123,8 +123,12 @@ class Ticker {
       return;
     }
     pps_ = GetDouble(args, "pps", 100.0);
-    width_ = (float)GetDouble(args, "width", 150.0);
-    if (width_ < 1.0f) width_ = 1.0f;
+    // 拖拽改宽进行中:不让数据刷新把 width_ 弹回旧值(否则窗口跳变、widthAtDown_ 失配)。
+    // 拖完 onResized 持久化后,下一次 update 会带回新宽,这里照常采用。
+    if (!(tracking_ && resizeEdge_)) {
+      width_ = (float)GetDouble(args, "width", 150.0);
+      if (width_ < 1.0f) width_ = 1.0f;
+    }
     scrollPref_ = GetBool(args, "scroll", false);
     multiline_ = GetBool(args, "multiline", false);
     hideOnFullscreen_ = GetBool(args, "hideOnFullscreen", false);
@@ -228,6 +232,10 @@ class Ticker {
         dragged_ = false;
         ::GetCursorPos(&downPt_);
         winAtDown_ = pos_;
+        resizeEdge_ = EdgeHit(downPt_);  // 命中边缘 → 本次为拉伸,否则移动
+        widthAtDown_ = width_;
+        dpiAtDown_ = dpi_;  // 整个拉伸用按下时的 DPI / 显示器,避免中途变化导致失配
+        monAtDown_ = ::MonitorFromPoint(downPt_, MONITOR_DEFAULTTONEAREST);
         return 0;
       case WM_MOUSEMOVE:
         if (tracking_) {
@@ -237,9 +245,26 @@ class Ticker {
           if (!dragged_ && (std::abs(dx) >= ::GetSystemMetrics(SM_CXDRAG) ||
                             std::abs(dy) >= ::GetSystemMetrics(SM_CYDRAG))) {
             dragged_ = true;
-            posIsDefault_ = false;  // 用户接管位置 → 不再自动贴右下角
+            posIsDefault_ = false;  // 用户接管位置/尺寸 → 不再自动贴右下角
           }
-          if (dragged_) {
+          if (dragged_ && resizeEdge_) {
+            // 边缘拉伸:物理位移换算成逻辑宽变化(全程用按下时的 scale,按绝对位移计算)。
+            float scale = dpiAtDown_ / 96.0f;
+            float dLogical = dx / scale;
+            float neww = (resizeEdge_ == 1) ? widthAtDown_ - dLogical
+                                            : widthAtDown_ + dLogical;
+            ClampWidth(&neww, monAtDown_);
+            if (resizeEdge_ == 1) {
+              // 左边缘:把右边缘钉住,据新旧物理宽差反推左上角 x。
+              int newPhysW = (int)std::ceil((2 * kPadX + neww) * scale);
+              int oldPhysW = (int)std::ceil((2 * kPadX + widthAtDown_) * scale);
+              pos_.x = (winAtDown_.x + oldPhysW) - newPhysW;
+            }
+            width_ = neww;
+            UpdateScrollState();
+            Render();  // UpdateLayeredWindow 一次性改尺寸+位置,无需额外 SetWindowPos
+          } else if (dragged_) {
+            // 普通移动
             pos_.x = winAtDown_.x + dx;
             pos_.y = winAtDown_.y + dy;
             ::SetWindowPos(hwnd, nullptr, pos_.x, pos_.y, 0, 0,
@@ -251,14 +276,21 @@ class Ticker {
         if (tracking_) {
           tracking_ = false;
           ::ReleaseCapture();
-          if (dragged_)
-            ReportMoved();
-          else if (channel_)
+          if (dragged_) {
+            if (resizeEdge_)
+              ReportResized();  // 拉伸:持久化新宽(+左边缘拖带来的新位置)
+            else
+              ReportMoved();
+          } else if (channel_) {
+            // 未越过拖拽阈值(含边缘轻点)→ 视为点击,弹主面板
             channel_->InvokeMethod("onClick", nullptr);
+          }
+          resizeEdge_ = 0;
         }
         return 0;
       case WM_CAPTURECHANGED:
         tracking_ = false;
+        resizeEdge_ = 0;
         return 0;
       case WM_DPICHANGED:
         dpi_ = HIWORD(wp);
@@ -273,6 +305,17 @@ class Ticker {
         layoutDirty_ = true;
         Render();
         return 0;
+      case WM_SETCURSOR:
+        // 滚动模式下悬停在左/右边缘 → 显示水平拉伸光标「↔」;其余落默认箭头。
+        if (!multiline_ && LOWORD(lp) == HTCLIENT) {
+          POINT pt;
+          ::GetCursorPos(&pt);
+          if (EdgeHit(pt)) {
+            ::SetCursor(::LoadCursorW(nullptr, IDC_SIZEWE));
+            return TRUE;
+          }
+        }
+        break;  // 落到 DefWindowProc → 类默认箭头光标
       case WM_NCHITTEST:
         return HTCLIENT;  // 整窗可点/可拖(我们自己处理拖拽)
     }
@@ -428,11 +471,56 @@ class Ticker {
     if (pos_.y < mi.rcWork.top) pos_.y = mi.rcWork.top;
   }
 
+  // 命中测试:鼠标(屏幕坐标)落在浮窗左/右边缘约 6px 命中区返回 1/2,否则 0。
+  // 仅滚动模式可拉伸(多行宽度由内容自适应,直接返回 0)。
+  int EdgeHit(POINT screenPt) const {
+    if (multiline_) return 0;
+    int physW, physH;
+    CurrentPhysSize(&physW, &physH);
+    int x = screenPt.x - pos_.x;
+    int y = screenPt.y - pos_.y;
+    if (y < 0 || y > physH) return 0;
+    int margin = (int)std::ceil(6.0f * dpi_ / 96.0f);
+    if (margin < 4) margin = 4;
+    if (x <= margin) return 1;             // 左边缘
+    if (x >= physW - margin) return 2;     // 右边缘
+    return 0;
+  }
+
+  // 把逻辑宽夹到 [60, 指定显示器整屏宽对应的内容宽],保证浮窗永不越屏。
+  // [mon] 为拉伸按下时锁定的显示器(避免左边缘拖动越界后 pos_ 取到别的屏);
+  // 为空则回退到当前位置所在屏。scale 用按下时的 DPI,与拉伸换算保持一致。
+  void ClampWidth(float* w, HMONITOR mon) const {
+    const float minW = 60.0f;
+    if (!mon) mon = ::MonitorFromPoint(pos_, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi = {sizeof(mi)};
+    ::GetMonitorInfoW(mon, &mi);
+    float scale = dpiAtDown_ / 96.0f;
+    // 窗口物理宽 =(2*kPadX + w)*scale,不得超过整屏物理宽 → 反推 w 上限。
+    float maxW = (mi.rcMonitor.right - mi.rcMonitor.left) / scale - 2 * kPadX;
+    if (maxW < minW) maxW = minW;
+    if (*w < minW) *w = minW;
+    if (*w > maxW) *w = maxW;
+  }
+
   void ReportMoved() {
     if (!channel_) return;
     channel_->InvokeMethod(
         "onMoved",
         std::make_unique<flutter::EncodableValue>(flutter::EncodableMap{
+            {flutter::EncodableValue("x"), flutter::EncodableValue((int32_t)pos_.x)},
+            {flutter::EncodableValue("y"), flutter::EncodableValue((int32_t)pos_.y)},
+        }));
+  }
+
+  // 拖拽边缘改宽结束:回报新宽(逻辑 DIP)+ 当前位置(左边缘拖会同时移动左上角)。
+  void ReportResized() {
+    if (!channel_) return;
+    channel_->InvokeMethod(
+        "onResized",
+        std::make_unique<flutter::EncodableValue>(flutter::EncodableMap{
+            {flutter::EncodableValue("w"),
+             flutter::EncodableValue((int32_t)std::lround(width_))},
             {flutter::EncodableValue("x"), flutter::EncodableValue((int32_t)pos_.x)},
             {flutter::EncodableValue("y"), flutter::EncodableValue((int32_t)pos_.y)},
         }));
@@ -786,11 +874,15 @@ class Ticker {
   float contentHeight_ = kHeight;    // 多行模式内容总高(逻辑 DIP)
   bool layoutDirty_ = true;
 
-  // 拖拽
+  // 拖拽 / 边缘拉伸
   bool tracking_ = false;
   bool dragged_ = false;
   POINT downPt_ = {0, 0};
   POINT winAtDown_ = {0, 0};
+  int resizeEdge_ = 0;     // 本次按下命中的拉伸边:0=无(走移动)/ 1=左 / 2=右
+  float widthAtDown_ = 0;  // 按下时的 width_(逻辑 DIP),拉伸按绝对位移计算避免漂移
+  UINT dpiAtDown_ = 96;    // 按下时的 DPI:整个拉伸手势用同一 scale,避免中途跨屏失配
+  HMONITOR monAtDown_ = nullptr;  // 按下时所在显示器:拉伸全程按它算整屏宽上限
 
   // GDI DIB(layered 源)
   HDC memDC_ = nullptr;

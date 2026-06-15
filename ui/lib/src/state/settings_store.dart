@@ -88,6 +88,9 @@ class TraySettings {
   final bool windowsTickerHideFullscreen; // 前台全屏时自动隐藏(默认关=始终显示)
   final int? windowsTickerX; // 浮窗位置(物理像素;null=原生用默认右下角)
   final int? windowsTickerY;
+  // Windows 滚动浮窗可见宽(逻辑像素;可拖拽浮窗边缘或设置滑块调到整屏宽)。
+  // null=沿用 tickerWidth*9 兜底,保证老用户无回归;一经拖拽/拉滑块即写入具体像素值。
+  final int? windowsTickerWidth;
 
   const TraySettings({
     this.mode = TrayMode.allAccounts, // 默认:全部账户
@@ -101,6 +104,7 @@ class TraySettings {
     this.windowsTickerHideFullscreen = false,
     this.windowsTickerX,
     this.windowsTickerY,
+    this.windowsTickerWidth,
   });
 
   TraySettings copyWith({
@@ -115,6 +119,7 @@ class TraySettings {
     bool? windowsTickerHideFullscreen,
     int? windowsTickerX,
     int? windowsTickerY,
+    int? windowsTickerWidth,
   }) =>
       TraySettings(
         mode: mode ?? this.mode,
@@ -130,6 +135,7 @@ class TraySettings {
             windowsTickerHideFullscreen ?? this.windowsTickerHideFullscreen,
         windowsTickerX: windowsTickerX ?? this.windowsTickerX,
         windowsTickerY: windowsTickerY ?? this.windowsTickerY,
+        windowsTickerWidth: windowsTickerWidth ?? this.windowsTickerWidth,
       );
 
   /// 清掉浮窗位置(「重置位置」用;copyWith 无法把字段置回 null)。
@@ -145,6 +151,7 @@ class TraySettings {
         windowsTickerHideFullscreen: windowsTickerHideFullscreen,
         windowsTickerX: null,
         windowsTickerY: null,
+        windowsTickerWidth: windowsTickerWidth, // 重置位置不动宽度
       );
 
   Map<String, dynamic> toJson() => {
@@ -159,6 +166,7 @@ class TraySettings {
         'win_ticker_hide_fullscreen': windowsTickerHideFullscreen,
         if (windowsTickerX != null) 'win_ticker_x': windowsTickerX,
         if (windowsTickerY != null) 'win_ticker_y': windowsTickerY,
+        if (windowsTickerWidth != null) 'win_ticker_width': windowsTickerWidth,
       };
 
   factory TraySettings.fromJson(Map<String, dynamic> j) => TraySettings(
@@ -178,6 +186,7 @@ class TraySettings {
             j['win_ticker_hide_fullscreen'] as bool? ?? false,
         windowsTickerX: (j['win_ticker_x'] as num?)?.toInt(),
         windowsTickerY: (j['win_ticker_y'] as num?)?.toInt(),
+        windowsTickerWidth: (j['win_ticker_width'] as num?)?.toInt(),
       );
 }
 
