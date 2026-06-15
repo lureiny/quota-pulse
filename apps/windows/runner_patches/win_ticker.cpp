@@ -222,6 +222,9 @@ class Ticker {
     }
   }
 
+  // 当前实际可见宽(逻辑像素,四舍五入)。供 update 的返回值带回 Dart 同步配置。
+  int32_t CurrentWidth() const { return (int32_t)std::lround(width_); }
+
   LRESULT WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
       case WM_TIMER:
@@ -929,7 +932,10 @@ void Attach(flutter::BinaryMessenger* messenger, HWND owner) {
         if (method == "update") {
           if (auto* m = std::get_if<flutter::EncodableMap>(call.arguments()))
             g_ticker->Apply(*m);
-          result->Success();
+          // 返回原生当前实际宽度(逻辑像素):用户拖拽边缘改宽后,这里会与 Dart 推下去的
+          // 宽不同;Dart 据此把配置同步过来(走可靠的 Dart→native 返回值,不依赖
+          // native→Dart 的 onResized 回调)。
+          result->Success(flutter::EncodableValue(g_ticker->CurrentWidth()));
         } else if (method == "setPopoverOpen") {
           if (auto b = std::get_if<bool>(call.arguments()))
             g_ticker->SetPopoverOpen(*b);

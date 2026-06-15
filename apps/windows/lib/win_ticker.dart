@@ -44,7 +44,11 @@ class WinTicker {
   /// scroll=true 且放不下时原生做像素级滚动;pps=点/秒(越大越快),width=可见宽(逻辑像素;
   /// 来自 windowsTickerWidth ?? tickerWidth*9,原生再硬夹到整屏宽,可拖边缘改宽回报 onResized)。
   /// x/y 为已保存的浮窗位置(物理像素);null → 传 -1,原生用默认右下角(仅创建时采用)。
-  static Future<void> update({
+  ///
+  /// 返回原生当前实际可见宽(逻辑像素)。用户拖拽浮窗边缘改宽后,原生保留拖出来的宽
+  /// (见 win_ticker.cpp 的 lastWidthArg_ 守卫),此返回值会与传入的 [width] 不同;
+  /// 壳据此把配置同步过来——这条走 Dart→native 返回值,可靠,不依赖 native→Dart 回调。
+  static Future<int?> update({
     required List<Map<String, Object>> segments,
     required List<Map<String, Object>> lines,
     required bool multiline,
@@ -58,7 +62,7 @@ class WinTicker {
     int? y,
   }) {
     _ensureHandler();
-    return _ch.invokeMethod('update', {
+    return _ch.invokeMethod<int>('update', {
       'segments': segments,
       'lines': lines,
       'multiline': multiline,

@@ -231,6 +231,7 @@ class _ShellState extends State<Shell>
 
   // fromTicker=true:点击悬浮窗唤起 → 以悬浮窗为锚点定位;否则(托盘图标唤起)贴托盘。
   Future<void> _showPopover({bool fromTicker = false}) async {
+    _updateTicker(); // 顺带回拉原生实际宽,把可能被拖拽改过的宽度同步到配置/设置页滑块
     WinTicker.setPopoverOpen(true); // 面板弹出时把浮窗降到面板之下(仍压住其他程序)
     if (fromTicker) {
       await WinTicker.positionNearTicker(); // 以悬浮窗为锚点
@@ -319,7 +320,7 @@ class _ShellState extends State<Shell>
   // 悬浮窗口:内容与 macOS 菜单栏同源(同一选集 + 选中窗口用量/重置),状态走原生圆点。
   // 单行滚动用 segments;多行铺开用 lines(每账户 base + 各窗口一行)。两份都构造,
   // 原生按 multiline 选用哪份,切换模式无需重建数据。
-  void _updateTicker() {
+  Future<void> _updateTicker() async {
     final tray = _settings.tray;
     final pulses = _controller?.pulses ?? const <AccountPulse>[];
     final segs = tickerSegments(pulses, tray, _settings.resetMode)
@@ -340,7 +341,8 @@ class _ShellState extends State<Shell>
     // 是否滚动完全交给原生按"放不放得下"判定(contentWidth > width):哪怕只有
     // 一个账户,只要单行超出可见宽也要滚,否则会一直只露出半截信息(同 macOS)。
     const scroll = true;
-    WinTicker.update(
+    final pushed = _scrollWidth.round();
+    final nativeW = await WinTicker.update(
       segments: segs,
       lines: lines,
       multiline: tray.windowsTickerMultiline,
@@ -353,6 +355,14 @@ class _ShellState extends State<Shell>
       x: tray.windowsTickerX,
       y: tray.windowsTickerY,
     );
+    // 原生回报的实际宽与我们推下去的不同 → 用户拖过浮窗边缘:采纳进配置并刷新设置页
+    // 滑块。这条走 Dart→native 返回值,可靠,不依赖 native→Dart 的 onResized 回调。
+    if (nativeW != null && nativeW != pushed) {
+      _settings = _settings.copyWith(
+          tray: _settings.tray.copyWith(windowsTickerWidth: nativeW));
+      SettingsStore.save(_settings);
+      if (mounted) setState(() {});
+    }
   }
 
   void _onPulse() {
