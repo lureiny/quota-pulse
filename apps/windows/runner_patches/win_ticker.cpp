@@ -123,11 +123,19 @@ class Ticker {
       return;
     }
     pps_ = GetDouble(args, "pps", 100.0);
-    // 拖拽改宽进行中:不让数据刷新把 width_ 弹回旧值(否则窗口跳变、widthAtDown_ 失配)。
-    // 拖完 onResized 持久化后,下一次 update 会带回新宽,这里照常采用。
-    if (!(tracking_ && resizeEdge_)) {
-      width_ = (float)GetDouble(args, "width", 150.0);
-      if (width_ < 1.0f) width_ = 1.0f;
+    // 宽度:只在 Dart 端「目标宽」真正变化时(设置滑块改动、或拖拽回写后的新值)才覆盖
+    // width_;否则保留当前 width_。关键:用户直接拖拽浮窗边缘改宽时,Dart 目标宽并未变,
+    // 后续每个 tick 都推同一个旧目标宽 —— 若无条件覆盖,松手后就会被立刻弹回原宽。
+    // 这样不依赖 onResized 回调是否成功:即便回调没回到 Dart,拖出来的宽也不会被盖掉。
+    // 拖拽进行中(tracking_ && resizeEdge_)更不覆盖。
+    {
+      float wArg = (float)GetDouble(args, "width", 150.0);
+      if (wArg < 1.0f) wArg = 1.0f;
+      bool resizing = tracking_ && resizeEdge_;
+      if (!resizing && (lastWidthArg_ < 0.0f || wArg != lastWidthArg_)) {
+        width_ = wArg;
+        lastWidthArg_ = wArg;
+      }
     }
     scrollPref_ = GetBool(args, "scroll", false);
     multiline_ = GetBool(args, "multiline", false);
@@ -856,6 +864,7 @@ class Ticker {
   UINT dpi_ = 96;
   POINT pos_ = {0, 0};
   float width_ = 150.0f;
+  float lastWidthArg_ = -1.0f;  // 上次 Dart 推来的目标宽;仅其变化时才覆盖 width_(见 Apply)
   double pps_ = 100.0;
   bool scrollPref_ = false;
   bool scrolling_ = false;
