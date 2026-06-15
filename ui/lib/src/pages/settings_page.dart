@@ -1,6 +1,11 @@
+import 'dart:io';
+
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/pulse.dart';
+import '../state/config_io.dart';
 import '../state/settings_store.dart';
 import '../version.dart';
 
@@ -25,6 +30,7 @@ class SettingsPage extends StatefulWidget {
     this.onTestNotification,
     this.onResetTickerPosition, // Windows 悬浮窗口「重置位置」
     this.tickerMaxWidth, // Windows 滚动浮窗「宽度」滑块上限(=主屏逻辑宽;null 用兜底)
+    this.onImport, // 导入一份完整配置:壳持久化 + 重启核心 + 刷新托盘/浮窗
     this.autostartEnabled = false, // 开机自启动当前状态(由壳查询 OS 得到)
     this.onAutostartChanged,
   });
@@ -53,6 +59,7 @@ class SettingsPage extends StatefulWidget {
   final Future<void> Function()? onTestNotification; // 发送测试通知
   final VoidCallback? onResetTickerPosition; // Windows 跑马灯重置到默认位置
   final double? tickerMaxWidth; // Windows 滚动浮窗宽度滑块上限(主屏逻辑宽)
+  final void Function(Settings)? onImport; // 导入配置(跨平台)
   final bool autostartEnabled;
   final void Function(bool)? onAutostartChanged;
 
@@ -222,22 +229,207 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 托盘相关改动即时生效(不必保存)。
   void _emitTray() => widget.onTrayChanged?.call(_tray());
 
-  void _save() {
-    final instances = _drafts.map((d) => d.toInstance()).toList();
-    widget.onSave(Settings(
-      instances: instances,
-      layout: _layout,
-      tray: _tray(),
-      themeMode: _theme,
-      resetMode: _resetMode,
-      alertEnabled: _alertEnabled,
-      alertThreshold: _alertThreshold,
-      alertOverWindows: _alertOverWindows,
-      alertRecoverWindows: _alertRecoverWindows,
-      pollPassiveSecs: _pollPassiveSecs,
-      pollActiveEnabled: _pollActiveEnabled,
-      pollActiveSecs: _pollActiveSecs,
-    ));
+  /// 由当前表单状态构造一份完整 Settings(保存与导出共用 → 导出 WYSIWYG)。
+  Settings _currentSettings() => Settings(
+        instances: _drafts.map((d) => d.toInstance()).toList(),
+        layout: _layout,
+        tray: _tray(),
+        themeMode: _theme,
+        resetMode: _resetMode,
+        alertEnabled: _alertEnabled,
+        alertThreshold: _alertThreshold,
+        alertOverWindows: _alertOverWindows,
+        alertRecoverWindows: _alertRecoverWindows,
+        pollPassiveSecs: _pollPassiveSecs,
+        pollActiveEnabled: _pollActiveEnabled,
+        pollActiveSecs: _pollActiveSecs,
+      );
+
+  void _save() => widget.onSave(_currentSettings());
+
+  // ---------- 配置导入 / 导出(YAML) ----------
+
+  Future<void> _showExportDialog() async {
+    bool includeKeys = true;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          final theme = Theme.of(ctx);
+          final yamlText =
+              exportConfigYaml(_currentSettings(), includeKeys: includeKeys);
+          return AlertDialog(
+            title: const Text('导出配置'),
+            content: SizedBox(
+              width: 460,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    value: includeKeys,
+                    onChanged: (v) => setLocal(() => includeKeys = v ?? true),
+                    title:
+                        const Text('包含 API 密钥', style: TextStyle(fontSize: 13)),
+                  ),
+                  if (includeKeys)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text('⚠️ 含 API 密钥明文,妥善保管、勿外传',
+                          style: theme.textTheme.bodySmall
+                              ?.copyWith(color: theme.colorScheme.error)),
+                    ),
+                  Container(
+                    width: double.infinity,
+                    constraints: const BoxConstraints(maxHeight: 240),
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surfaceContainerHighest
+                          .withValues(alpha: 0.4),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: SingleChildScrollView(
+                      child: SelectableText(yamlText,
+                          style: const TextStyle(
+                              fontFamily: 'monospace', fontSize: 12)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: yamlText));
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('已复制到剪贴板')));
+                  }
+                },
+                child: const Text('复制'),
+              ),
+              TextButton(
+                onPressed: () => _saveExportToFile(yamlText),
+                child: const Text('保存为文件…'),
+              ),
+              TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('关闭')),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _saveExportToFile(String yamlText) async {
+    try {
+      final loc = await getSaveLocation(
+        suggestedName: 'quota-pulse-config.yaml',
+        acceptedTypeGroups: const [
+          XTypeGroup(label: 'YAML', extensions: ['yaml', 'yml']),
+        ],
+      );
+      if (loc == null) return; // 用户取消
+      await File(loc.path).writeAsString(yamlText);
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('已导出到 ${loc.path}')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('导出失败:$e')));
+      }
+    }
+  }
+
+  Future<void> _showImportDialog() async {
+    final controller = TextEditingController();
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('导入配置'),
+        content: SizedBox(
+          width: 460,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('粘贴配置(YAML),或从文件选择;导入会覆盖当前配置。',
+                  style: Theme.of(ctx).textTheme.bodySmall),
+              const SizedBox(height: 8),
+              TextField(
+                controller: controller,
+                minLines: 6,
+                maxLines: 12,
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                  hintText: 'app: quota-pulse\nsettings:\n  ...',
+                ),
+              ),
+              const SizedBox(height: 6),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () async {
+                    final text = await _pickImportFile();
+                    if (text != null) controller.text = text;
+                  },
+                  icon: const Icon(Icons.folder_open, size: 16),
+                  label: const Text('从文件选择…'),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('取消')),
+          FilledButton(
+            onPressed: () {
+              Settings parsed;
+              try {
+                parsed = importConfigYaml(controller.text);
+              } catch (e) {
+                final msg = e is FormatException ? e.message : '$e';
+                ScaffoldMessenger.of(context)
+                    .showSnackBar(SnackBar(content: Text('导入失败:$msg')));
+                return;
+              }
+              Navigator.of(ctx).pop();
+              ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('已导入配置')));
+              widget.onImport?.call(parsed);
+            },
+            child: const Text('导入'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+  }
+
+  Future<String?> _pickImportFile() async {
+    try {
+      final file = await openFile(acceptedTypeGroups: const [
+        XTypeGroup(label: 'YAML / JSON', extensions: ['yaml', 'yml', 'json', 'txt']),
+      ]);
+      if (file == null) return null;
+      return await file.readAsString();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('读取失败:$e')));
+      }
+      return null;
+    }
   }
 
   @override
@@ -748,6 +940,28 @@ class _SettingsPageState extends State<SettingsPage> {
         ],
 
         const SizedBox(height: 12),
+        // 配置导入 / 导出(跨平台,YAML;方便迁移到不同机器)。
+        const Divider(height: 1),
+        const SizedBox(height: 8),
+        Center(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextButton.icon(
+                onPressed: _showImportDialog,
+                icon: const Icon(Icons.file_upload_outlined, size: 16),
+                label: const Text('导入配置'),
+              ),
+              const SizedBox(width: 8),
+              TextButton.icon(
+                onPressed: _showExportDialog,
+                icon: const Icon(Icons.file_download_outlined, size: 16),
+                label: const Text('导出配置'),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 4),
         // MiSans 仅 Windows 打包使用;其许可要求「在软件中特别注明」,故只在 Windows 显示署名。
         if (theme.platform == TargetPlatform.windows) ...[
           const SizedBox(height: 14),

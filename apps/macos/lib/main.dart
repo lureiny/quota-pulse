@@ -301,6 +301,13 @@ class _ShellState extends State<Shell> with WindowListener {
     setState(() => _view = _View.list);
   }
 
+  // 导入一份完整配置:走 _saveSettings(持久化 + 主题回传 + 按需重启核心 + 切回 list),
+  // 再刷新菜单栏文案以反映显示窗口/重置显示等非核心改动。
+  Future<void> _onImportConfig(Settings s) async {
+    await _saveSettings(s);
+    _updateTray();
+  }
+
   void _onThemeChanged(ThemeChoice choice) {
     setState(() => _settings = _settings.copyWith(themeMode: choice));
     widget.onThemeModeChanged(choice.toThemeMode()); // 选中即时生效
@@ -389,6 +396,7 @@ class _ShellState extends State<Shell> with WindowListener {
         onAlertChanged: _onAlertChanged,
         onPollChanged: _onPollChanged,
         onTestNotification: () => _alerter.testNotification(),
+        onImport: _onImportConfig,
         autostartEnabled: _autostartEnabled,
         onAutostartChanged: _onAutostartChanged,
         onCancel: _settings.configured ? () => setState(() => _view = _View.list) : null,

@@ -28,6 +28,7 @@ export 'src/pages/settings_page.dart';
 // 状态
 export 'src/state/pulse_controller.dart';
 export 'src/state/settings_store.dart';
+export 'src/state/config_io.dart';
 
 // 用量阈值提醒(系统通知)
 export 'src/alert/usage_alerter.dart';

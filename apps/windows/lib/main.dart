@@ -389,6 +389,14 @@ class _ShellState extends State<Shell>
     setState(() => _view = _View.list);
   }
 
+  // 导入一份完整配置:走 _saveSettings(持久化 + 主题回传 + 按需重启核心 + 切回 list),
+  // 再刷新托盘 tooltip 与浮窗以反映显示窗口/透明度/显示模式等非核心改动。
+  Future<void> _onImportConfig(Settings s) async {
+    await _saveSettings(s);
+    _updateTray();
+    _updateTicker();
+  }
+
   void _onThemeChanged(ThemeChoice choice) {
     setState(() => _settings = _settings.copyWith(themeMode: choice));
     widget.onThemeModeChanged(choice.toThemeMode()); // 选中即时生效
@@ -508,6 +516,7 @@ class _ShellState extends State<Shell>
         onTestNotification: () => _alerter.testNotification(),
         onResetTickerPosition: _onResetTickerPosition,
         tickerMaxWidth: _screenWidth, // 宽度滑块上限=整屏宽(null 时设置页用兜底)
+        onImport: _onImportConfig,
         autostartEnabled: _autostartEnabled,
         onAutostartChanged: _onAutostartChanged,
         onCancel: _settings.configured ? () => setState(() => _view = _View.list) : null,
