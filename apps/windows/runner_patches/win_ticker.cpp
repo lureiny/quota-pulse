@@ -38,8 +38,13 @@ constexpr float kGap = 44.0f;        // 滚动一圈尾到头的空隙(与 macOS
 constexpr float kCorner = 9.0f;      // 圆角
 constexpr float kDotRadius = 4.0f;   // 状态圆点半径
 constexpr float kMargin = 16.0f;     // 默认贴边留白
+// 悬停淡入淡出:鼠标不在窗口上时整窗更透明(看清背后内容),移上去时变清晰。
+constexpr int kAlphaIdle = 110;      // 鼠标离开:整窗透明度(0-255,越小越透)
+constexpr int kAlphaHover = 255;     // 鼠标悬停:不透明
+constexpr int kFadeStep = 28;        // 每帧透明度步进(16ms/帧,约 130ms 完成过渡)
 constexpr UINT_PTR kAnimTimer = 1;
 constexpr UINT_PTR kFsTimer = 2;
+constexpr UINT_PTR kFadeTimer = 3;
 constexpr wchar_t kClassName[] = L"QuotaPulseTickerWnd";
 constexpr wchar_t kDot = L'\x25CF';  // ● 实心圆(用 drawing effect 上色当状态点)
 
@@ -217,6 +222,7 @@ class Ticker {
     StopAnim();
     if (hwnd_) {
       ::KillTimer(hwnd_, kFsTimer);
+      ::KillTimer(hwnd_, kFadeTimer);
       ::DestroyWindow(hwnd_);
       hwnd_ = nullptr;
     }
@@ -235,6 +241,16 @@ class Ticker {
           Render();
         } else if (wp == kFsTimer) {
           CheckFullscreen();
+        } else if (wp == kFadeTimer) {
+          // 透明度向目标过渡,到达即停。
+          if (alpha_ < alphaTarget_)
+            alpha_ = (alpha_ + kFadeStep > alphaTarget_) ? alphaTarget_
+                                                         : alpha_ + kFadeStep;
+          else if (alpha_ > alphaTarget_)
+            alpha_ = (alpha_ - kFadeStep < alphaTarget_) ? alphaTarget_
+                                                         : alpha_ - kFadeStep;
+          Render();
+          if (alpha_ == alphaTarget_) ::KillTimer(hwnd_, kFadeTimer);
         }
         return 0;
       case WM_LBUTTONDOWN:
@@ -249,6 +265,19 @@ class Ticker {
         monAtDown_ = ::MonitorFromPoint(downPt_, MONITOR_DEFAULTTONEAREST);
         return 0;
       case WM_MOUSEMOVE:
+        // 悬停检测:首次进入 → 订阅 WM_MOUSELEAVE,并淡入到不透明。
+        if (!leaveArmed_) {
+          TRACKMOUSEEVENT tme = {sizeof(tme)};
+          tme.dwFlags = TME_LEAVE;
+          tme.hwndTrack = hwnd;
+          ::TrackMouseEvent(&tme);
+          leaveArmed_ = true;
+        }
+        if (!hovered_) {
+          hovered_ = true;
+          alphaTarget_ = kAlphaHover;
+          StartFade();
+        }
         if (tracking_) {
           POINT cur;
           ::GetCursorPos(&cur);
@@ -302,6 +331,13 @@ class Ticker {
       case WM_CAPTURECHANGED:
         tracking_ = false;
         resizeEdge_ = 0;
+        return 0;
+      case WM_MOUSELEAVE:
+        // 鼠标离开窗口 → 淡出到更透明;下次进入时 WM_MOUSEMOVE 重新订阅。
+        leaveArmed_ = false;
+        hovered_ = false;
+        alphaTarget_ = kAlphaIdle;
+        StartFade();
         return 0;
       case WM_DPICHANGED:
         dpi_ = HIWORD(wp);
@@ -726,6 +762,11 @@ class Ticker {
       StopAnim();
     }
   }
+
+  // 启动悬停透明度过渡(到达目标后 WM_TIMER 自动停)。
+  void StartFade() {
+    if (hwnd_ && alpha_ != alphaTarget_) ::SetTimer(hwnd_, kFadeTimer, 16, nullptr);
+  }
   void StopAnim() {
     if (scrolling_ && hwnd_) ::KillTimer(hwnd_, kAnimTimer);
     scrolling_ = false;
@@ -853,7 +894,8 @@ class Ticker {
     POINT ptDst = pos_;
     SIZE sz = {physW, physH};
     POINT ptSrc = {0, 0};
-    BLENDFUNCTION bf = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+    // SourceConstantAlpha=alpha_:整窗透明度(悬停淡入淡出);与 AC_SRC_ALPHA 逐像素 alpha 叠加。
+    BLENDFUNCTION bf = {AC_SRC_OVER, 0, (BYTE)alpha_, AC_SRC_ALPHA};
     HDC screen = ::GetDC(nullptr);
     ::UpdateLayeredWindow(hwnd_, screen, &ptDst, &sz, memDC_, &ptSrc, 0, &bf,
                           ULW_ALPHA);
@@ -878,6 +920,11 @@ class Ticker {
   bool fsHidden_ = false;
   bool shown_ = false;
   bool dark_ = false;  // 明暗:由 app 主题设置决定(每次 update 传入)
+  // 悬停淡入淡出
+  bool hovered_ = false;          // 鼠标是否在窗口上
+  bool leaveArmed_ = false;       // 是否已订阅 WM_MOUSELEAVE(每次进入重订阅)
+  int alpha_ = kAlphaIdle;        // 当前整窗透明度(初始 idle:鼠标未在上面)
+  int alphaTarget_ = kAlphaIdle;  // 目标透明度
 
   std::vector<Seg> segs_;
   std::vector<Line> lines_;          // 多行模式内容
