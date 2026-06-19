@@ -20,6 +20,7 @@ export 'src/widgets/meter_bar.dart';
 export 'src/widgets/account_tile.dart';
 export 'src/widgets/status_dot.dart';
 export 'src/widgets/glass_card.dart';
+export 'src/widgets/hourly_chart.dart';
 
 // 页面
 export 'src/pages/popover_page.dart';

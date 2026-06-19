@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/lureiny/quota-pulse/core/config"
 	"github.com/lureiny/quota-pulse/core/model"
@@ -121,6 +122,38 @@ func (p *Provider) FetchUsage(ctx context.Context, acc model.Account, opt provid
 		return model.AccountPulse{}, fmt.Errorf("decode usage: %w", err)
 	}
 	return toPulse(acc, u), nil
+}
+
+// FetchTrend 实现 provider.TrendFetcher:拉取单账户最近 hours 小时的 token 时序。
+//
+// 走后端 dashboard/trend 接口(granularity=hour + account_id 过滤),数据源是真实
+// usage_logs(全平台、不限 Anthropic;带 account_id 那条路径不过滤零成本行,故
+// Claude 订阅号也照常统计)。统一用 timezone=UTC 查询并按 UTC 解析,保证桶边界
+// 与解析一致;start_date 多回看一天以吸收时区/跨天误差(代价仅多几条小时桶)。
+func (p *Provider) FetchTrend(ctx context.Context, acc model.Account, hours int) ([]model.HourPoint, error) {
+	if hours <= 0 {
+		hours = 24
+	}
+	now := time.Now().UTC()
+	start := now.Add(-time.Duration(hours)*time.Hour - 24*time.Hour)
+
+	q := url.Values{}
+	q.Set("granularity", "hour")
+	q.Set("account_id", acc.ID)
+	q.Set("start_date", start.Format("2006-01-02"))
+	q.Set("end_date", now.Format("2006-01-02"))
+	q.Set("timezone", "UTC")
+
+	path := apiPrefix + "/dashboard/trend?" + q.Encode()
+	data, err := p.client.GetData(ctx, path, false)
+	if err != nil {
+		return nil, err
+	}
+	var r trendResp
+	if err := json.Unmarshal(data, &r); err != nil {
+		return nil, fmt.Errorf("decode trend: %w", err)
+	}
+	return toHourPoints(r), nil
 }
 
 func idAllowSet(ids []string) map[string]struct{} {

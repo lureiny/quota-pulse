@@ -19,7 +19,7 @@ type FetchOptions struct {
 }
 
 // Capabilities 声明 provider 的能力,供 UI 自适应展示
-//(例如累计配额型不显示"重置倒计时")。
+// (例如累计配额型不显示"重置倒计时")。
 type Capabilities struct {
 	HasRollingWindows      bool     // 是否有带重置的滚动窗口(sub2api=true)
 	HasCumulativeQuota     bool     // 是否是累计配额模型(one-api=true)
@@ -41,4 +41,13 @@ type Provider interface {
 
 	// Capabilities 返回能力声明。
 	Capabilities() Capabilities
+}
+
+// TrendFetcher 是一个可选能力:能拉取单账户的小时级 token 时序。
+// 并非所有 provider 都支持(目前仅 sub2api),故独立于 Provider 主接口,
+// 由 poller 通过类型断言探测:if tf, ok := prov.(provider.TrendFetcher); ok { ... }。
+//
+// hours 为期望回看的小时数(由图表配置决定);返回按时间升序的小时桶。
+type TrendFetcher interface {
+	FetchTrend(ctx context.Context, acc model.Account, hours int) ([]model.HourPoint, error)
 }

@@ -11,6 +11,25 @@ import (
 // Config 是顶层配置:可同时监控多个 provider 实例。
 type Config struct {
 	Providers []ProviderConfig `json:"providers"`
+	Chart     ChartConfig      `json:"chart"` // 主面板小时用量图表
+}
+
+// ChartConfig 控制每站点小时级用量堆叠柱状图。
+type ChartConfig struct {
+	Enabled    bool `json:"enabled"`     // 是否拉取并展示小时时序(关闭则零额外请求)
+	RangeHours int  `json:"range_hours"` // 回看小时数(决定 trend 拉取窗口)
+}
+
+const chartMaxRangeHours = 168 // 7d,上限防误配拉太宽
+
+func (c ChartConfig) withDefaults() ChartConfig {
+	if c.RangeHours <= 0 {
+		c.RangeHours = 24
+	}
+	if c.RangeHours > chartMaxRangeHours {
+		c.RangeHours = chartMaxRangeHours
+	}
+	return c
 }
 
 // ProviderConfig 描述一个 provider 实例(一个后台 + 一份鉴权 + 轮询策略)。
@@ -54,6 +73,7 @@ func (c Config) Normalized() Config {
 	for i := range out.Providers {
 		out.Providers[i].Poll = out.Providers[i].Poll.withDefaults()
 	}
+	out.Chart = out.Chart.withDefaults()
 	return out
 }
 

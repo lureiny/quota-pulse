@@ -37,6 +37,7 @@ func New(cfg config.Config) (*App, error) {
 		store: poller.NewStore(),
 	}
 	a.poll = poller.New(a.store, a.broadcast)
+	a.poll.SetChart(a.cfg.Chart)
 
 	used := map[string]bool{}
 	for i, pc := range a.cfg.Providers {

@@ -27,6 +27,7 @@ class SettingsPage extends StatefulWidget {
     this.onResetModeChanged,
     this.onAlertChanged,
     this.onPollChanged, // 后台拉取节奏(改后重启核心生效)
+    this.onChartChanged, // 小时图表开关 / 跨度(改后重启核心生效)
     this.onTestNotification,
     this.onResetTickerPosition, // Windows 悬浮窗口「重置位置」
     this.tickerMaxWidth, // Windows 滚动浮窗「宽度」滑块上限(=主屏逻辑宽;null 用兜底)
@@ -56,6 +57,8 @@ class SettingsPage extends StatefulWidget {
     bool activeEnabled,
     int activeSecs,
   )? onPollChanged;
+  // 小时用量图表:开关 + 跨度。改后壳持久化并重启核心(影响 core 是否取 trend / 取多宽)。
+  final void Function(bool enabled, ChartRange range)? onChartChanged;
   final Future<void> Function()? onTestNotification; // 发送测试通知
   final VoidCallback? onResetTickerPosition; // Windows 跑马灯重置到默认位置
   final double? tickerMaxWidth; // Windows 滚动浮窗宽度滑块上限(主屏逻辑宽)
@@ -118,6 +121,8 @@ class _SettingsPageState extends State<SettingsPage> {
   late int _pollPassiveSecs; // 被动刷新间隔(秒)
   late bool _pollActiveEnabled; // 自动强制回源开关
   late int _pollActiveSecs; // 自动回源间隔(秒)
+  late bool _chartEnabled; // 小时用量图表开关
+  late ChartRange _chartRange; // 小时用量图表跨度
   int _idSeq = 0;
 
   // Windows 滚动浮窗「宽度」滑块上限:主屏逻辑宽(壳传入),缺省兜底 1920,下限保底 240
@@ -161,6 +166,8 @@ class _SettingsPageState extends State<SettingsPage> {
     _pollActiveSecs = _kActivePresets.contains(widget.initial.pollActiveSecs)
         ? widget.initial.pollActiveSecs
         : 600;
+    _chartEnabled = widget.initial.chartEnabled;
+    _chartRange = widget.initial.chartRange;
   }
 
   @override
@@ -188,6 +195,9 @@ class _SettingsPageState extends State<SettingsPage> {
         _pollActiveEnabled,
         _pollActiveSecs,
       );
+
+  /// 小时图表开关/跨度改动:通知壳持久化并重启核心(影响 core 是否取 trend / 取多宽)。
+  void _emitChart() => widget.onChartChanged?.call(_chartEnabled, _chartRange);
 
   _Draft _newDraft() {
     _idSeq++;
@@ -243,6 +253,8 @@ class _SettingsPageState extends State<SettingsPage> {
         pollPassiveSecs: _pollPassiveSecs,
         pollActiveEnabled: _pollActiveEnabled,
         pollActiveSecs: _pollActiveSecs,
+        chartEnabled: _chartEnabled,
+        chartRange: _chartRange,
       );
 
   void _save() => widget.onSave(_currentSettings());
@@ -515,6 +527,49 @@ class _SettingsPageState extends State<SettingsPage> {
             widget.onLayoutChanged?.call(_layout); // 即时生效
           },
         ),
+        const Divider(height: 24),
+
+        Text('用量图表', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: const Text('每站点小时柱状图', style: TextStyle(fontSize: 13)),
+          subtitle: Text('主面板每个站点下按账户着色的小时 token 用量;关闭则不额外请求',
+              style: theme.textTheme.bodySmall),
+          value: _chartEnabled,
+          onChanged: (v) {
+            setState(() => _chartEnabled = v);
+            _emitChart();
+          },
+        ),
+        if (_chartEnabled) ...[
+          Row(
+            children: [
+              const Expanded(child: Text('时间跨度', style: TextStyle(fontSize: 13))),
+              _boxed(
+                DropdownButton<ChartRange>(
+                  value: _chartRange,
+                  isDense: true,
+                  underline: const SizedBox.shrink(),
+                  items: [
+                    for (final r in ChartRange.values)
+                      DropdownMenuItem(value: r, child: Text(r.label)),
+                  ],
+                  onChanged: (v) {
+                    if (v == null) return;
+                    setState(() => _chartRange = v);
+                    _emitChart();
+                  },
+                ),
+              ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text('鼠标悬停柱子看 in/out/cache 明细;跨度越大数据请求略增',
+                style: theme.textTheme.bodySmall),
+          ),
+        ],
         const Divider(height: 24),
 
         Text('主题', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),

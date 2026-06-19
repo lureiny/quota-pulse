@@ -17,6 +17,7 @@ dependencies:
   yaml: ^3.1.2                # 配置导入:解析 YAML(config_io)
   json2yaml: ^3.0.1           # 配置导出:Map → YAML 字符串(config_io)
   file_selector: ^1.0.3       # 配置导入/导出文件对话框(file_selector_macos/_windows 随之 endorsed)
+  fl_chart: ^1.2.0            # 主面板小时用量堆叠柱状图(纯 Dart,无原生插件)
 
 dev_dependencies:
   flutter_lints: ^4.0.0

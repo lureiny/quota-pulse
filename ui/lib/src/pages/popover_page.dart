@@ -6,6 +6,7 @@ import '../models/pulse.dart';
 import '../state/pulse_controller.dart';
 import '../state/settings_store.dart';
 import '../widgets/account_tile.dart';
+import '../widgets/hourly_chart.dart';
 
 /// PopoverPage:账户列表(按实例分组 / 标签页)+ 底部操作条。
 /// 分组模式下每个分组可点击折叠/展开。
@@ -18,6 +19,8 @@ class PopoverPage extends StatefulWidget {
     required this.onSettings,
     this.resetMode = ResetMode.countdown,
     this.instanceUrls = const {},
+    this.chartEnabled = false,
+    this.chartRangeHours = 24,
   });
 
   final PulseController controller;
@@ -26,6 +29,8 @@ class PopoverPage extends StatefulWidget {
   final VoidCallback onSettings;
   final ResetMode resetMode; // 重置显示:倒计时 / 绝对(随设置,透传到 MeterBar)
   final Map<String, String> instanceUrls; // 实例名 → 后台 URL(把实例名做成超链接)
+  final bool chartEnabled; // 是否在每个站点分组下显示小时用量柱状图
+  final int chartRangeHours; // 图表回看小时数(随设置 chartRange)
 
   @override
   State<PopoverPage> createState() => _PopoverPageState();
@@ -109,6 +114,10 @@ class _PopoverPageState extends State<PopoverPage> {
         url: widget.instanceUrls[instance],
       ));
       if (!collapsed) {
+        if (widget.chartEnabled) {
+          children.add(HourlyChart(
+              accounts: list, rangeHours: widget.chartRangeHours));
+        }
         children.addAll(list.map(
           (p) => AccountTile(p,
               onRefresh: () => widget.controller.refreshAccount(p.key),
@@ -145,6 +154,10 @@ class _PopoverPageState extends State<PopoverPage> {
                       _groupHeader(context, e.key,
                           () => widget.controller.refreshInstance(e.key),
                           showName: false, url: widget.instanceUrls[e.key]),
+                      if (widget.chartEnabled)
+                        HourlyChart(
+                            accounts: e.value,
+                            rangeHours: widget.chartRangeHours),
                       ...e.value.map((p) => AccountTile(p,
                           onRefresh: () => widget.controller.refreshAccount(p.key),
                           resetMode: widget.resetMode)),

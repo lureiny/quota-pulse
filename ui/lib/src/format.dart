@@ -40,6 +40,33 @@ Color meterColor(double? u) {
   return _green;
 }
 
+/// 账户着色调色板(小时图表按账户分色)。~12 色去重,头部沿用 macOS 系统色,
+/// 其后补一组色相/明度分散的色,深浅主题下都够清晰;账户超过 12 个则循环复用。
+const List<Color> _chartPalette = [
+  Color(0xFF34C759), // green
+  Color(0xFF0A84FF), // blue
+  Color(0xFFFF9F0A), // amber
+  Color(0xFFAF52DE), // purple
+  Color(0xFFFF375F), // pink
+  Color(0xFF64D2FF), // cyan
+  Color(0xFFFFD60A), // yellow
+  Color(0xFF30D158), // light green
+  Color(0xFFBF5AF2), // light purple
+  Color(0xFFFF6482), // rose
+  Color(0xFF5E5CE6), // indigo
+  Color(0xFFAC8E68), // tan
+];
+
+/// 取第 i 个账户的稳定颜色(循环复用调色板)。
+Color accountColor(int i) => _chartPalette[i % _chartPalette.length];
+
+/// token 数 → "1.2K" / "3.4M"(与 core mapper 的 humanInt 口径一致)。
+String fmtTokens(int n) {
+  if (n >= 1000000) return '${(n / 1e6).toStringAsFixed(1)}M';
+  if (n >= 1000) return '${(n / 1e3).toStringAsFixed(1)}K';
+  return '$n';
+}
+
 /// 把剩余秒数格式化为 "2天3h" / "3h13m" / "45m" / "30s"。0 天不显示天。
 String fmtDuration(int secs) {
   if (secs <= 0) return '';

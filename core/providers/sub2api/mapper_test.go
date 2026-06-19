@@ -3,6 +3,7 @@ package sub2api
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/lureiny/quota-pulse/core/model"
 )
@@ -48,6 +49,39 @@ func TestToPulseRollingWindows(t *testing.T) {
 	}
 	if p.Status != model.StatusOK {
 		t.Errorf("status = %q, want ok", p.Status)
+	}
+}
+
+func TestToHourPoints(t *testing.T) {
+	raw := `{
+	  "granularity": "hour",
+	  "trend": [
+	    {"date": "2026-06-19 13:00", "input_tokens": 100, "output_tokens": 50,
+	     "cache_creation_tokens": 10, "cache_read_tokens": 5, "total_tokens": 165},
+	    {"date": "2026-06-19 14:00", "input_tokens": 200, "output_tokens": 80,
+	     "cache_creation_tokens": 0, "cache_read_tokens": 20, "total_tokens": 300},
+	    {"date": "bad-date", "input_tokens": 999, "total_tokens": 999}
+	  ]
+	}`
+	var r trendResp
+	if err := json.Unmarshal([]byte(raw), &r); err != nil {
+		t.Fatal(err)
+	}
+
+	pts := toHourPoints(r)
+	if len(pts) != 2 { // 第三条 date 无法解析,应被跳过
+		t.Fatalf("points = %d, want 2 (bad date dropped)", len(pts))
+	}
+
+	p0 := pts[0]
+	if p0.Hour.UTC().Hour() != 13 || p0.Hour.Location() != time.UTC {
+		t.Errorf("p0.Hour = %v, want 13:00 UTC", p0.Hour)
+	}
+	if p0.Input != 100 || p0.Output != 50 || p0.CacheCreate != 10 || p0.CacheRead != 5 || p0.Total != 165 {
+		t.Errorf("p0 tokens = %+v", p0)
+	}
+	if pts[1].Total != 300 || pts[1].CacheRead != 20 {
+		t.Errorf("p1 = %+v", pts[1])
 	}
 }
 

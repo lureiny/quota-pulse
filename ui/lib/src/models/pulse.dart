@@ -54,6 +54,39 @@ class Meter {
       );
 }
 
+/// HourPoint 是某账户某小时桶的 token 用量(与 core/model.HourPoint 对应)。
+/// hour 由 core 以 UTC 序列化(RFC3339 带 Z),这里解析后通常 .toLocal() 显示。
+class HourPoint {
+  final DateTime hour;
+  final int input;
+  final int output;
+  final int cacheCreate;
+  final int cacheRead;
+  final int total;
+
+  HourPoint({
+    required this.hour,
+    required this.input,
+    required this.output,
+    required this.cacheCreate,
+    required this.cacheRead,
+    required this.total,
+  });
+
+  /// 柱高口径:四类 token 之和(显式含 cache,不依赖服务端 total 的算法)。
+  int get sum => input + output + cacheCreate + cacheRead;
+
+  factory HourPoint.fromJson(Map<String, dynamic> j) => HourPoint(
+        hour: DateTime.tryParse(j['hour'] as String? ?? '')?.toLocal() ??
+            DateTime.fromMillisecondsSinceEpoch(0),
+        input: (j['input'] as num?)?.toInt() ?? 0,
+        output: (j['output'] as num?)?.toInt() ?? 0,
+        cacheCreate: (j['cache_create'] as num?)?.toInt() ?? 0,
+        cacheRead: (j['cache_read'] as num?)?.toInt() ?? 0,
+        total: (j['total'] as num?)?.toInt() ?? 0,
+      );
+}
+
 /// AccountPulse 是一个账户的用量脉搏(与 core/model.AccountPulse 对应)。
 class AccountPulse {
   final String accountId;
@@ -64,6 +97,7 @@ class AccountPulse {
   final PulseStatus status;
   final String tier;
   final List<Meter> meters;
+  final List<HourPoint> hourly; // 小时级 token 时序(可选;为空表示无图表数据)
   final DateTime? updatedAt;
   final String error;
   final String actionUrl;
@@ -77,6 +111,7 @@ class AccountPulse {
     required this.status,
     required this.tier,
     required this.meters,
+    this.hourly = const [],
     required this.updatedAt,
     required this.error,
     required this.actionUrl,
@@ -92,6 +127,9 @@ class AccountPulse {
         tier: j['tier'] as String? ?? '',
         meters: ((j['meters'] as List?) ?? const [])
             .map((e) => Meter.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        hourly: ((j['hourly'] as List?) ?? const [])
+            .map((e) => HourPoint.fromJson(e as Map<String, dynamic>))
             .toList(),
         updatedAt: j['updated_at'] != null ? DateTime.tryParse(j['updated_at'] as String) : null,
         error: j['error'] as String? ?? '',

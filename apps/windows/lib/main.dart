@@ -483,6 +483,13 @@ class _ShellState extends State<Shell>
     if (s.configured) _startCore(s); // 已配置才有核心可重启
   }
 
+  void _onChartChanged(bool enabled, ChartRange range) {
+    final s = _settings.copyWith(chartEnabled: enabled, chartRange: range);
+    SettingsStore.save(s);
+    setState(() => _settings = s); // 即刷 PopoverPage 的图表开关/跨度
+    if (s.configured) _startCore(s); // chart 进 toConfigJson,改后重启核心生效
+  }
+
   Future<void> _quit() async {
     try {
       _source.stop();
@@ -513,6 +520,7 @@ class _ShellState extends State<Shell>
         onResetModeChanged: _onResetModeChanged,
         onAlertChanged: _onAlertChanged,
         onPollChanged: _onPollChanged,
+        onChartChanged: _onChartChanged,
         onTestNotification: () => _alerter.testNotification(),
         onResetTickerPosition: _onResetTickerPosition,
         tickerMaxWidth: _screenWidth, // 宽度滑块上限=整屏宽(null 时设置页用兜底)
@@ -530,6 +538,8 @@ class _ShellState extends State<Shell>
       layout: _settings.layout,
       resetMode: _settings.resetMode,
       instanceUrls: _settings.instanceUrls(),
+      chartEnabled: _settings.chartEnabled,
+      chartRangeHours: _settings.chartRange.hours,
       onRefresh: () => _controller?.refreshNow(),
       onSettings: () => setState(() => _view = _View.settings),
     );

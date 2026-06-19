@@ -53,6 +53,26 @@ enum TrayMetric { usage, remaining }
 /// 重置时间显示:倒计时(剩余时间)或绝对时刻。主页与托盘/菜单栏同时生效。
 enum ResetMode { countdown, absolute }
 
+/// 主面板小时用量图表的时间跨度(回看多少小时)。
+enum ChartRange { h6, h12, h24, d3, d7 }
+
+extension ChartRangeX on ChartRange {
+  int get hours => switch (this) {
+        ChartRange.h6 => 6,
+        ChartRange.h12 => 12,
+        ChartRange.h24 => 24,
+        ChartRange.d3 => 72,
+        ChartRange.d7 => 168,
+      };
+  String get label => switch (this) {
+        ChartRange.h6 => '6 小时',
+        ChartRange.h12 => '12 小时',
+        ChartRange.h24 => '24 小时',
+        ChartRange.d3 => '3 天',
+        ChartRange.d7 => '7 天',
+      };
+}
+
 /// 可作为通知触发源的滚动窗口(id → 展示名);当前支持 Claude 5h / 7d。
 /// id 与 core mapper 一致(five_hour / seven_day)。
 const Map<String, String> kAlertWindows = {
@@ -238,6 +258,9 @@ class Settings {
   final int pollPassiveSecs; // 被动刷新间隔(读 sub2api 缓存,始终开;默认 60s)
   final bool pollActiveEnabled; // 自动强制回源开关(有自动化特征,默认关)
   final int pollActiveSecs; // 自动回源间隔(仅 pollActiveEnabled 时生效;默认 600s=10m)
+  // 主面板小时用量图表(每站点堆叠柱状图,按账户着色):
+  final bool chartEnabled; // 是否拉取并展示小时时序(关=零额外请求,默认开)
+  final ChartRange chartRange; // 时间跨度(默认 24h)
 
   const Settings({
     this.instances = const [],
@@ -252,6 +275,8 @@ class Settings {
     this.pollPassiveSecs = 60,
     this.pollActiveEnabled = false,
     this.pollActiveSecs = 600,
+    this.chartEnabled = true,
+    this.chartRange = ChartRange.h24,
   });
 
   bool get configured => instances.any((i) => i.configured);
@@ -269,6 +294,8 @@ class Settings {
     int? pollPassiveSecs,
     bool? pollActiveEnabled,
     int? pollActiveSecs,
+    bool? chartEnabled,
+    ChartRange? chartRange,
   }) =>
       Settings(
         instances: instances ?? this.instances,
@@ -283,6 +310,8 @@ class Settings {
         pollPassiveSecs: pollPassiveSecs ?? this.pollPassiveSecs,
         pollActiveEnabled: pollActiveEnabled ?? this.pollActiveEnabled,
         pollActiveSecs: pollActiveSecs ?? this.pollActiveSecs,
+        chartEnabled: chartEnabled ?? this.chartEnabled,
+        chartRange: chartRange ?? this.chartRange,
       );
 
   /// 已配置实例 → (唯一展示名, 实例)。唯一名规则与核心 facade 去重一致(避免 key 串号),
@@ -325,7 +354,14 @@ class Settings {
         },
       });
     }
-    return jsonEncode({'providers': providers});
+    return jsonEncode({
+      'providers': providers,
+      // 小时图表:enabled 决定 core 是否额外拉 trend;range_hours 决定回看窗口。
+      'chart': {
+        'enabled': chartEnabled,
+        'range_hours': chartRange.hours,
+      },
+    });
   }
 
   /// 实例(唯一展示名,与 pulse.instance 一致)→ 后台源站 URL(scheme://host[:port],去路径)。
@@ -352,6 +388,8 @@ class Settings {
         'poll_passive_secs': pollPassiveSecs,
         'poll_active_enabled': pollActiveEnabled,
         'poll_active_secs': pollActiveSecs,
+        'chart_enabled': chartEnabled,
+        'chart_range': chartRange.name,
       };
 
   factory Settings.fromJson(Map<String, dynamic> j) => Settings(
@@ -382,6 +420,11 @@ class Settings {
         pollPassiveSecs: (j['poll_passive_secs'] as num?)?.toInt() ?? 60,
         pollActiveEnabled: j['poll_active_enabled'] as bool? ?? false,
         pollActiveSecs: (j['poll_active_secs'] as num?)?.toInt() ?? 600,
+        chartEnabled: j['chart_enabled'] as bool? ?? true,
+        chartRange: ChartRange.values.firstWhere(
+          (c) => c.name == j['chart_range'],
+          orElse: () => ChartRange.h24,
+        ),
       );
 }
 
