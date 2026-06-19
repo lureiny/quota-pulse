@@ -73,6 +73,20 @@ extension ChartRangeX on ChartRange {
       };
 }
 
+/// core 实际拉取的 trend 窗口固定为最大跨度(7d):UI 再按 chartRange 裁剪显示。
+/// 这样改 chartRange 不改 toConfigJson → 不重启核心、不刷新全部用量(见 #4)。
+const int kChartFetchHours = 168;
+
+/// 图表样式:堆叠柱状图 / 多账户曲线图。
+enum ChartType { bar, line }
+
+extension ChartTypeX on ChartType {
+  String get label => switch (this) {
+        ChartType.bar => '柱状图',
+        ChartType.line => '曲线图',
+      };
+}
+
 /// 可作为通知触发源的滚动窗口(id → 展示名);当前支持 Claude 5h / 7d。
 /// id 与 core mapper 一致(five_hour / seven_day)。
 const Map<String, String> kAlertWindows = {
@@ -258,9 +272,10 @@ class Settings {
   final int pollPassiveSecs; // 被动刷新间隔(读 sub2api 缓存,始终开;默认 60s)
   final bool pollActiveEnabled; // 自动强制回源开关(有自动化特征,默认关)
   final int pollActiveSecs; // 自动回源间隔(仅 pollActiveEnabled 时生效;默认 600s=10m)
-  // 主面板小时用量图表(每站点堆叠柱状图,按账户着色):
+  // 主面板小时用量图表(每站点,按账户着色):
   final bool chartEnabled; // 是否拉取并展示小时时序(关=零额外请求,默认开)
-  final ChartRange chartRange; // 时间跨度(默认 24h)
+  final ChartRange chartRange; // 显示时间跨度(默认 24h;UI 裁剪,不影响 core 拉取窗口)
+  final ChartType chartType; // 样式:柱状图 / 曲线图(默认柱状图;纯 UI)
 
   const Settings({
     this.instances = const [],
@@ -277,6 +292,7 @@ class Settings {
     this.pollActiveSecs = 600,
     this.chartEnabled = true,
     this.chartRange = ChartRange.h24,
+    this.chartType = ChartType.bar,
   });
 
   bool get configured => instances.any((i) => i.configured);
@@ -296,6 +312,7 @@ class Settings {
     int? pollActiveSecs,
     bool? chartEnabled,
     ChartRange? chartRange,
+    ChartType? chartType,
   }) =>
       Settings(
         instances: instances ?? this.instances,
@@ -312,6 +329,7 @@ class Settings {
         pollActiveSecs: pollActiveSecs ?? this.pollActiveSecs,
         chartEnabled: chartEnabled ?? this.chartEnabled,
         chartRange: chartRange ?? this.chartRange,
+        chartType: chartType ?? this.chartType,
       );
 
   /// 已配置实例 → (唯一展示名, 实例)。唯一名规则与核心 facade 去重一致(避免 key 串号),
@@ -356,10 +374,11 @@ class Settings {
     }
     return jsonEncode({
       'providers': providers,
-      // 小时图表:enabled 决定 core 是否额外拉 trend;range_hours 决定回看窗口。
+      // 小时图表:enabled 决定 core 是否额外拉 trend;range_hours 固定取最大跨度,
+      // UI 再按 chartRange 裁剪 → 改跨度/样式不改本 JSON,核心不重启、用量不刷新(#4)。
       'chart': {
         'enabled': chartEnabled,
-        'range_hours': chartRange.hours,
+        'range_hours': kChartFetchHours,
       },
     });
   }
@@ -390,6 +409,7 @@ class Settings {
         'poll_active_secs': pollActiveSecs,
         'chart_enabled': chartEnabled,
         'chart_range': chartRange.name,
+        'chart_type': chartType.name,
       };
 
   factory Settings.fromJson(Map<String, dynamic> j) => Settings(
@@ -424,6 +444,10 @@ class Settings {
         chartRange: ChartRange.values.firstWhere(
           (c) => c.name == j['chart_range'],
           orElse: () => ChartRange.h24,
+        ),
+        chartType: ChartType.values.firstWhere(
+          (t) => t.name == j['chart_type'],
+          orElse: () => ChartType.bar,
         ),
       );
 }

@@ -21,6 +21,7 @@ class PopoverPage extends StatefulWidget {
     this.instanceUrls = const {},
     this.chartEnabled = false,
     this.chartRangeHours = 24,
+    this.chartType = ChartType.bar,
   });
 
   final PulseController controller;
@@ -29,8 +30,9 @@ class PopoverPage extends StatefulWidget {
   final VoidCallback onSettings;
   final ResetMode resetMode; // 重置显示:倒计时 / 绝对(随设置,透传到 MeterBar)
   final Map<String, String> instanceUrls; // 实例名 → 后台 URL(把实例名做成超链接)
-  final bool chartEnabled; // 是否在每个站点分组下显示小时用量柱状图
+  final bool chartEnabled; // 是否在每个站点分组下显示小时用量图
   final int chartRangeHours; // 图表回看小时数(随设置 chartRange)
+  final ChartType chartType; // 图表样式:柱状 / 曲线
 
   @override
   State<PopoverPage> createState() => _PopoverPageState();
@@ -114,15 +116,19 @@ class _PopoverPageState extends State<PopoverPage> {
         url: widget.instanceUrls[instance],
       ));
       if (!collapsed) {
-        if (widget.chartEnabled) {
-          children.add(HourlyChart(
-              accounts: list, rangeHours: widget.chartRangeHours));
-        }
+        // 先列账户(5h/7d 用量),图表放在其下方(#1)。
         children.addAll(list.map(
           (p) => AccountTile(p,
               onRefresh: () => widget.controller.refreshAccount(p.key),
               resetMode: widget.resetMode),
         ));
+        if (widget.chartEnabled) {
+          children.add(HourlyChart(
+            accounts: list,
+            rangeHours: widget.chartRangeHours,
+            chartType: widget.chartType,
+          ));
+        }
       }
     });
     return ListView(padding: const EdgeInsets.only(top: 6, bottom: 8), children: children);
@@ -154,13 +160,15 @@ class _PopoverPageState extends State<PopoverPage> {
                       _groupHeader(context, e.key,
                           () => widget.controller.refreshInstance(e.key),
                           showName: false, url: widget.instanceUrls[e.key]),
-                      if (widget.chartEnabled)
-                        HourlyChart(
-                            accounts: e.value,
-                            rangeHours: widget.chartRangeHours),
                       ...e.value.map((p) => AccountTile(p,
                           onRefresh: () => widget.controller.refreshAccount(p.key),
                           resetMode: widget.resetMode)),
+                      if (widget.chartEnabled)
+                        HourlyChart(
+                          accounts: e.value,
+                          rangeHours: widget.chartRangeHours,
+                          chartType: widget.chartType,
+                        ),
                     ],
                   ),
               ],

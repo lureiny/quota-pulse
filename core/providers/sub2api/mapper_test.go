@@ -68,7 +68,7 @@ func TestToHourPoints(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pts := toHourPoints(r)
+	pts := toHourPoints(r, time.UTC)
 	if len(pts) != 2 { // 第三条 date 无法解析,应被跳过
 		t.Fatalf("points = %d, want 2 (bad date dropped)", len(pts))
 	}

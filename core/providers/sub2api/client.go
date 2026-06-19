@@ -134,7 +134,8 @@ func (p *Provider) FetchTrend(ctx context.Context, acc model.Account, hours int)
 	if hours <= 0 {
 		hours = 24
 	}
-	now := time.Now().UTC()
+	tz, loc := localTrendZone()
+	now := time.Now().In(loc)
 	start := now.Add(-time.Duration(hours)*time.Hour - 24*time.Hour)
 
 	q := url.Values{}
@@ -142,7 +143,7 @@ func (p *Provider) FetchTrend(ctx context.Context, acc model.Account, hours int)
 	q.Set("account_id", acc.ID)
 	q.Set("start_date", start.Format("2006-01-02"))
 	q.Set("end_date", now.Format("2006-01-02"))
-	q.Set("timezone", "UTC")
+	q.Set("timezone", tz)
 
 	path := apiPrefix + "/dashboard/trend?" + q.Encode()
 	data, err := p.client.GetData(ctx, path, false)
@@ -153,7 +154,23 @@ func (p *Provider) FetchTrend(ctx context.Context, acc model.Account, hours int)
 	if err := json.Unmarshal(data, &r); err != nil {
 		return nil, fmt.Errorf("decode trend: %w", err)
 	}
-	return toHourPoints(r), nil
+	return toHourPoints(r, loc), nil
+}
+
+// localTrendZone 返回 (传给服务端的 timezone 参数, 解析返回 date 用的 Location)。
+//
+// 服务端按给定 timezone 分桶并以该时区的"墙上时间"格式化 date(YYYY-MM-DD HH24:00),
+// 因此必须用同一时区解析,否则整体偏移一个时区(实测:此前传 timezone=UTC 再在 UI
+// 端 toLocal,服务端实际按本地时区返回墙上时间 → 差 8h)。
+//
+// 整点偏移用 Etc/GMT∓H(tzdata / PG 都认;注意符号相反:Etc/GMT-8 表示 UTC+8);
+// 半点偏移(印度等少数地区)回退 UTC,解析也用 UTC,由 UI 端 toLocal 兜底显示。
+func localTrendZone() (string, *time.Location) {
+	_, offset := time.Now().Zone() // 东向 UTC 的偏移秒数(UTC+8 = 28800)
+	if offset%3600 == 0 {
+		return fmt.Sprintf("Etc/GMT%+d", -offset/3600), time.FixedZone("qplocal", offset)
+	}
+	return "UTC", time.UTC
 }
 
 func idAllowSet(ids []string) map[string]struct{} {
