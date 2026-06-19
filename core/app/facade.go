@@ -6,12 +6,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/lureiny/quota-pulse/core/config"
 	"github.com/lureiny/quota-pulse/core/model"
 	"github.com/lureiny/quota-pulse/core/poller"
 	"github.com/lureiny/quota-pulse/core/provider"
+	"github.com/lureiny/quota-pulse/core/usage"
 
 	// 副作用导入:触发各 provider 在 init() 中自注册。
 	// 未来新增平台只需在此加一行 _ import。
@@ -20,9 +23,10 @@ import (
 
 // App 持有配置、快照存储与轮询器。
 type App struct {
-	cfg   config.Config
-	store *poller.Store
-	poll  *poller.Poller
+	cfg     config.Config
+	store   *poller.Store
+	poll    *poller.Poller
+	usageDB *usage.Store // 小时聚合库(nil=图表关闭/开库失败)
 
 	mu      sync.Mutex
 	subs    []func(string) // 订阅者(收到 JSON 快照)
@@ -37,7 +41,19 @@ func New(cfg config.Config) (*App, error) {
 		store: poller.NewStore(),
 	}
 	a.poll = poller.New(a.store, a.broadcast)
-	a.poll.SetChart(a.cfg.Chart)
+	// 小时图表:开启则打开本地 SQLite 库;开库失败则降级(图不展示,核心其余照常)。
+	var db *usage.Store
+	if a.cfg.Chart.Enabled {
+		path := a.cfg.Chart.DBPath
+		if path == "" {
+			path = defaultDBPath()
+		}
+		if opened, err := usage.Open(path); err == nil {
+			db = opened
+			a.usageDB = db
+		}
+	}
+	a.poll.SetChart(a.cfg.Chart, db)
 
 	used := map[string]bool{}
 	for i, pc := range a.cfg.Providers {
@@ -87,8 +103,23 @@ func (a *App) Start(ctx context.Context) {
 	a.poll.Start(ctx)
 }
 
-// Stop 停止轮询。
-func (a *App) Stop() { a.poll.Stop() }
+// Stop 停止轮询并关闭本地库。
+func (a *App) Stop() {
+	a.poll.Stop()
+	if a.usageDB != nil {
+		_ = a.usageDB.Close()
+	}
+}
+
+// defaultDBPath 返回小时聚合库的默认路径(随系统:macOS Application Support /
+// Windows %AppData%);取不到则退回临时目录。
+func defaultDBPath() string {
+	dir, err := os.UserConfigDir()
+	if err != nil || dir == "" {
+		dir = os.TempDir()
+	}
+	return filepath.Join(dir, "quota-pulse", "usage.db")
+}
 
 // Refresh 触发一次强制回源。
 func (a *App) Refresh(accountID string) { a.poll.Refresh(accountID) }

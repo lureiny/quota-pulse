@@ -13,5 +13,17 @@ type HourPoint struct {
 	Output      int64     `json:"output"`       // 输出 token
 	CacheCreate int64     `json:"cache_create"` // 缓存创建 token
 	CacheRead   int64     `json:"cache_read"`   // 缓存读取 token
-	Total       int64     `json:"total"`        // 合计 token(服务端给定)
+	Total       int64     `json:"total"`        // 合计 token(= 上面四项之和)
+}
+
+// UsageRow 是 sub2api /admin/usage 的一条原始请求日志(只取分桶所需字段)。
+// ID 单调递增,做增量同步游标;CreatedAt 精确,客户端按本地时区分小时桶。
+type UsageRow struct {
+	ID          int64
+	AccountID   string
+	CreatedAt   time.Time
+	Input       int64
+	Output      int64
+	CacheCreate int64
+	CacheRead   int64
 }

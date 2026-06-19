@@ -2,35 +2,9 @@ package sub2api
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/lureiny/quota-pulse/core/model"
 )
-
-// trendHourLayout 是服务端 trend.date 的格式(granularity=hour)。
-const trendHourLayout = "2006-01-02 15:04"
-
-// toHourPoints 把 dashboard/trend 的小时桶映射成通用 model.HourPoint。
-// date 用与查询 timezone 一致的 loc 解析(见 localTrendZone),保证桶边界与解析同时区,
-// 不再二次偏移;UI 端 toLocal 仅在半点偏移回退 UTC 时起作用。
-func toHourPoints(r trendResp, loc *time.Location) []model.HourPoint {
-	out := make([]model.HourPoint, 0, len(r.Trend))
-	for _, p := range r.Trend {
-		hr, err := time.ParseInLocation(trendHourLayout, p.Date, loc)
-		if err != nil {
-			continue // 无法解析的桶直接跳过,不污染时序
-		}
-		out = append(out, model.HourPoint{
-			Hour:        hr,
-			Input:       p.InputTokens,
-			Output:      p.OutputTokens,
-			CacheCreate: p.CacheCreationTokens,
-			CacheRead:   p.CacheReadTokens,
-			Total:       p.TotalTokens,
-		})
-	}
-	return out
-}
 
 // toPulse 把 sub2api 的 usageInfo 映射成通用 model.AccountPulse。
 // 每个非空窗口 → 一个 KindRollingWindow 的 Meter。

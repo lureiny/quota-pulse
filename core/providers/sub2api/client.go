@@ -124,53 +124,60 @@ func (p *Provider) FetchUsage(ctx context.Context, acc model.Account, opt provid
 	return toPulse(acc, u), nil
 }
 
-// FetchTrend 实现 provider.TrendFetcher:拉取单账户最近 hours 小时的 token 时序。
+// FetchUsageSince 实现 provider.UsageLogFetcher:增量拉取该实例的原始请求日志。
 //
-// 走后端 dashboard/trend 接口(granularity=hour + account_id 过滤),数据源是真实
-// usage_logs(全平台、不限 Anthropic;带 account_id 那条路径不过滤零成本行,故
-// Claude 订阅号也照常统计)。统一用 timezone=UTC 查询并按 UTC 解析,保证桶边界
-// 与解析一致;start_date 多回看一天以吸收时区/跨天误差(代价仅多几条小时桶)。
-func (p *Provider) FetchTrend(ctx context.Context, acc model.Account, hours int) ([]model.HourPoint, error) {
-	if hours <= 0 {
-		hours = 24
+// 走后端 /admin/usage(每请求一行,留空 account_id = 全实例),按 created_at desc
+// 翻页;只收集 id>sinceID 的新行,某页不再有新行即停(增量稳态仅 ~1 页),并受
+// pageCap 封顶。时区不传给服务端 —— 我们拿精确 created_at 在本地分桶(见 usage.Store)。
+func (p *Provider) FetchUsageSince(ctx context.Context, sinceID int64, from time.Time, pageCap int) ([]model.UsageRow, error) {
+	if pageCap <= 0 {
+		pageCap = 20
 	}
-	tz, loc := localTrendZone()
-	now := time.Now().In(loc)
-	start := now.Add(-time.Duration(hours)*time.Hour - 24*time.Hour)
+	startDate := from.Format("2006-01-02")
+	endDate := time.Now().AddDate(0, 0, 1).Format("2006-01-02") // 多给一天,吸收时区/跨天边界
+	out := make([]model.UsageRow, 0, 256)
 
-	q := url.Values{}
-	q.Set("granularity", "hour")
-	q.Set("account_id", acc.ID)
-	q.Set("start_date", start.Format("2006-01-02"))
-	q.Set("end_date", now.Format("2006-01-02"))
-	q.Set("timezone", tz)
+	for page := 1; page <= pageCap; page++ {
+		q := url.Values{}
+		q.Set("page", strconv.Itoa(page))
+		q.Set("page_size", "1000")
+		q.Set("sort_by", "created_at")
+		q.Set("sort_order", "desc")
+		q.Set("start_date", startDate)
+		q.Set("end_date", endDate)
 
-	path := apiPrefix + "/dashboard/trend?" + q.Encode()
-	data, err := p.client.GetData(ctx, path, false)
-	if err != nil {
-		return nil, err
+		data, err := p.client.GetData(ctx, apiPrefix+"/usage?"+q.Encode(), false)
+		if err != nil {
+			return nil, err
+		}
+		var resp usageListResp
+		if err := json.Unmarshal(data, &resp); err != nil {
+			return nil, fmt.Errorf("decode usage: %w", err)
+		}
+		if len(resp.Items) == 0 {
+			break
+		}
+		newInPage := 0
+		for _, it := range resp.Items {
+			if it.ID <= sinceID {
+				continue // 已并入过(desc 下多为页尾的旧行)
+			}
+			out = append(out, model.UsageRow{
+				ID:          it.ID,
+				AccountID:   strconv.FormatInt(it.AccountID, 10),
+				CreatedAt:   it.CreatedAt,
+				Input:       it.InputTokens,
+				Output:      it.OutputTokens,
+				CacheCreate: it.CacheCreationTokens,
+				CacheRead:   it.CacheReadTokens,
+			})
+			newInPage++
+		}
+		if newInPage == 0 || page >= resp.Pages {
+			break // 本页无新行(已追上游标)或已到末页
+		}
 	}
-	var r trendResp
-	if err := json.Unmarshal(data, &r); err != nil {
-		return nil, fmt.Errorf("decode trend: %w", err)
-	}
-	return toHourPoints(r, loc), nil
-}
-
-// localTrendZone 返回 (传给服务端的 timezone 参数, 解析返回 date 用的 Location)。
-//
-// 服务端按给定 timezone 分桶并以该时区的"墙上时间"格式化 date(YYYY-MM-DD HH24:00),
-// 因此必须用同一时区解析,否则整体偏移一个时区(实测:此前传 timezone=UTC 再在 UI
-// 端 toLocal,服务端实际按本地时区返回墙上时间 → 差 8h)。
-//
-// 整点偏移用 Etc/GMT∓H(tzdata / PG 都认;注意符号相反:Etc/GMT-8 表示 UTC+8);
-// 半点偏移(印度等少数地区)回退 UTC,解析也用 UTC,由 UI 端 toLocal 兜底显示。
-func localTrendZone() (string, *time.Location) {
-	_, offset := time.Now().Zone() // 东向 UTC 的偏移秒数(UTC+8 = 28800)
-	if offset%3600 == 0 {
-		return fmt.Sprintf("Etc/GMT%+d", -offset/3600), time.FixedZone("qplocal", offset)
-	}
-	return "UTC", time.UTC
+	return out, nil
 }
 
 func idAllowSet(ids []string) map[string]struct{} {

@@ -7,6 +7,7 @@ package provider
 
 import (
 	"context"
+	"time"
 
 	"github.com/lureiny/quota-pulse/core/model"
 )
@@ -43,11 +44,15 @@ type Provider interface {
 	Capabilities() Capabilities
 }
 
-// TrendFetcher 是一个可选能力:能拉取单账户的小时级 token 时序。
-// 并非所有 provider 都支持(目前仅 sub2api),故独立于 Provider 主接口,
-// 由 poller 通过类型断言探测:if tf, ok := prov.(provider.TrendFetcher); ok { ... }。
+// UsageLogFetcher 是一个可选能力:增量拉取该来源的原始请求日志(供本地按
+// 「账户×本地小时」聚合,见 core/usage)。并非所有 provider 都支持(目前仅 sub2api),
+// 故独立于 Provider 主接口,由 poller 通过类型断言探测。
 //
-// hours 为期望回看的小时数(由图表配置决定);返回按时间升序的小时桶。
-type TrendFetcher interface {
-	FetchTrend(ctx context.Context, acc model.Account, hours int) ([]model.HourPoint, error)
+//	sinceID  只取 id 大于它的新行(增量游标;0=冷启动回填)
+//	from     起始日期(date 粒度过滤的下界;实际仍按 id 精确去重)
+//	pageCap  翻页上限(防失控;desc 排序下截断只丢最老的行)
+//
+// 返回 id>sinceID 的全部新行(账户、精确时间、各类 token)。
+type UsageLogFetcher interface {
+	FetchUsageSince(ctx context.Context, sinceID int64, from time.Time, pageCap int) ([]model.UsageRow, error)
 }

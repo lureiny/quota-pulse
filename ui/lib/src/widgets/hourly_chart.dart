@@ -144,7 +144,8 @@ class HourlyChart extends StatelessWidget {
         barTouchData: BarTouchData(
           enabled: true,
           touchTooltipData: BarTouchTooltipData(
-            getTooltipColor: (_) => cs.inverseSurface.withValues(alpha: 0.78),
+            getTooltipColor: (_) => _tooltipBg(cs),
+            tooltipBorder: _tooltipBorder(cs),
             tooltipPadding:
                 const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             tooltipMargin: 8,
@@ -183,6 +184,9 @@ class HourlyChart extends StatelessWidget {
         spots: spots,
         isCurved: true,
         curveSmoothness: 0.25,
+        // 防止样条在 0↔峰值的陡变处过冲到 0 以下(否则曲线在基线附近"断裂"),
+        // 不再用 clipData 裁切,避免裁切造成的视觉断点。
+        preventCurveOverShooting: true,
         color: colorOf[a.accountId],
         barWidth: 2.2,
         dotData: const FlDotData(show: false),
@@ -196,12 +200,12 @@ class HourlyChart extends StatelessWidget {
         maxX: (slots.length - 1).toDouble(),
         minY: 0,
         maxY: maxY,
-        clipData: const FlClipData.all(), // 裁掉曲线在 0 附近的过冲
         lineBarsData: bars,
         lineTouchData: LineTouchData(
           enabled: true,
           touchTooltipData: LineTouchTooltipData(
-            getTooltipColor: (_) => cs.inverseSurface.withValues(alpha: 0.78),
+            getTooltipColor: (_) => _tooltipBg(cs),
+            tooltipBorder: _tooltipBorder(cs),
             tooltipPadding:
                 const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             maxContentWidth: 280,
@@ -253,7 +257,7 @@ class HourlyChart extends StatelessWidget {
   BarTooltipItem? _barTooltip(_Slot slot, List<AccountPulse> ordered,
       Map<String, Color> colorOf, Map<String, String> nameOf, ColorScheme cs) {
     if (slot.points.isEmpty) return null; // 空桶不弹
-    final onInv = cs.onInverseSurface;
+    final onText = cs.onSurface;
     final spans = <TextSpan>[];
     for (final a in ordered) {
       final p = slot.points[a.accountId];
@@ -268,11 +272,11 @@ class HourlyChart extends StatelessWidget {
     }
     spans.add(TextSpan(
       text: '\n合计 ${fmtTokens(slot.total)} tok',
-      style: TextStyle(color: onInv.withValues(alpha: 0.75), fontSize: 10),
+      style: TextStyle(color: onText.withValues(alpha: 0.7), fontSize: 10),
     ));
     return BarTooltipItem(
       _head(slot.hour),
-      TextStyle(color: onInv, fontSize: 11, fontWeight: FontWeight.w600),
+      TextStyle(color: onText, fontSize: 11, fontWeight: FontWeight.w600),
       children: spans,
       textAlign: TextAlign.left,
     );
@@ -286,7 +290,7 @@ class HourlyChart extends StatelessWidget {
       Map<String, Color> colorOf,
       Map<String, String> nameOf,
       ColorScheme cs) {
-    final onInv = cs.onInverseSurface;
+    final onText = cs.onSurface;
     final out = <LineTooltipItem?>[];
     var headerPlaced = false;
     for (final s in spots) {
@@ -307,7 +311,7 @@ class HourlyChart extends StatelessWidget {
         headerPlaced = true;
         out.add(LineTooltipItem(
           _head(slots[i].hour),
-          TextStyle(color: onInv, fontSize: 11, fontWeight: FontWeight.w600),
+          TextStyle(color: onText, fontSize: 11, fontWeight: FontWeight.w600),
           textAlign: TextAlign.left,
           children: [
             TextSpan(
@@ -326,6 +330,13 @@ class HourlyChart extends StatelessWidget {
     }
     return out;
   }
+
+  // 半透明、跟随主题(浅色主题→浅底、深色→深底)的 tooltip 背景 + 细描边:
+  // 既与主题一致,又足够透,不挡背后内容。
+  Color _tooltipBg(ColorScheme cs) =>
+      cs.surfaceContainerHighest.withValues(alpha: 0.6);
+  BorderSide _tooltipBorder(ColorScheme cs) =>
+      BorderSide(color: cs.outlineVariant.withValues(alpha: 0.5), width: 0.6);
 
   String _detail(HourPoint p) =>
       '入${fmtTokens(p.input)}·出${fmtTokens(p.output)}·'

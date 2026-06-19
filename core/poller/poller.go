@@ -9,18 +9,8 @@ import (
 	"github.com/lureiny/quota-pulse/core/config"
 	"github.com/lureiny/quota-pulse/core/model"
 	"github.com/lureiny/quota-pulse/core/provider"
+	"github.com/lureiny/quota-pulse/core/usage"
 )
-
-// trendMinInterval 是 trend(小时时序)的最小重取间隔。小时桶无需更细粒度,
-// 故即便弹层打开、被动轮询提频到 10s,trend 仍每账户最多 ~1 次/分钟,
-// 而图表每拍都从缓存取到数据 → 视觉"跟随刷新"、服务端负载有界。
-const trendMinInterval = 60 * time.Second
-
-// trendEntry 是一个账户的小时时序缓存(带采样时刻,用于节流)。
-type trendEntry struct {
-	at  time.Time
-	pts []model.HourPoint
-}
 
 // binding 把一个 provider 实例与它的调度器绑定。
 type binding struct {
@@ -37,9 +27,10 @@ type Poller struct {
 
 	bindings []binding
 
-	chart      config.ChartConfig // 小时图表配置(是否取、回看多少小时)
-	trendMu    sync.Mutex
-	trendCache map[string]trendEntry // key=instance|accountID → 上次小时时序(节流用)
+	chart    config.ChartConfig // 小时图表配置
+	usageDB  *usage.Store       // 本地小时聚合库(nil=关闭/开库失败,降级不展示图)
+	syncMu   sync.Mutex
+	lastSync map[string]time.Time // instance → 上次同步时刻(每实例节流)
 
 	mu      sync.Mutex
 	ctx     context.Context // 运行期 ctx,供手动刷新使用
@@ -49,50 +40,65 @@ type Poller struct {
 
 func New(store *Store, onUpdate func([]model.AccountPulse)) *Poller {
 	return &Poller{
-		store:      store,
-		onUpdate:   onUpdate,
-		maxConc:    6,
-		trendCache: make(map[string]trendEntry),
+		store:    store,
+		onUpdate: onUpdate,
+		maxConc:  6,
+		lastSync: make(map[string]time.Time),
 	}
 }
 
-// SetChart 配置小时图表(须在 Start 前调用)。Enabled=false 时完全不取 trend。
-func (p *Poller) SetChart(c config.ChartConfig) { p.chart = c }
+// SetChart 配置小时图表与本地库(须在 Start 前调用)。usageDB=nil 或 Enabled=false
+// 时完全不同步、不展示图。
+func (p *Poller) SetChart(c config.ChartConfig, db *usage.Store) {
+	p.chart = c
+	p.usageDB = db
+}
 
-// attachTrend 在 chart 开启且 provider 支持 trend 时,按 trendMinInterval 节流拉取/
-// 复用单账户小时时序,挂到 pulse.Hourly。拉取失败则复用上次缓存(若有),不丢图。
-func (p *Poller) attachTrend(ctx context.Context, b binding, acc model.Account, pulse *model.AccountPulse) {
-	if !p.chart.Enabled {
+// syncInstance 增量把该实例的原始请求日志同步进本地库(每实例按 SyncMinSecs 节流)。
+// 冷启动(无游标)按 BackfillHours 回填一次;之后只补最近 2h(date 粒度,id 精确去重)。
+func (p *Poller) syncInstance(ctx context.Context, b binding) {
+	if p.usageDB == nil || !p.chart.Enabled {
 		return
 	}
-	tf, ok := b.prov.(provider.TrendFetcher)
+	lf, ok := b.prov.(provider.UsageLogFetcher)
 	if !ok {
 		return
 	}
-	k := key(b.instance, acc.ID)
 
-	p.trendMu.Lock()
-	ent, cached := p.trendCache[k]
-	p.trendMu.Unlock()
-	if cached && time.Since(ent.at) < trendMinInterval {
-		pulse.Hourly = ent.pts // 新鲜,直接复用
+	p.syncMu.Lock()
+	last := p.lastSync[b.instance]
+	if !last.IsZero() && time.Since(last) < time.Duration(p.chart.SyncMinSecs)*time.Second {
+		p.syncMu.Unlock()
 		return
 	}
+	p.lastSync[b.instance] = time.Now()
+	p.syncMu.Unlock()
 
-	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	pts, err := tf.FetchTrend(cctx, acc, p.chart.RangeHours)
+	sinceID := p.usageDB.LastID(b.instance)
+	from := time.Now().Add(-2 * time.Hour)
+	if sinceID == 0 {
+		from = time.Now().Add(-time.Duration(p.chart.BackfillHours) * time.Hour) // 冷启动回填
+	}
+
+	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	rows, err := lf.FetchUsageSince(cctx, sinceID, from, p.chart.PageCap)
 	cancel()
 	if err != nil {
-		if cached {
-			pulse.Hourly = ent.pts // 失败保留上次,图不闪空
-		}
+		return // 失败下拍再试,不影响快照
+	}
+	if err := p.usageDB.AddRows(b.instance, rows); err != nil {
 		return
 	}
+	p.usageDB.Evict(b.instance, time.Now().Add(-time.Duration(p.chart.RetentionHours)*time.Hour).Unix())
+}
 
-	p.trendMu.Lock()
-	p.trendCache[k] = trendEntry{at: time.Now(), pts: pts}
-	p.trendMu.Unlock()
-	pulse.Hourly = pts
+// attachHourly 从本地库读出该账户最近 RangeHours 的小时序列,挂到 pulse.Hourly。
+func (p *Poller) attachHourly(b binding, acc model.Account, pulse *model.AccountPulse) {
+	if p.usageDB == nil || !p.chart.Enabled {
+		return
+	}
+	since := time.Now().Add(-time.Duration(p.chart.RangeHours) * time.Hour).Unix()
+	pulse.Hourly = p.usageDB.Query(b.instance, acc.ID, since)
 }
 
 // AddProvider 注册一个 provider 与其调度器(须在 Start 前调用)。
@@ -192,7 +198,7 @@ func (p *Poller) refreshOne(ctx context.Context, b binding, accountID string) {
 		if pulse.UpdatedAt.IsZero() {
 			pulse.UpdatedAt = time.Now()
 		}
-		p.attachTrend(ctx, b, acc, &pulse)
+		p.attachHourly(b, acc, &pulse)
 		p.store.Put(pulse)
 		if p.onUpdate != nil {
 			p.onUpdate(p.store.Snapshot())
@@ -240,6 +246,9 @@ func (p *Poller) pollOnce(ctx context.Context, b binding, opt provider.FetchOpti
 		return
 	}
 
+	// 并发同步本地小时库(节流;不阻塞快照,图表在本拍或下拍从库读出)。
+	go p.syncInstance(ctx, b)
+
 	sem := make(chan struct{}, p.maxConc)
 	var wg sync.WaitGroup
 	for _, acc := range accounts {
@@ -261,7 +270,7 @@ func (p *Poller) pollOnce(ctx context.Context, b binding, opt provider.FetchOpti
 			if pulse.UpdatedAt.IsZero() {
 				pulse.UpdatedAt = time.Now()
 			}
-			p.attachTrend(ctx, b, acc, &pulse)
+			p.attachHourly(b, acc, &pulse)
 			p.store.Put(pulse)
 		}(acc)
 	}

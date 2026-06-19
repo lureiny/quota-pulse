@@ -14,10 +14,18 @@ type Config struct {
 	Chart     ChartConfig      `json:"chart"` // 主面板小时用量图表
 }
 
-// ChartConfig 控制每站点小时级用量堆叠柱状图。
+// ChartConfig 控制每站点小时级用量图。数据来自 /admin/usage 原始日志,
+// 经 core/usage 按「账户×本地小时」聚合进本地 SQLite(增量、跨重启保留)。
 type ChartConfig struct {
-	Enabled    bool `json:"enabled"`     // 是否拉取并展示小时时序(关闭则零额外请求)
-	RangeHours int  `json:"range_hours"` // 回看小时数(决定 trend 拉取窗口)
+	Enabled    bool `json:"enabled"`     // 是否拉取并展示小时序列(关闭则零额外请求、不开库)
+	RangeHours int  `json:"range_hours"` // UI 读取/展示的小时窗口(UI 再按 chartRange 裁剪)
+
+	// 以下为采集/存储调参(一般留空走默认):
+	DBPath         string `json:"db_path,omitempty"`         // 空=os.UserConfigDir()/quota-pulse/usage.db
+	BackfillHours  int    `json:"backfill_hours,omitempty"`  // 冷启动回填窗口(默认 168=7d)
+	RetentionHours int    `json:"retention_hours,omitempty"` // 本地保留窗口(默认 720=30d)
+	SyncMinSecs    int    `json:"sync_min_secs,omitempty"`   // 每实例同步最小间隔(默认 60s)
+	PageCap        int    `json:"page_cap,omitempty"`        // 单次同步翻页上限(默认 20 页×1000 行)
 }
 
 const chartMaxRangeHours = 168 // 7d,上限防误配拉太宽
@@ -28,6 +36,18 @@ func (c ChartConfig) withDefaults() ChartConfig {
 	}
 	if c.RangeHours > chartMaxRangeHours {
 		c.RangeHours = chartMaxRangeHours
+	}
+	if c.BackfillHours <= 0 {
+		c.BackfillHours = 168
+	}
+	if c.RetentionHours <= 0 {
+		c.RetentionHours = 720
+	}
+	if c.SyncMinSecs <= 0 {
+		c.SyncMinSecs = 60
+	}
+	if c.PageCap <= 0 {
+		c.PageCap = 20
 	}
 	return c
 }

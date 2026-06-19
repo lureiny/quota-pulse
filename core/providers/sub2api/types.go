@@ -41,22 +41,24 @@ type usageProgress struct {
 	LimitRequests    int64        `json:"limit_requests"`
 }
 
-// trendPointDTO 对应 GET /dashboard/trend 返回 data.trend[] 的单条(granularity=hour)。
-// date 形如 "2026-06-19 14:00"(服务端 TO_CHAR(created_at,'YYYY-MM-DD HH24:00'),
-// 按请求的 timezone 分桶;我们统一用 UTC 查询/解析)。
-type trendPointDTO struct {
-	Date                string `json:"date"`
-	InputTokens         int64  `json:"input_tokens"`
-	OutputTokens        int64  `json:"output_tokens"`
-	CacheCreationTokens int64  `json:"cache_creation_tokens"`
-	CacheReadTokens     int64  `json:"cache_read_tokens"`
-	TotalTokens         int64  `json:"total_tokens"`
+// usageLogItem 对应 GET /admin/usage 返回 data.items[] 的单条(AdminUsageLog,精简)。
+type usageLogItem struct {
+	ID                  int64     `json:"id"`
+	AccountID           int64     `json:"account_id"`
+	CreatedAt           time.Time `json:"created_at"`
+	InputTokens         int64     `json:"input_tokens"`
+	OutputTokens        int64     `json:"output_tokens"`
+	CacheCreationTokens int64     `json:"cache_creation_tokens"`
+	CacheReadTokens     int64     `json:"cache_read_tokens"`
 }
 
-// trendResp 对应 GET /dashboard/trend 的 data(GetData 已剥掉外层 envelope)。
-type trendResp struct {
-	Trend       []trendPointDTO `json:"trend"`
-	Granularity string          `json:"granularity"`
+// usageListResp 对应 GET /admin/usage 的 data 分页信封(GetData 已剥外层)。
+type usageListResp struct {
+	Items    []usageLogItem `json:"items"`
+	Total    int64          `json:"total"`
+	Page     int            `json:"page"`
+	PageSize int            `json:"page_size"`
+	Pages    int            `json:"pages"`
 }
 
 // usageInfo 对应后端 service.UsageInfo(GET /accounts/:id/usage 的 data)。
