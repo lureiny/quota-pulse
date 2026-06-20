@@ -9,6 +9,7 @@ import "C"
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"unsafe"
 
@@ -87,6 +88,27 @@ func QP_SnapshotJSON() *C.char {
 		return C.CString("[]")
 	}
 	return C.CString(a.SnapshotJSON())
+}
+
+// QP_ChartSeries 按维度聚合用量序列(JSON 进、JSON 出)。
+// argsJSON: {"instance":"...","dimension":"account|api_key|model|user|group","hours":168}
+// 返回 []Series 的 JSON;返回的 C 字符串由调用方用 QP_Free 释放。
+//
+//export QP_ChartSeries
+func QP_ChartSeries(argsJSON *C.char) *C.char {
+	mu.Lock()
+	a := engine
+	mu.Unlock()
+	if a == nil {
+		return C.CString("[]")
+	}
+	var args struct {
+		Instance  string `json:"instance"`
+		Dimension string `json:"dimension"`
+		Hours     int    `json:"hours"`
+	}
+	_ = json.Unmarshal([]byte(C.GoString(argsJSON)), &args)
+	return C.CString(a.ChartSeriesJSON(args.Instance, args.Dimension, args.Hours))
 }
 
 // QP_Refresh 触发一次强制回源。

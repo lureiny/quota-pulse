@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/lureiny/quota-pulse/core/config"
 	"github.com/lureiny/quota-pulse/core/model"
@@ -130,6 +131,23 @@ func (a *App) Snapshot() []model.AccountPulse { return a.store.Snapshot() }
 // SnapshotJSON 返回 JSON,供 FFI 字符串边界使用。
 func (a *App) SnapshotJSON() string {
 	b, err := json.Marshal(a.store.Snapshot())
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// ChartSeriesJSON 按 dimension(account/api_key/model/user/group)聚合 instance 最近
+// hours 小时的用量,返回 []model.Series 的 JSON,供图表按需取数。库未开则返回 "[]"。
+func (a *App) ChartSeriesJSON(instance, dimension string, hours int) string {
+	if a.usageDB == nil {
+		return "[]"
+	}
+	if hours <= 0 {
+		hours = a.cfg.Chart.RangeHours
+	}
+	since := time.Now().Add(-time.Duration(hours) * time.Hour).Unix()
+	b, err := json.Marshal(a.usageDB.QuerySeries(instance, dimension, since))
 	if err != nil {
 		return "[]"
 	}

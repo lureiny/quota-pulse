@@ -54,8 +54,8 @@ class Meter {
       );
 }
 
-/// HourPoint 是某账户某小时桶的 token 用量(与 core/model.HourPoint 对应)。
-/// hour 由 core 以 UTC 序列化(RFC3339 带 Z),这里解析后通常 .toLocal() 显示。
+/// HourPoint 是某「系列」某小时桶的 token 用量(与 core/model.HourPoint 对应)。
+/// hour 由 core 序列化为带本地偏移的 RFC3339,这里 .toLocal() 显示。
 class HourPoint {
   final DateTime hour;
   final int input;
@@ -87,6 +87,33 @@ class HourPoint {
       );
 }
 
+/// UsageSeries 是某维度下一条序列(一个维度值 → 它的小时序列;与 core/model.Series 对应)。
+/// 由 core 按所选维度(账户/api_key/model/user/group)即时聚合产出。
+class UsageSeries {
+  final String key;
+  final String name;
+  final List<HourPoint> points;
+
+  UsageSeries({required this.key, required this.name, required this.points});
+
+  factory UsageSeries.fromJson(Map<String, dynamic> j) => UsageSeries(
+        key: j['key'] as String? ?? '',
+        name: j['name'] as String? ?? '',
+        points: ((j['points'] as List?) ?? const [])
+            .map((e) => HourPoint.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
+
+  /// 从 ChartSeries JSON 数组解析。
+  static List<UsageSeries> listFromJson(String s) {
+    final decoded = jsonDecode(s);
+    if (decoded is! List) return const [];
+    return decoded
+        .map((e) => UsageSeries.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+}
+
 /// AccountPulse 是一个账户的用量脉搏(与 core/model.AccountPulse 对应)。
 class AccountPulse {
   final String accountId;
@@ -97,7 +124,6 @@ class AccountPulse {
   final PulseStatus status;
   final String tier;
   final List<Meter> meters;
-  final List<HourPoint> hourly; // 小时级 token 时序(可选;为空表示无图表数据)
   final DateTime? updatedAt;
   final String error;
   final String actionUrl;
@@ -111,7 +137,6 @@ class AccountPulse {
     required this.status,
     required this.tier,
     required this.meters,
-    this.hourly = const [],
     required this.updatedAt,
     required this.error,
     required this.actionUrl,
@@ -127,9 +152,6 @@ class AccountPulse {
         tier: j['tier'] as String? ?? '',
         meters: ((j['meters'] as List?) ?? const [])
             .map((e) => Meter.fromJson(e as Map<String, dynamic>))
-            .toList(),
-        hourly: ((j['hourly'] as List?) ?? const [])
-            .map((e) => HourPoint.fromJson(e as Map<String, dynamic>))
             .toList(),
         updatedAt: j['updated_at'] != null ? DateTime.tryParse(j['updated_at'] as String) : null,
         error: j['error'] as String? ?? '',

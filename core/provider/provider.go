@@ -52,7 +52,7 @@ type Provider interface {
 //	from     起始日期(date 粒度过滤的下界;实际仍按 id 精确去重)
 //	pageCap  翻页上限(防失控;desc 排序下截断只丢最老的行)
 //
-// 返回 id>sinceID 的全部新行(账户、精确时间、各类 token)。
+// 返回 id>sinceID 的全部新事件(精确时间、各类 token、cost、维度 Dims)。
 type UsageLogFetcher interface {
-	FetchUsageSince(ctx context.Context, sinceID int64, from time.Time, pageCap int) ([]model.UsageRow, error)
+	FetchUsageSince(ctx context.Context, sinceID int64, from time.Time, pageCap int) ([]model.UsageEvent, error)
 }

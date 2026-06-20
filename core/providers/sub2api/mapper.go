@@ -2,9 +2,50 @@ package sub2api
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/lureiny/quota-pulse/core/model"
 )
+
+// toEvent 把 /admin/usage 的一行映射成通用 model.UsageEvent;维度收进 Dims(label 风格)。
+// 绝不读 api_key.key 明文密钥;user 展示名优先 username,空则 email。
+func toEvent(it usageLogItem) model.UsageEvent {
+	dims := map[string]string{
+		"account": strconv.FormatInt(it.AccountID, 10),
+		"api_key": strconv.FormatInt(it.APIKeyID, 10),
+		"user":    strconv.FormatInt(it.UserID, 10),
+		"group":   strconv.FormatInt(it.GroupID, 10),
+		"model":   it.Model,
+	}
+	if it.Account != nil && it.Account.Name != "" {
+		dims["account_name"] = it.Account.Name
+	}
+	if it.APIKey != nil && it.APIKey.Name != "" {
+		dims["api_key_name"] = it.APIKey.Name
+	}
+	if it.Group != nil && it.Group.Name != "" {
+		dims["group_name"] = it.Group.Name
+	}
+	if it.User != nil {
+		name := it.User.Username
+		if name == "" {
+			name = it.User.Email
+		}
+		if name != "" {
+			dims["user_name"] = name
+		}
+	}
+	return model.UsageEvent{
+		ID:          it.ID,
+		CreatedAt:   it.CreatedAt,
+		Input:       it.InputTokens,
+		Output:      it.OutputTokens,
+		CacheCreate: it.CacheCreationTokens,
+		CacheRead:   it.CacheReadTokens,
+		Cost:        it.ActualCost,
+		Dims:        dims,
+	}
+}
 
 // toPulse 把 sub2api 的 usageInfo 映射成通用 model.AccountPulse。
 // 每个非空窗口 → 一个 KindRollingWindow 的 Meter。

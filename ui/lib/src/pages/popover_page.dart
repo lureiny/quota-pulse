@@ -22,6 +22,7 @@ class PopoverPage extends StatefulWidget {
     this.chartEnabled = false,
     this.chartRangeHours = 24,
     this.chartType = ChartType.bar,
+    this.chartDimension = 'account',
   });
 
   final PulseController controller;
@@ -33,6 +34,7 @@ class PopoverPage extends StatefulWidget {
   final bool chartEnabled; // 是否在每个站点分组下显示小时用量图
   final int chartRangeHours; // 图表回看小时数(随设置 chartRange)
   final ChartType chartType; // 图表样式:柱状 / 曲线
+  final String chartDimension; // 分组维度(account/api_key/model/user/group)
 
   @override
   State<PopoverPage> createState() => _PopoverPageState();
@@ -124,9 +126,12 @@ class _PopoverPageState extends State<PopoverPage> {
         ));
         if (widget.chartEnabled) {
           children.add(HourlyChart(
-            accounts: list,
+            key: ValueKey('chart-$instance'),
+            instance: instance,
+            dimension: widget.chartDimension,
             rangeHours: widget.chartRangeHours,
             chartType: widget.chartType,
+            fetchSeriesJson: widget.controller.chartSeriesJson,
           ));
         }
       }
@@ -165,9 +170,12 @@ class _PopoverPageState extends State<PopoverPage> {
                           resetMode: widget.resetMode)),
                       if (widget.chartEnabled)
                         HourlyChart(
-                          accounts: e.value,
+                          key: ValueKey('chart-${e.key}'),
+                          instance: e.key,
+                          dimension: widget.chartDimension,
                           rangeHours: widget.chartRangeHours,
                           chartType: widget.chartType,
+                          fetchSeriesJson: widget.controller.chartSeriesJson,
                         ),
                     ],
                   ),

@@ -18,6 +18,10 @@ abstract class PulseSource {
   /// 读取当前快照(JSON 数组字符串)。便宜、可频繁调用。
   String snapshotJson();
 
+  /// 按维度(account/api_key/model/user/group)取某实例最近 hours 小时的
+  /// 用量序列 JSON([]Series)。本地 SQLite 查询,便宜。
+  String chartSeriesJson(String instance, String dimension, int hours);
+
   /// 告知引擎弹层是否打开(打开则提频)。
   void setForeground(bool open);
 }

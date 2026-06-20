@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 
@@ -5,54 +7,99 @@ import '../format.dart';
 import '../models/pulse.dart';
 import '../state/settings_store.dart' show ChartType;
 
-/// HourlyChart:某站点(实例)下所有账户的小时级 token 用量图(柱状 / 曲线可切换)。
+/// HourlyChart:某站点(实例)的小时级 token 用量图(柱状 / 曲线可切换)。
 ///
-/// - 柱状:每小时一根堆叠柱,按账户分段着色,段高=该账户该小时 token(in+out+cache)。
-/// - 曲线:每账户一条线(同色),y=该账户该小时 token。
-/// - x 轴覆盖**整个选定窗口的每一小时**,无数据的小时也**留出空列/横坐标位置**;
-///   即便整窗口无任何数据也渲染空图(只画坐标框)。
-/// - 鼠标悬停 → **半透明** tooltip 展示该小时各账户 in/out/cache 明细与合计。
-///
-/// 数据来自 AccountPulse.hourly(core 固定下发最近 7d 小时序;本组件按 rangeHours 裁剪)。
-class HourlyChart extends StatelessWidget {
+/// 数据按 `dimension`(account/api_key/model/user/group)从 core 即时聚合而来
+/// (本地 SQLite 原始事件 GROUP BY),每个维度值 = 一条「系列」,按系列着色。
+/// - 柱状:每小时一根堆叠柱,按系列分段;曲线:每系列一条线。
+/// - x 轴覆盖整个选定窗口的每一小时,无数据的小时也留空列;全空也渲染坐标框。
+/// - 鼠标悬停 → 半透明、随主题 tooltip,列出该小时各系列的 in/out/cache 与合计。
+class HourlyChart extends StatefulWidget {
   const HourlyChart({
     super.key,
-    required this.accounts,
+    required this.instance,
+    required this.dimension,
     required this.rangeHours,
-    this.chartType = ChartType.bar,
+    required this.chartType,
+    required this.fetchSeriesJson,
   });
 
-  /// 同一实例下的账户(顺序不影响着色:内部按 accountId 稳定排序分配颜色)。
-  final List<AccountPulse> accounts;
-
-  /// 显示的回看小时数(UI 裁剪;core 始终下发更大的窗口,改这个不触发刷新)。
+  final String instance;
+  final String dimension; // account / api_key / model / user / group
   final int rangeHours;
-
-  /// 图表样式:柱状 / 曲线。
   final ChartType chartType;
 
-  static const double _areaHeight = 96; // 绘图区高
-  static const double _minSlot = 13; // 每小时最小占位宽(不足则填满父宽,超出横向滚动)
-  static const double _maxBarWidth = 26; // 柱宽上限(防小跨度时柱子过胖)
+  /// (instance, dimension, hours) → []Series 的 JSON(本地查询,便宜)。
+  final String Function(String instance, String dimension, int hours)
+      fetchSeriesJson;
+
+  @override
+  State<HourlyChart> createState() => _HourlyChartState();
+}
+
+class _HourlyChartState extends State<HourlyChart> {
+  static const double _areaHeight = 96;
+  static const double _minSlot = 13;
+  static const double _maxBarWidth = 26;
+
+  List<UsageSeries> _series = const [];
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _series = _load(); // 直接赋值(initState 里不 setState),build 紧随其后。
+    // 随新事件同步,定时刷新图表(与快照 tick 解耦,避免每次重建都打 FFI)。
+    _timer = Timer.periodic(const Duration(seconds: 10), (_) => _refresh());
+  }
+
+  @override
+  void didUpdateWidget(HourlyChart old) {
+    super.didUpdateWidget(old);
+    // 维度/实例/跨度变了立即重取(切样式 chartType 不必重取,build 直接换渲染)。
+    if (old.instance != widget.instance ||
+        old.dimension != widget.dimension ||
+        old.rangeHours != widget.rangeHours) {
+      _refresh();
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  List<UsageSeries> _load() {
+    try {
+      return UsageSeries.listFromJson(widget.fetchSeriesJson(
+          widget.instance, widget.dimension, widget.rangeHours));
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  void _refresh() {
+    final s = _load();
+    if (mounted) setState(() => _series = s);
+  }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    if (accounts.isEmpty) return const SizedBox.shrink();
+    // 注意:_series 为空(该窗口无用量)也照常渲染空坐标框(留位),不隐藏。
 
-    // 稳定着色:按 accountId 排序 → 索引 → 颜色。
-    final ordered = [...accounts]
-      ..sort((a, b) => a.accountId.compareTo(b.accountId));
+    // 稳定着色:按系列 key 排序 → 索引 → 颜色。
+    final ordered = [..._series]..sort((a, b) => a.key.compareTo(b.key));
     final colorOf = <String, Color>{};
     final nameOf = <String, String>{};
     for (var i = 0; i < ordered.length; i++) {
-      final a = ordered[i];
-      colorOf[a.accountId] = accountColor(i);
-      nameOf[a.accountId] = a.name.isEmpty ? a.accountId : a.name;
+      final s = ordered[i];
+      colorOf[s.key] = accountColor(i);
+      nameOf[s.key] = s.name.isEmpty ? s.key : s.name;
     }
 
-    // 连续小时桶(覆盖整个窗口,含空桶 → 留位;即使全空也渲染框)。
-    final slots = _buildSlots(ordered, rangeHours);
+    final slots = _buildSlots(ordered, widget.rangeHours);
 
     var barMax = 0, lineMax = 0;
     for (final s in slots) {
@@ -61,8 +108,9 @@ class HourlyChart extends StatelessWidget {
         if (p.sum > lineMax) lineMax = p.sum;
       }
     }
-    final rawMax = (chartType == ChartType.line ? lineMax : barMax).toDouble();
-    final maxY = rawMax > 0 ? rawMax * 1.18 : 1.0; // 全空也给个高度,画出坐标框
+    final rawMax =
+        (widget.chartType == ChartType.line ? lineMax : barMax).toDouble();
+    final maxY = rawMax > 0 ? rawMax * 1.18 : 1.0;
 
     final labelStep = (slots.length / 6).ceil().clamp(1, slots.length).toInt();
 
@@ -79,10 +127,9 @@ class HourlyChart extends StatelessWidget {
                 final fits = n * _minSlot <= c.maxWidth;
                 final slotW = fits ? c.maxWidth / n : _minSlot;
                 final totalW = fits ? c.maxWidth : n * _minSlot;
-                // 动态柱宽:占位宽的 ~60%(留缝),封顶防过胖 → 小跨度也填满、不稀疏。
                 final barWidth =
                     (slotW * 0.6).clamp(2.0, _maxBarWidth).toDouble();
-                final chart = chartType == ChartType.line
+                final chart = widget.chartType == ChartType.line
                     ? _lineChart(slots, ordered, colorOf, nameOf, maxY, labelStep, cs)
                     : _barChart(slots, ordered, colorOf, nameOf, maxY, labelStep,
                         barWidth, cs);
@@ -104,7 +151,7 @@ class HourlyChart extends StatelessWidget {
   // ---- 柱状图 ----
   Widget _barChart(
       List<_Slot> slots,
-      List<AccountPulse> ordered,
+      List<UsageSeries> ordered,
       Map<String, Color> colorOf,
       Map<String, String> nameOf,
       double maxY,
@@ -116,18 +163,18 @@ class HourlyChart extends StatelessWidget {
       final s = slots[i];
       final stack = <BarChartRodStackItem>[];
       double from = 0;
-      for (final a in ordered) {
-        final p = s.points[a.accountId];
-        if (p == null) continue; // 该账户该小时无量 → 不堆叠该段
+      for (final ser in ordered) {
+        final p = s.points[ser.key];
+        if (p == null) continue;
         final to = from + p.sum.toDouble();
-        stack.add(BarChartRodStackItem(from, to, colorOf[a.accountId]!));
+        stack.add(BarChartRodStackItem(from, to, colorOf[ser.key]!));
         from = to;
       }
       groups.add(BarChartGroupData(
         x: i,
         barRods: [
           BarChartRodData(
-            toY: from, // 空桶 toY=0:不画柱但 x 位置仍保留
+            toY: from,
             width: barWidth,
             rodStackItems: stack,
             borderRadius: const BorderRadius.all(Radius.circular(1.5)),
@@ -152,8 +199,6 @@ class HourlyChart extends StatelessWidget {
             fitInsideHorizontally: true,
             fitInsideVertically: true,
             maxContentWidth: 280,
-            // 用 groupIndex(确定为 int,且与 slots 顺序一致)做下标,
-            // 避免 group.x 的数值类型当 List 下标。
             getTooltipItem: (group, groupIndex, rod, rodIndex) =>
                 _barTooltip(slots[groupIndex], ordered, colorOf, nameOf, cs),
           ),
@@ -168,26 +213,24 @@ class HourlyChart extends StatelessWidget {
   // ---- 曲线图 ----
   Widget _lineChart(
       List<_Slot> slots,
-      List<AccountPulse> ordered,
+      List<UsageSeries> ordered,
       Map<String, Color> colorOf,
       Map<String, String> nameOf,
       double maxY,
       int labelStep,
       ColorScheme cs) {
     final bars = <LineChartBarData>[];
-    for (final a in ordered) {
+    for (final ser in ordered) {
       final spots = <FlSpot>[
         for (var i = 0; i < slots.length; i++)
-          FlSpot(i.toDouble(), (slots[i].points[a.accountId]?.sum ?? 0).toDouble()),
+          FlSpot(i.toDouble(), (slots[i].points[ser.key]?.sum ?? 0).toDouble()),
       ];
       bars.add(LineChartBarData(
         spots: spots,
         isCurved: true,
         curveSmoothness: 0.25,
-        // 防止样条在 0↔峰值的陡变处过冲到 0 以下(否则曲线在基线附近"断裂"),
-        // 不再用 clipData 裁切,避免裁切造成的视觉断点。
         preventCurveOverShooting: true,
-        color: colorOf[a.accountId],
+        color: colorOf[ser.key],
         barWidth: 2.2,
         dotData: const FlDotData(show: false),
         belowBarData: BarAreaData(show: false),
@@ -222,7 +265,7 @@ class HourlyChart extends StatelessWidget {
     );
   }
 
-  // ---- 共用:底部小时标签(稀疏显示) ----
+  // ---- 共用:底部小时标签(稀疏) ----
   FlTitlesData _titles(List<_Slot> slots, int labelStep, ColorScheme cs) =>
       FlTitlesData(
         leftTitles:
@@ -253,19 +296,25 @@ class HourlyChart extends StatelessWidget {
         ),
       );
 
-  // ---- tooltip:柱(整小时各账户明细) ----
-  BarTooltipItem? _barTooltip(_Slot slot, List<AccountPulse> ordered,
+  // 半透明、随主题的 tooltip 背景 + 细描边:看得见背后内容。
+  Color _tooltipBg(ColorScheme cs) =>
+      cs.surfaceContainerHighest.withValues(alpha: 0.6);
+  BorderSide _tooltipBorder(ColorScheme cs) =>
+      BorderSide(color: cs.outlineVariant.withValues(alpha: 0.5), width: 0.6);
+
+  // ---- tooltip:柱(整小时各系列明细) ----
+  BarTooltipItem? _barTooltip(_Slot slot, List<UsageSeries> ordered,
       Map<String, Color> colorOf, Map<String, String> nameOf, ColorScheme cs) {
-    if (slot.points.isEmpty) return null; // 空桶不弹
+    if (slot.points.isEmpty) return null;
     final onText = cs.onSurface;
     final spans = <TextSpan>[];
-    for (final a in ordered) {
-      final p = slot.points[a.accountId];
+    for (final ser in ordered) {
+      final p = slot.points[ser.key];
       if (p == null) continue;
       spans.add(TextSpan(
-        text: '\n${nameOf[a.accountId]}  ${_detail(p)}',
+        text: '\n${nameOf[ser.key]}  ${_detail(p)}',
         style: TextStyle(
-            color: colorOf[a.accountId],
+            color: colorOf[ser.key],
             fontSize: 10.5,
             fontWeight: FontWeight.w500),
       ));
@@ -282,31 +331,31 @@ class HourlyChart extends StatelessWidget {
     );
   }
 
-  // ---- tooltip:线(被命中的各账户;首条带小时表头) ----
+  // ---- tooltip:线(被命中的各系列;首条带小时表头) ----
   List<LineTooltipItem?> _lineTooltip(
       List<LineBarSpot> spots,
       List<_Slot> slots,
-      List<AccountPulse> ordered,
+      List<UsageSeries> ordered,
       Map<String, Color> colorOf,
       Map<String, String> nameOf,
       ColorScheme cs) {
     final onText = cs.onSurface;
     final out = <LineTooltipItem?>[];
     var headerPlaced = false;
-    for (final s in spots) {
-      final i = s.x.round();
-      final acct = (s.barIndex >= 0 && s.barIndex < ordered.length)
-          ? ordered[s.barIndex]
+    for (final sp in spots) {
+      final i = sp.x.round();
+      final ser = (sp.barIndex >= 0 && sp.barIndex < ordered.length)
+          ? ordered[sp.barIndex]
           : null;
-      final p = (acct != null && i >= 0 && i < slots.length)
-          ? slots[i].points[acct.accountId]
+      final p = (ser != null && i >= 0 && i < slots.length)
+          ? slots[i].points[ser.key]
           : null;
-      if (acct == null || p == null) {
-        out.add(null); // 该账户该小时无量 → 不显示这条
+      if (ser == null || p == null) {
+        out.add(null);
         continue;
       }
-      final line = '${nameOf[acct.accountId]}  ${_detail(p)}';
-      final color = colorOf[acct.accountId];
+      final line = '${nameOf[ser.key]}  ${_detail(p)}';
+      final color = colorOf[ser.key];
       if (!headerPlaced) {
         headerPlaced = true;
         out.add(LineTooltipItem(
@@ -331,13 +380,6 @@ class HourlyChart extends StatelessWidget {
     return out;
   }
 
-  // 半透明、跟随主题(浅色主题→浅底、深色→深底)的 tooltip 背景 + 细描边:
-  // 既与主题一致,又足够透,不挡背后内容。
-  Color _tooltipBg(ColorScheme cs) =>
-      cs.surfaceContainerHighest.withValues(alpha: 0.6);
-  BorderSide _tooltipBorder(ColorScheme cs) =>
-      BorderSide(color: cs.outlineVariant.withValues(alpha: 0.5), width: 0.6);
-
   String _detail(HourPoint p) =>
       '入${fmtTokens(p.input)}·出${fmtTokens(p.output)}·'
       '缓${fmtTokens(p.cacheCreate + p.cacheRead)} = ${fmtTokens(p.sum)}';
@@ -346,15 +388,15 @@ class HourlyChart extends StatelessWidget {
       '${h.month.toString().padLeft(2, '0')}-${h.day.toString().padLeft(2, '0')} '
       '${h.hour.toString().padLeft(2, '0')}:00';
 
-  // ---- 图例:账户色点 + 名字 ----
-  Widget _legend(BuildContext context, List<AccountPulse> ordered,
+  // ---- 图例:系列色点 + 名字 ----
+  Widget _legend(BuildContext context, List<UsageSeries> ordered,
       Map<String, Color> colorOf, Map<String, String> nameOf) {
     final style = Theme.of(context).textTheme.labelSmall;
     return Wrap(
       spacing: 10,
       runSpacing: 2,
       children: [
-        for (final a in ordered)
+        for (final ser in ordered)
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -362,12 +404,12 @@ class HourlyChart extends StatelessWidget {
                 width: 8,
                 height: 8,
                 decoration: BoxDecoration(
-                  color: colorOf[a.accountId],
+                  color: colorOf[ser.key],
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
               const SizedBox(width: 3),
-              Text(nameOf[a.accountId]!, style: style),
+              Text(nameOf[ser.key]!, style: style),
             ],
           ),
       ],
@@ -375,22 +417,23 @@ class HourlyChart extends StatelessWidget {
   }
 
   /// 连续小时桶:从 nowHour-(hours-1) 到 nowHour 共 hours 个,逐小时;空桶也保留。
-  List<_Slot> _buildSlots(List<AccountPulse> ordered, int hours) {
+  /// 每个系列在每小时至多一个点(core 已按小时聚合),据此填入 slot.points[seriesKey]。
+  List<_Slot> _buildSlots(List<UsageSeries> ordered, int hours) {
     final now = DateTime.now();
     final nowHour = DateTime(now.year, now.month, now.day, now.hour);
     final windowStart = nowHour.subtract(Duration(hours: hours - 1));
 
-    // accountId -> (hourEpoch -> HourPoint),仅窗口内、有量的桶。
-    final byAcct = <String, Map<int, HourPoint>>{};
-    for (final a in ordered) {
+    // seriesKey -> (hourEpoch -> HourPoint)
+    final byKey = <String, Map<int, HourPoint>>{};
+    for (final ser in ordered) {
       final m = <int, HourPoint>{};
-      for (final p in a.hourly) {
+      for (final p in ser.points) {
         final hb = DateTime(p.hour.year, p.hour.month, p.hour.day, p.hour.hour);
         if (hb.isBefore(windowStart) || hb.isAfter(nowHour)) continue;
         if (p.sum <= 0) continue;
         m[hb.millisecondsSinceEpoch] = p;
       }
-      byAcct[a.accountId] = m;
+      byKey[ser.key] = m;
     }
 
     final slots = <_Slot>[];
@@ -399,10 +442,10 @@ class HourlyChart extends StatelessWidget {
       final epoch = t.millisecondsSinceEpoch;
       final points = <String, HourPoint>{};
       var total = 0;
-      for (final a in ordered) {
-        final p = byAcct[a.accountId]?[epoch];
+      for (final ser in ordered) {
+        final p = byKey[ser.key]?[epoch];
         if (p == null) continue;
-        points[a.accountId] = p;
+        points[ser.key] = p;
         total += p.sum;
       }
       slots.add(_Slot(t, points, total));
@@ -414,6 +457,6 @@ class HourlyChart extends StatelessWidget {
 class _Slot {
   _Slot(this.hour, this.points, this.total);
   final DateTime hour;
-  final Map<String, HourPoint> points; // accountId -> 该小时有量的账户用量
+  final Map<String, HourPoint> points; // seriesKey -> 该小时有量的系列用量
   final int total;
 }

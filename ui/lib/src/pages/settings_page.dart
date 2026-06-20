@@ -57,8 +57,10 @@ class SettingsPage extends StatefulWidget {
     bool activeEnabled,
     int activeSecs,
   )? onPollChanged;
-  // 小时用量图表:开关 + 跨度 + 样式。壳持久化;仅开关变化需重启核心(跨度/样式纯 UI)。
-  final void Function(bool enabled, ChartRange range, ChartType type)?
+  // 小时用量图表:开关 + 跨度 + 样式 + 分组维度。壳持久化;仅开关变化需重启核心
+  // (跨度/样式/维度纯 UI)。
+  final void Function(
+          bool enabled, ChartRange range, ChartType type, ChartGroupBy groupBy)?
       onChartChanged;
   final Future<void> Function()? onTestNotification; // 发送测试通知
   final VoidCallback? onResetTickerPosition; // Windows 跑马灯重置到默认位置
@@ -125,6 +127,7 @@ class _SettingsPageState extends State<SettingsPage> {
   late bool _chartEnabled; // 小时用量图表开关
   late ChartRange _chartRange; // 小时用量图表跨度
   late ChartType _chartType; // 小时用量图表样式(柱/线)
+  late ChartGroupBy _chartGroupBy; // 小时用量图表分组维度
   int _idSeq = 0;
 
   // Windows 滚动浮窗「宽度」滑块上限:主屏逻辑宽(壳传入),缺省兜底 1920,下限保底 240
@@ -171,6 +174,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _chartEnabled = widget.initial.chartEnabled;
     _chartRange = widget.initial.chartRange;
     _chartType = widget.initial.chartType;
+    _chartGroupBy = widget.initial.chartGroupBy;
   }
 
   @override
@@ -199,9 +203,9 @@ class _SettingsPageState extends State<SettingsPage> {
         _pollActiveSecs,
       );
 
-  /// 小时图表开关/跨度/样式改动:通知壳持久化(仅开关变化时重启核心)。
-  void _emitChart() =>
-      widget.onChartChanged?.call(_chartEnabled, _chartRange, _chartType);
+  /// 小时图表开关/跨度/样式/维度改动:通知壳持久化(仅开关变化时重启核心)。
+  void _emitChart() => widget.onChartChanged
+      ?.call(_chartEnabled, _chartRange, _chartType, _chartGroupBy);
 
   _Draft _newDraft() {
     _idSeq++;
@@ -260,6 +264,7 @@ class _SettingsPageState extends State<SettingsPage> {
         chartEnabled: _chartEnabled,
         chartRange: _chartRange,
         chartType: _chartType,
+        chartGroupBy: _chartGroupBy,
       );
 
   void _save() => widget.onSave(_currentSettings());
@@ -591,9 +596,32 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
             ],
           ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Expanded(child: Text('分组维度', style: TextStyle(fontSize: 13))),
+              _boxed(
+                DropdownButton<ChartGroupBy>(
+                  value: _chartGroupBy,
+                  isDense: true,
+                  underline: const SizedBox.shrink(),
+                  items: [
+                    for (final g in ChartGroupBy.values)
+                      DropdownMenuItem(value: g, child: Text(g.label)),
+                  ],
+                  onChanged: (v) {
+                    if (v == null) return;
+                    setState(() => _chartGroupBy = v);
+                    _emitChart();
+                  },
+                ),
+              ),
+            ],
+          ),
           Padding(
             padding: const EdgeInsets.only(top: 2),
-            child: Text('鼠标悬停看每账户 in/out/cache 明细;切样式/跨度即时生效,不刷新用量',
+            child: Text('可按账户/API Key/模型/用户/分组聚合;悬停看 in/out/cache 明细。'
+                '切样式/跨度/维度即时生效,不刷新用量',
                 style: theme.textTheme.bodySmall),
           ),
         ],

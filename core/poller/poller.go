@@ -81,24 +81,15 @@ func (p *Poller) syncInstance(ctx context.Context, b binding) {
 	}
 
 	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	rows, err := lf.FetchUsageSince(cctx, sinceID, from, p.chart.PageCap)
+	evs, err := lf.FetchUsageSince(cctx, sinceID, from, p.chart.PageCap)
 	cancel()
 	if err != nil {
 		return // 失败下拍再试,不影响快照
 	}
-	if err := p.usageDB.AddRows(b.instance, rows); err != nil {
+	if err := p.usageDB.AddEvents(b.instance, evs); err != nil {
 		return
 	}
 	p.usageDB.Evict(b.instance, time.Now().Add(-time.Duration(p.chart.RetentionHours)*time.Hour).Unix())
-}
-
-// attachHourly 从本地库读出该账户最近 RangeHours 的小时序列,挂到 pulse.Hourly。
-func (p *Poller) attachHourly(b binding, acc model.Account, pulse *model.AccountPulse) {
-	if p.usageDB == nil || !p.chart.Enabled {
-		return
-	}
-	since := time.Now().Add(-time.Duration(p.chart.RangeHours) * time.Hour).Unix()
-	pulse.Hourly = p.usageDB.Query(b.instance, acc.ID, since)
 }
 
 // AddProvider 注册一个 provider 与其调度器(须在 Start 前调用)。
@@ -198,7 +189,6 @@ func (p *Poller) refreshOne(ctx context.Context, b binding, accountID string) {
 		if pulse.UpdatedAt.IsZero() {
 			pulse.UpdatedAt = time.Now()
 		}
-		p.attachHourly(b, acc, &pulse)
 		p.store.Put(pulse)
 		if p.onUpdate != nil {
 			p.onUpdate(p.store.Snapshot())
@@ -270,7 +260,6 @@ func (p *Poller) pollOnce(ctx context.Context, b binding, opt provider.FetchOpti
 			if pulse.UpdatedAt.IsZero() {
 				pulse.UpdatedAt = time.Now()
 			}
-			p.attachHourly(b, acc, &pulse)
 			p.store.Put(pulse)
 		}(acc)
 	}

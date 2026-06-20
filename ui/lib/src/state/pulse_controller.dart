@@ -52,6 +52,10 @@ class PulseController extends ChangeNotifier {
   /// 刷新某个实例的全部账户(key = "instance|")。
   void refreshInstance(String instance) => _source.refresh('$instance|');
 
+  /// 按维度取某实例的小时用量序列 JSON([]Series)。本地查询、便宜。
+  String chartSeriesJson(String instance, String dimension, int hours) =>
+      _source.chartSeriesJson(instance, dimension, hours);
+
   void _tick() {
     try {
       _pulses = AccountPulse.listFromJson(_source.snapshotJson());

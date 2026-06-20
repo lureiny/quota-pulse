@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'native_core.dart';
 import 'pulse_source.dart';
 
@@ -25,6 +27,13 @@ class FfiPulseSource implements PulseSource {
 
   @override
   String snapshotJson() => _core?.snapshotJson() ?? '[]';
+
+  @override
+  String chartSeriesJson(String instance, String dimension, int hours) {
+    final args = jsonEncode(
+        {'instance': instance, 'dimension': dimension, 'hours': hours});
+    return _core?.chartSeries(args) ?? '[]';
+  }
 
   @override
   void setForeground(bool open) => _core?.setForeground(open);

@@ -13,6 +13,8 @@ typedef _SnapC = Pointer<Utf8> Function();
 typedef _SnapD = Pointer<Utf8> Function();
 typedef _StrArgC = Void Function(Pointer<Utf8>);
 typedef _StrArgD = void Function(Pointer<Utf8>);
+typedef _StrToStrC = Pointer<Utf8> Function(Pointer<Utf8>);
+typedef _StrToStrD = Pointer<Utf8> Function(Pointer<Utf8>);
 typedef _IntArgC = Void Function(Int32);
 typedef _IntArgD = void Function(int);
 
@@ -27,6 +29,8 @@ class NativeCore {
   late final _VoidD _stop = _lib.lookupFunction<_VoidC, _VoidD>('QP_Stop');
   late final _SnapD _snapshot = _lib.lookupFunction<_SnapC, _SnapD>('QP_SnapshotJSON');
   late final _StrArgD _refresh = _lib.lookupFunction<_StrArgC, _StrArgD>('QP_Refresh');
+  late final _StrToStrD _chartSeries =
+      _lib.lookupFunction<_StrToStrC, _StrToStrD>('QP_ChartSeries');
   late final _StrArgD _free = _lib.lookupFunction<_StrArgC, _StrArgD>('QP_Free');
   late final _IntArgD _setForeground =
       _lib.lookupFunction<_IntArgC, _IntArgD>('QP_SetForeground');
@@ -98,6 +102,23 @@ class NativeCore {
       return ptr.toDartString();
     } finally {
       _free(ptr);
+    }
+  }
+
+  /// 按维度取小时序列。argsJson: {"instance","dimension","hours"}。
+  /// 返回的 C 字符串由 Go 分配,必须用 QP_Free 释放。
+  String chartSeries(String argsJson) {
+    final a = argsJson.toNativeUtf8();
+    try {
+      final ptr = _chartSeries(a);
+      if (ptr == nullptr) return '[]';
+      try {
+        return ptr.toDartString();
+      } finally {
+        _free(ptr);
+      }
+    } finally {
+      malloc.free(a);
     }
   }
 }

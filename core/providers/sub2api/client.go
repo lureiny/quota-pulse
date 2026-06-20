@@ -129,13 +129,13 @@ func (p *Provider) FetchUsage(ctx context.Context, acc model.Account, opt provid
 // 走后端 /admin/usage(每请求一行,留空 account_id = 全实例),按 created_at desc
 // 翻页;只收集 id>sinceID 的新行,某页不再有新行即停(增量稳态仅 ~1 页),并受
 // pageCap 封顶。时区不传给服务端 —— 我们拿精确 created_at 在本地分桶(见 usage.Store)。
-func (p *Provider) FetchUsageSince(ctx context.Context, sinceID int64, from time.Time, pageCap int) ([]model.UsageRow, error) {
+func (p *Provider) FetchUsageSince(ctx context.Context, sinceID int64, from time.Time, pageCap int) ([]model.UsageEvent, error) {
 	if pageCap <= 0 {
 		pageCap = 20
 	}
 	startDate := from.Format("2006-01-02")
 	endDate := time.Now().AddDate(0, 0, 1).Format("2006-01-02") // 多给一天,吸收时区/跨天边界
-	out := make([]model.UsageRow, 0, 256)
+	out := make([]model.UsageEvent, 0, 256)
 
 	for page := 1; page <= pageCap; page++ {
 		q := url.Values{}
@@ -162,15 +162,7 @@ func (p *Provider) FetchUsageSince(ctx context.Context, sinceID int64, from time
 			if it.ID <= sinceID {
 				continue // 已并入过(desc 下多为页尾的旧行)
 			}
-			out = append(out, model.UsageRow{
-				ID:          it.ID,
-				AccountID:   strconv.FormatInt(it.AccountID, 10),
-				CreatedAt:   it.CreatedAt,
-				Input:       it.InputTokens,
-				Output:      it.OutputTokens,
-				CacheCreate: it.CacheCreationTokens,
-				CacheRead:   it.CacheReadTokens,
-			})
+			out = append(out, toEvent(it))
 			newInPage++
 		}
 		if newInPage == 0 || page >= resp.Pages {

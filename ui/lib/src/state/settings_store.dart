@@ -77,13 +77,34 @@ extension ChartRangeX on ChartRange {
 /// 这样改 chartRange 不改 toConfigJson → 不重启核心、不刷新全部用量(见 #4)。
 const int kChartFetchHours = 168;
 
-/// 图表样式:堆叠柱状图 / 多账户曲线图。
+/// 图表样式:堆叠柱状图 / 多系列曲线图。
 enum ChartType { bar, line }
 
 extension ChartTypeX on ChartType {
   String get label => switch (this) {
         ChartType.bar => '柱状图',
         ChartType.line => '曲线图',
+      };
+}
+
+/// 图表分组维度(按哪种归类聚合 / 着色)。
+enum ChartGroupBy { account, apiKey, model, user, group }
+
+extension ChartGroupByX on ChartGroupBy {
+  /// 传给 core 的维度名(与 core/usage 的白名单一致)。
+  String get dimension => switch (this) {
+        ChartGroupBy.account => 'account',
+        ChartGroupBy.apiKey => 'api_key',
+        ChartGroupBy.model => 'model',
+        ChartGroupBy.user => 'user',
+        ChartGroupBy.group => 'group',
+      };
+  String get label => switch (this) {
+        ChartGroupBy.account => '账户',
+        ChartGroupBy.apiKey => 'API Key',
+        ChartGroupBy.model => '模型',
+        ChartGroupBy.user => '用户',
+        ChartGroupBy.group => '分组',
       };
 }
 
@@ -276,6 +297,7 @@ class Settings {
   final bool chartEnabled; // 是否拉取并展示小时时序(关=零额外请求,默认开)
   final ChartRange chartRange; // 显示时间跨度(默认 24h;UI 裁剪,不影响 core 拉取窗口)
   final ChartType chartType; // 样式:柱状图 / 曲线图(默认柱状图;纯 UI)
+  final ChartGroupBy chartGroupBy; // 分组维度:账户/api_key/模型/用户/分组(默认账户;纯 UI)
 
   const Settings({
     this.instances = const [],
@@ -293,6 +315,7 @@ class Settings {
     this.chartEnabled = true,
     this.chartRange = ChartRange.h24,
     this.chartType = ChartType.bar,
+    this.chartGroupBy = ChartGroupBy.account,
   });
 
   bool get configured => instances.any((i) => i.configured);
@@ -313,6 +336,7 @@ class Settings {
     bool? chartEnabled,
     ChartRange? chartRange,
     ChartType? chartType,
+    ChartGroupBy? chartGroupBy,
   }) =>
       Settings(
         instances: instances ?? this.instances,
@@ -330,6 +354,7 @@ class Settings {
         chartEnabled: chartEnabled ?? this.chartEnabled,
         chartRange: chartRange ?? this.chartRange,
         chartType: chartType ?? this.chartType,
+        chartGroupBy: chartGroupBy ?? this.chartGroupBy,
       );
 
   /// 已配置实例 → (唯一展示名, 实例)。唯一名规则与核心 facade 去重一致(避免 key 串号),
@@ -410,6 +435,7 @@ class Settings {
         'chart_enabled': chartEnabled,
         'chart_range': chartRange.name,
         'chart_type': chartType.name,
+        'chart_group_by': chartGroupBy.name,
       };
 
   factory Settings.fromJson(Map<String, dynamic> j) => Settings(
@@ -448,6 +474,10 @@ class Settings {
         chartType: ChartType.values.firstWhere(
           (t) => t.name == j['chart_type'],
           orElse: () => ChartType.bar,
+        ),
+        chartGroupBy: ChartGroupBy.values.firstWhere(
+          (g) => g.name == j['chart_group_by'],
+          orElse: () => ChartGroupBy.account,
         ),
       );
 }

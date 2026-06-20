@@ -2,11 +2,8 @@ package model
 
 import "time"
 
-// HourPoint 是某账户在某一个小时桶内的 token 用量(来自 sub2api 的
-// dashboard/trend 接口,granularity=hour)。Hour 为该小时的起点(本地时区)。
-//
-// 与 Meter(当前窗口快照)正交:Meter 回答"现在用了多少",HourPoint 回答
-// "过去每小时各用了多少",供主面板按站点画堆叠柱状图(按账户着色)。
+// HourPoint 是某「系列」在某一个小时桶内的 token 用量。Hour 为该小时起点(本地时区)。
+// 系列由查询维度决定(账户 / api_key / model / user / group …),见 usage.Store.QuerySeries。
 type HourPoint struct {
 	Hour        time.Time `json:"hour"`         // 小时桶起点
 	Input       int64     `json:"input"`        // 输入 token
@@ -16,14 +13,26 @@ type HourPoint struct {
 	Total       int64     `json:"total"`        // 合计 token(= 上面四项之和)
 }
 
-// UsageRow 是 sub2api /admin/usage 的一条原始请求日志(只取分桶所需字段)。
-// ID 单调递增,做增量同步游标;CreatedAt 精确,客户端按本地时区分小时桶。
-type UsageRow struct {
+// Series 是某维度下的一条序列(一个维度值 → 它的小时序列)。
+// Key 是维度值(如 account_id / model 名),Name 是展示名。
+type Series struct {
+	Key    string      `json:"key"`
+	Name   string      `json:"name"`
+	Points []HourPoint `json:"points"`
+}
+
+// UsageEvent 是 sub2api /admin/usage 的一条原始请求事件(本地落库的单位)。
+//
+// 维度走 Dims(label 风格,key→value 字符串):account/account_name/api_key/
+// api_key_name/user/user_name/group/group_name/model … —— 加新维度只需往 Dims 塞键,
+// 存储侧用一个 JSON 列承载,零迁移。绝不放 api_key 明文密钥。
+type UsageEvent struct {
 	ID          int64
-	AccountID   string
 	CreatedAt   time.Time
 	Input       int64
 	Output      int64
 	CacheCreate int64
 	CacheRead   int64
+	Cost        float64
+	Dims        map[string]string
 }

@@ -57,15 +57,15 @@ func TestFetchUsageSincePagingCursorCap(t *testing.T) {
 	}
 	got := map[int64]string{}
 	for _, r := range rows {
-		got[r.ID] = r.AccountID
+		got[r.ID] = r.Dims["account"]
 	}
 	for _, id := range []int64{3, 4, 5} {
 		if _, ok := got[id]; !ok {
 			t.Errorf("missing id %d", id)
 		}
 	}
-	if got[3] != "11" || got[5] != "10" { // account_id int64 → string
-		t.Errorf("account_id mapping wrong: %v", got)
+	if got[3] != "11" || got[5] != "10" { // account_id int64 → dims["account"] string
+		t.Errorf("account dim mapping wrong: %v", got)
 	}
 
 	// 冷启动 sinceID=0 → 全 5 条(翻到末页)。

@@ -483,13 +483,17 @@ class _ShellState extends State<Shell>
     if (s.configured) _startCore(s); // 已配置才有核心可重启
   }
 
-  void _onChartChanged(bool enabled, ChartRange range, ChartType type) {
+  void _onChartChanged(
+      bool enabled, ChartRange range, ChartType type, ChartGroupBy groupBy) {
     final enabledChanged = enabled != _settings.chartEnabled;
     final s = _settings.copyWith(
-        chartEnabled: enabled, chartRange: range, chartType: type);
+        chartEnabled: enabled,
+        chartRange: range,
+        chartType: type,
+        chartGroupBy: groupBy);
     SettingsStore.save(s);
-    setState(() => _settings = s); // 跨度/样式纯 UI:即刷 PopoverPage,不动核心
-    // 仅开关变化才重启核心(它进 toConfigJson);改跨度/样式不刷新用量(#4)。
+    setState(() => _settings = s); // 跨度/样式/维度纯 UI:即刷 PopoverPage,不动核心
+    // 仅开关变化才重启核心(它进 toConfigJson);改跨度/样式/维度不刷新用量。
     if (enabledChanged && s.configured) _startCore(s);
   }
 
@@ -544,6 +548,7 @@ class _ShellState extends State<Shell>
       chartEnabled: _settings.chartEnabled,
       chartRangeHours: _settings.chartRange.hours,
       chartType: _settings.chartType,
+      chartDimension: _settings.chartGroupBy.dimension,
       onRefresh: () => _controller?.refreshNow(),
       onSettings: () => setState(() => _view = _View.settings),
     );

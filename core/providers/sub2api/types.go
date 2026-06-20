@@ -41,15 +41,43 @@ type usageProgress struct {
 	LimitRequests    int64        `json:"limit_requests"`
 }
 
-// usageLogItem 对应 GET /admin/usage 返回 data.items[] 的单条(AdminUsageLog,精简)。
+// usageRef 是 account/group 等内嵌的最小引用(id+name)。
+type usageRef struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+// usageKeyRef 是内嵌 api_key:只取 id+name,**绝不取 key 明文密钥**。
+type usageKeyRef struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+// usageUserRef 是内嵌 user:用 email 当展示名(username 常为空)。
+type usageUserRef struct {
+	ID       int64  `json:"id"`
+	Email    string `json:"email"`
+	Username string `json:"username"`
+}
+
+// usageLogItem 对应 GET /admin/usage 返回 data.items[] 的单条(AdminUsageLog,只取所需)。
 type usageLogItem struct {
-	ID                  int64     `json:"id"`
-	AccountID           int64     `json:"account_id"`
-	CreatedAt           time.Time `json:"created_at"`
-	InputTokens         int64     `json:"input_tokens"`
-	OutputTokens        int64     `json:"output_tokens"`
-	CacheCreationTokens int64     `json:"cache_creation_tokens"`
-	CacheReadTokens     int64     `json:"cache_read_tokens"`
+	ID                  int64         `json:"id"`
+	CreatedAt           time.Time     `json:"created_at"`
+	AccountID           int64         `json:"account_id"`
+	APIKeyID            int64         `json:"api_key_id"`
+	UserID              int64         `json:"user_id"`
+	GroupID             int64         `json:"group_id"`
+	Model               string        `json:"model"`
+	InputTokens         int64         `json:"input_tokens"`
+	OutputTokens        int64         `json:"output_tokens"`
+	CacheCreationTokens int64         `json:"cache_creation_tokens"`
+	CacheReadTokens     int64         `json:"cache_read_tokens"`
+	ActualCost          float64       `json:"actual_cost"`
+	Account             *usageRef     `json:"account"`
+	APIKey              *usageKeyRef  `json:"api_key"`
+	User                *usageUserRef `json:"user"`
+	Group               *usageRef     `json:"group"`
 }
 
 // usageListResp 对应 GET /admin/usage 的 data 分页信封(GetData 已剥外层)。
