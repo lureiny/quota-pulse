@@ -78,6 +78,12 @@ func (p *Poller) syncInstance(ctx context.Context, b binding) {
 	from := time.Now().Add(-2 * time.Hour)
 	if sinceID == 0 {
 		from = time.Now().Add(-time.Duration(p.chart.BackfillHours) * time.Hour) // 冷启动回填
+	} else if at := p.usageDB.SyncedAt(b.instance); at > 0 {
+		// 把回看窗口拉到「上次成功同步以来」,覆盖离线 >2h 的空档,避免漏数据。
+		// 稳态下 at≈now,from 仍受 now-2h 下限约束;靠 id 游标 + 主键去重保证不重不漏。
+		if gap := time.Unix(at, 0).Add(-30 * time.Minute); gap.Before(from) {
+			from = gap
+		}
 	}
 
 	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)

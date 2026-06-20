@@ -58,6 +58,9 @@ func TestStoreEventsQuerySeriesMultiDim(t *testing.T) {
 	if st.LastID("inst") != 3 {
 		t.Fatalf("LastID=%d want 3", st.LastID("inst"))
 	}
+	if st.SyncedAt("inst") <= 0 {
+		t.Error("SyncedAt should advance after AddEvents")
+	}
 
 	// 按 account:账户 2 两个小时桶(14:00 合并 id1+id2;15:00 id3)。
 	acc := seriesByKey(st.QuerySeries("inst", "account", 0))

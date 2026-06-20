@@ -70,7 +70,6 @@ class _PopoverPageState extends State<PopoverPage> {
         final groups = _groupByInstance(widget.controller.pulses);
         return Column(
           children: [
-            if (widget.chartEnabled) _chartViewBar(context),
             Expanded(child: _body(context, groups)),
             const Divider(height: 1),
             _footer(context),
@@ -137,6 +136,7 @@ class _PopoverPageState extends State<PopoverPage> {
             chartType: widget.chartType,
             fetchSeriesJson: widget.controller.chartSeriesJson,
           ));
+          children.add(_chartViewBar(context)); // 控件贴在该实例图表下方
         }
       }
     });
@@ -172,7 +172,7 @@ class _PopoverPageState extends State<PopoverPage> {
                       ...e.value.map((p) => AccountTile(p,
                           onRefresh: () => widget.controller.refreshAccount(p.key),
                           resetMode: widget.resetMode)),
-                      if (widget.chartEnabled)
+                      if (widget.chartEnabled) ...[
                         HourlyChart(
                           key: ValueKey('chart-${e.key}'),
                           instance: e.key,
@@ -181,6 +181,8 @@ class _PopoverPageState extends State<PopoverPage> {
                           chartType: widget.chartType,
                           fetchSeriesJson: widget.controller.chartSeriesJson,
                         ),
+                        _chartViewBar(context), // 控件贴在该实例图表下方
+                      ],
                     ],
                   ),
               ],
@@ -271,7 +273,7 @@ class _PopoverPageState extends State<PopoverPage> {
   Widget _chartViewBar(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 6, 8, 0),
+      padding: const EdgeInsets.fromLTRB(12, 0, 8, 10),
       child: Row(
         children: [
           Icon(Icons.insights_outlined,

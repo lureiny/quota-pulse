@@ -121,6 +121,14 @@ func (s *Store) LastID(instance string) int64 {
 	return id
 }
 
+// SyncedAt 返回某实例上次成功并入事件的时刻(unix 秒;无则 0)。
+// 用于把增量回看窗口拉到「上次同步以来」,避免离线空档漏数据。
+func (s *Store) SyncedAt(instance string) int64 {
+	var t int64
+	_ = s.db.QueryRow(`SELECT updated_at FROM sync_state WHERE instance=?`, instance).Scan(&t)
+	return t
+}
+
 // hourBucket 把事件时间截断到本地小时起点的 unix 秒。
 func hourBucket(t time.Time) int64 {
 	l := t.In(time.Local)
