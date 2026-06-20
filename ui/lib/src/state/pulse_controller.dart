@@ -52,9 +52,13 @@ class PulseController extends ChangeNotifier {
   /// 刷新某个实例的全部账户(key = "instance|")。
   void refreshInstance(String instance) => _source.refresh('$instance|');
 
-  /// 按维度取某实例的小时用量序列 JSON([]Series)。本地查询、便宜。
-  String chartSeriesJson(String instance, String dimension, int hours) =>
-      _source.chartSeriesJson(instance, dimension, hours);
+  /// 按维度取某实例的图表数据(序列 + 覆盖水位)。本地查询、便宜。
+  ChartData chartData(String instance, String dimension, int hours) =>
+      ChartData.parse(_source.chartSeriesJson(instance, dimension, hours));
+
+  /// 触发按需回填:确保本地覆盖延伸到 now-hours(异步、即时返回)。
+  void ensureCoverage(String instance, int hours) =>
+      _source.ensureCoverage(instance, hours);
 
   void _tick() {
     try {

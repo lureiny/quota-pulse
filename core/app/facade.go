@@ -137,21 +137,57 @@ func (a *App) SnapshotJSON() string {
 	return string(b)
 }
 
+// chartResp 是图表取数的返回体:序列 + 覆盖水位,供 UI 区分「真没有数据」与「本地尚未
+// 覆盖到这么早」(后者画灰色未采集带 + 触发按需补齐)。
+type chartResp struct {
+	Series        []model.Series `json:"series"`
+	CoverageFrom  int64          `json:"coverageFrom"`  // 本地完整覆盖的最早时刻(unix 秒)
+	RequestedFrom int64          `json:"requestedFrom"` // 本次请求的左界 now-hours(unix 秒)
+}
+
 // ChartSeriesJSON 按 dimension(account/api_key/model/user/group)聚合 instance 最近
-// hours 小时的用量,返回 []model.Series 的 JSON,供图表按需取数。库未开则返回 "[]"。
+// hours 小时的用量,返回 chartResp 的 JSON。库未开则返回空壳。
 func (a *App) ChartSeriesJSON(instance, dimension string, hours int) string {
+	empty := `{"series":[],"coverageFrom":0,"requestedFrom":0}`
 	if a.usageDB == nil {
-		return "[]"
+		return empty
 	}
 	if hours <= 0 {
 		hours = a.cfg.Chart.RangeHours
 	}
-	since := time.Now().Add(-time.Duration(hours) * time.Hour).Unix()
-	b, err := json.Marshal(a.usageDB.QuerySeries(instance, dimension, since))
+	now := time.Now()
+	reqFrom := now.Add(-time.Duration(hours) * time.Hour).Unix()
+
+	// 覆盖水位:clamp 到保留窗口下限(更早的迟早被 Evict,不算覆盖);从未同步则记 now。
+	cov := a.usageDB.CoverageFrom(instance)
+	if cov == 0 {
+		cov = now.Unix()
+	} else if floor := now.Add(-time.Duration(a.cfg.Chart.RetentionHours) * time.Hour).Unix(); cov < floor {
+		cov = floor
+	}
+
+	b, err := json.Marshal(chartResp{
+		Series:        a.usageDB.QuerySeries(instance, dimension, reqFrom),
+		CoverageFrom:  cov,
+		RequestedFrom: reqFrom,
+	})
 	if err != nil {
-		return "[]"
+		return empty
 	}
 	return string(b)
+}
+
+// EnsureCoverage 触发按需回填:确保 instance 的本地覆盖延伸到 now-hours(异步、不阻塞)。
+// 已覆盖或库未开则是廉价 no-op。UI 在切大跨度时调用;补齐进度由后续 ChartSeries 的
+// coverageFrom 体现。
+func (a *App) EnsureCoverage(instance string, hours int) {
+	if a.usageDB == nil {
+		return
+	}
+	if hours <= 0 {
+		hours = a.cfg.Chart.RangeHours
+	}
+	go a.poll.Backfill(instance, hours)
 }
 
 // Subscribe 注册一个回调,每轮更新后收到 JSON 快照。

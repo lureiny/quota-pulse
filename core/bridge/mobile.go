@@ -59,6 +59,14 @@ func (e *Engine) SnapshotJSON() string { return e.app.SnapshotJSON() }
 // Refresh 触发一次强制回源。
 func (e *Engine) Refresh(accountID string) { e.app.Refresh(accountID) }
 
+// ChartSeries 按维度聚合用量序列,返回 {series,coverageFrom,requestedFrom} 的 JSON。
+func (e *Engine) ChartSeries(instance, dimension string, hours int) string {
+	return e.app.ChartSeriesJSON(instance, dimension, hours)
+}
+
+// EnsureCoverage 触发按需回填,确保本地覆盖延伸到 now-hours(异步)。
+func (e *Engine) EnsureCoverage(instance string, hours int) { e.app.EnsureCoverage(instance, hours) }
+
 // 以下信号供宿主把系统状态喂给调度器(省电/实时感)。
 
 func (e *Engine) SetForeground(v bool) { e.app.SetPopoverOpen(v) }

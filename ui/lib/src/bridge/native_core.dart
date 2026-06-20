@@ -31,6 +31,8 @@ class NativeCore {
   late final _StrArgD _refresh = _lib.lookupFunction<_StrArgC, _StrArgD>('QP_Refresh');
   late final _StrToStrD _chartSeries =
       _lib.lookupFunction<_StrToStrC, _StrToStrD>('QP_ChartSeries');
+  late final _StrArgD _ensureCoverage =
+      _lib.lookupFunction<_StrArgC, _StrArgD>('QP_EnsureCoverage');
   late final _StrArgD _free = _lib.lookupFunction<_StrArgC, _StrArgD>('QP_Free');
   late final _IntArgD _setForeground =
       _lib.lookupFunction<_IntArgC, _IntArgD>('QP_SetForeground');
@@ -105,13 +107,14 @@ class NativeCore {
     }
   }
 
-  /// 按维度取小时序列。argsJson: {"instance","dimension","hours"}。
-  /// 返回的 C 字符串由 Go 分配,必须用 QP_Free 释放。
+  /// 按维度取图表数据。argsJson: {"instance","dimension","hours"}。
+  /// 返回 {series,coverageFrom,requestedFrom} 的 JSON;C 字符串由 Go 分配,须 QP_Free 释放。
+  /// 空指针返回 ''(上层据此判为取数异常,区别于真空数据)。
   String chartSeries(String argsJson) {
     final a = argsJson.toNativeUtf8();
     try {
       final ptr = _chartSeries(a);
-      if (ptr == nullptr) return '[]';
+      if (ptr == nullptr) return '';
       try {
         return ptr.toDartString();
       } finally {
@@ -119,6 +122,17 @@ class NativeCore {
       }
     } finally {
       malloc.free(a);
+    }
+  }
+
+  /// 触发按需回填:确保某实例本地覆盖延伸到 now-hours(异步、立即返回)。
+  /// argsJson: {"instance","hours"}。
+  void ensureCoverage(String argsJson) {
+    final p = argsJson.toNativeUtf8();
+    try {
+      _ensureCoverage(p);
+    } finally {
+      malloc.free(p);
     }
   }
 }

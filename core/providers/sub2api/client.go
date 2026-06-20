@@ -172,6 +172,50 @@ func (p *Provider) FetchUsageSince(ctx context.Context, sinceID int64, from time
 	return out, nil
 }
 
+// FetchUsageWindow 实现 provider.UsageLogFetcher:抓 [from, to] 窗口内全部事件,供按需
+// 回填历史。与 FetchUsageSince 的区别:用 end_date 把窗口右界收到 to(只补缺口、少重拉),
+// 且不按 id 游标过滤(收全部,靠本地主键去重)。complete 见接口说明。
+func (p *Provider) FetchUsageWindow(ctx context.Context, from, to time.Time, pageCap int) ([]model.UsageEvent, bool, error) {
+	if pageCap <= 0 {
+		pageCap = 20
+	}
+	startDate := from.Format("2006-01-02")
+	endDate := to.AddDate(0, 0, 1).Format("2006-01-02") // 多给一天,吸收时区/跨天边界
+	out := make([]model.UsageEvent, 0, 256)
+	complete := false
+
+	for page := 1; page <= pageCap; page++ {
+		q := url.Values{}
+		q.Set("page", strconv.Itoa(page))
+		q.Set("page_size", "1000")
+		q.Set("sort_by", "created_at")
+		q.Set("sort_order", "desc")
+		q.Set("start_date", startDate)
+		q.Set("end_date", endDate)
+
+		data, err := p.client.GetData(ctx, apiPrefix+"/usage?"+q.Encode(), false)
+		if err != nil {
+			return nil, false, err
+		}
+		var resp usageListResp
+		if err := json.Unmarshal(data, &resp); err != nil {
+			return nil, false, fmt.Errorf("decode usage: %w", err)
+		}
+		if len(resp.Items) == 0 {
+			complete = true // 窗口内无更多数据 = 已抓全
+			break
+		}
+		for _, it := range resp.Items {
+			out = append(out, toEvent(it))
+		}
+		if page >= resp.Pages {
+			complete = true // 翻到末页,窗口抓全
+			break
+		}
+	}
+	return out, complete, nil
+}
+
 func idAllowSet(ids []string) map[string]struct{} {
 	if len(ids) == 0 {
 		return nil

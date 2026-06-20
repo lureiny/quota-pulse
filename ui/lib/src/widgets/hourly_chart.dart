@@ -11,9 +11,11 @@ import '../state/settings_store.dart' show ChartType;
 ///
 /// 数据按 `dimension`(account/api_key/model/user/group)从 core 即时聚合而来
 /// (本地 SQLite 原始事件 GROUP BY),每个维度值 = 一条「系列」,按系列着色。
-/// - 柱状:每小时一根堆叠柱,按系列分段;曲线:每系列一条线。
-/// - x 轴覆盖整个选定窗口的每一小时,无数据的小时也留空列;全空也渲染坐标框。
-/// - 鼠标悬停 → 半透明、随主题 tooltip,列出该小时各系列的 in/out/cache 与合计。
+/// - 柱状:每桶一根堆叠柱,按系列分段;曲线:每系列一条线。
+/// - x 轴覆盖整个选定窗口;跨度大于可容纳柱数时按「整数小时」合并成桶(每桶=K 小时
+///   累计,降精度但不丢准确度);无数据的桶也留位。
+/// - 图例可点击开关单个系列;鼠标悬停 → 半透明、随主题 tooltip,列出该桶各系列明细与合计。
+/// - 三态可辨:取数异常 / 该维度真无请求 / 本地尚未覆盖到该区间(灰色「未采集」带 + 按需补齐)。
 class HourlyChart extends StatefulWidget {
   const HourlyChart({
     super.key,
@@ -21,7 +23,8 @@ class HourlyChart extends StatefulWidget {
     required this.dimension,
     required this.rangeHours,
     required this.chartType,
-    required this.fetchSeriesJson,
+    required this.fetchChart,
+    required this.ensureCoverage,
   });
 
   final String instance;
@@ -29,9 +32,12 @@ class HourlyChart extends StatefulWidget {
   final int rangeHours;
   final ChartType chartType;
 
-  /// (instance, dimension, hours) → []Series 的 JSON(本地查询,便宜)。
-  final String Function(String instance, String dimension, int hours)
-      fetchSeriesJson;
+  /// (instance, dimension, hours) → ChartData(本地查询,便宜)。
+  final ChartData Function(String instance, String dimension, int hours)
+      fetchChart;
+
+  /// (instance, hours) → 触发按需回填,确保本地覆盖延伸到 now-hours(异步)。
+  final void Function(String instance, int hours) ensureCoverage;
 
   @override
   State<HourlyChart> createState() => _HourlyChartState();
@@ -39,27 +45,34 @@ class HourlyChart extends StatefulWidget {
 
 class _HourlyChartState extends State<HourlyChart> {
   static const double _areaHeight = 96;
-  static const double _minSlot = 13;
+  static const double _minSlot = 14; // 每根柱/桶的最小水平占位,据此定可容纳桶数
   static const double _maxBarWidth = 26;
+  static const double _labelReserve = 18; // 底部小时标签预留高
 
-  List<UsageSeries> _series = const [];
+  ChartData _data = const ChartData();
+  final Set<String> _hidden = {}; // 被图例关掉的系列 key
+  DateTime? _backfillStarted; // 本次未覆盖触发补齐的时刻(用于「补齐中」短时态)
   Timer? _timer;
 
   @override
   void initState() {
     super.initState();
-    _series = _load(); // 直接赋值(initState 里不 setState),build 紧随其后。
-    // 随新事件同步,定时刷新图表(与快照 tick 解耦,避免每次重建都打 FFI)。
+    _data = _load(); // 直接赋值(initState 里不 setState),build 紧随其后。
+    _maybeBackfill();
+    // 随新事件 / 补齐进度,定时刷新(与快照 tick 解耦,避免每次重建都打 FFI)。
     _timer = Timer.periodic(const Duration(seconds: 10), (_) => _refresh());
   }
 
   @override
   void didUpdateWidget(HourlyChart old) {
     super.didUpdateWidget(old);
-    // 维度/实例/跨度变了立即重取(切样式 chartType 不必重取,build 直接换渲染)。
-    if (old.instance != widget.instance ||
-        old.dimension != widget.dimension ||
-        old.rangeHours != widget.rangeHours) {
+    final dimOrInst =
+        old.instance != widget.instance || old.dimension != widget.dimension;
+    if (dimOrInst) {
+      _hidden.clear(); // 维度/实例变 → 系列键变,清隐藏集
+    }
+    if (dimOrInst || old.rangeHours != widget.rangeHours) {
+      _backfillStarted = null; // 新跨度 → 重置「补齐中」短时态
       _refresh();
     }
   }
@@ -70,27 +83,56 @@ class _HourlyChartState extends State<HourlyChart> {
     super.dispose();
   }
 
-  List<UsageSeries> _load() {
+  ChartData _load() {
     try {
-      return UsageSeries.listFromJson(widget.fetchSeriesJson(
-          widget.instance, widget.dimension, widget.rangeHours));
+      return widget.fetchChart(
+          widget.instance, widget.dimension, widget.rangeHours);
     } catch (_) {
-      return const [];
+      return ChartData.failed;
     }
   }
 
   void _refresh() {
-    final s = _load();
-    if (mounted) setState(() => _series = s);
+    final d = _load();
+    if (!mounted) return;
+    setState(() => _data = d);
+    _maybeBackfill();
+  }
+
+  /// 区间未被本地覆盖 → 触发按需回填(Go 侧已对「已覆盖 / 在途」做幂等保护)。
+  void _maybeBackfill() {
+    if (_data.ok && !_data.fullyCovered) {
+      _backfillStarted ??= DateTime.now();
+      widget.ensureCoverage(widget.instance, widget.rangeHours);
+    } else {
+      _backfillStarted = null;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    // 注意:_series 为空(该窗口无用量)也照常渲染空坐标框(留位),不隐藏。
 
-    // 稳定着色:按系列 key 排序 → 索引 → 颜色。
-    final ordered = [..._series]..sort((a, b) => a.key.compareTo(b.key));
+    // 取数/解析异常:明确区别于「真无数据」,可点按重试。
+    if (!_data.ok) {
+      return _placeholder(cs,
+          icon: Icons.error_outline,
+          text: '数据获取异常,点按重试',
+          onTap: _refresh);
+    }
+
+    final allSeries = _data.series;
+    if (allSeries.isEmpty) {
+      // 空:已覆盖整段 = 真没有请求;未覆盖 = 本地还没采到这么早,正在补齐。
+      if (_data.fullyCovered) {
+        return _placeholder(cs,
+            icon: Icons.inbox_outlined, text: '该维度在所选区间暂无请求');
+      }
+      return _placeholder(cs, text: '本地尚未采集到该区间,正在补齐…', spinner: true);
+    }
+
+    // 稳定着色:按系列 key 排序 → 索引 → 颜色(对全部系列固定,隐藏不改色)。
+    final ordered = [...allSeries]..sort((a, b) => a.key.compareTo(b.key));
     final colorOf = <String, Color>{};
     final nameOf = <String, String>{};
     for (var i = 0; i < ordered.length; i++) {
@@ -98,21 +140,17 @@ class _HourlyChartState extends State<HourlyChart> {
       colorOf[s.key] = accountColor(i);
       nameOf[s.key] = s.name.isEmpty ? s.key : s.name;
     }
+    final visible =
+        ordered.where((s) => !_hidden.contains(s.key)).toList(growable: false);
 
-    final slots = _buildSlots(ordered, widget.rangeHours);
+    final now = DateTime.now();
+    final nowHour = DateTime(now.year, now.month, now.day, now.hour);
+    final windowStart = nowHour.subtract(Duration(hours: widget.rangeHours - 1));
 
-    var barMax = 0, lineMax = 0;
-    for (final s in slots) {
-      if (s.total > barMax) barMax = s.total;
-      for (final p in s.points.values) {
-        if (p.sum > lineMax) lineMax = p.sum;
-      }
-    }
-    final rawMax =
-        (widget.chartType == ChartType.line ? lineMax : barMax).toDouble();
-    final maxY = rawMax > 0 ? rawMax * 1.18 : 1.0;
-
-    final labelStep = (slots.length / 6).ceil().clamp(1, slots.length).toInt();
+    // 未采集带:落在覆盖水位之前的窗口时间比例(approximate 横向比例)。
+    final uncoveredFrac = _uncoveredFraction(windowStart, nowHour);
+    final fresh = _backfillStarted != null &&
+        now.difference(_backfillStarted!) < const Duration(seconds: 90);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
@@ -123,20 +161,44 @@ class _HourlyChartState extends State<HourlyChart> {
             height: _areaHeight,
             child: LayoutBuilder(
               builder: (context, c) {
-                final n = slots.length;
-                final fits = n * _minSlot <= c.maxWidth;
-                final slotW = fits ? c.maxWidth / n : _minSlot;
-                final totalW = fits ? c.maxWidth : n * _minSlot;
+                // 按可用宽度定桶:容纳不下逐小时就按整数小时合并(降精度不丢准确度)。
+                final maxBars = (c.maxWidth / _minSlot)
+                    .floor()
+                    .clamp(1, widget.rangeHours);
+                final bucketHours = (widget.rangeHours / maxBars).ceil();
+                final slots =
+                    _buildSlots(visible, windowStart, nowHour, bucketHours);
+
+                var barMax = 0, lineMax = 0;
+                for (final s in slots) {
+                  if (s.total > barMax) barMax = s.total;
+                  for (final p in s.points.values) {
+                    if (p.sum > lineMax) lineMax = p.sum;
+                  }
+                }
+                final rawMax = (widget.chartType == ChartType.line
+                        ? lineMax
+                        : barMax)
+                    .toDouble();
+                final maxY = rawMax > 0 ? rawMax * 1.18 : 1.0;
+                final labelStep =
+                    (slots.length / 6).ceil().clamp(1, slots.length).toInt();
+                final slotW = c.maxWidth / slots.length;
                 final barWidth =
                     (slotW * 0.6).clamp(2.0, _maxBarWidth).toDouble();
+
                 final chart = widget.chartType == ChartType.line
-                    ? _lineChart(slots, ordered, colorOf, nameOf, maxY, labelStep, cs)
+                    ? _lineChart(
+                        slots, ordered, colorOf, nameOf, maxY, labelStep, cs)
                     : _barChart(slots, ordered, colorOf, nameOf, maxY, labelStep,
                         barWidth, cs);
-                if (fits) return chart;
-                return SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: SizedBox(width: totalW, child: chart),
+
+                if (uncoveredFrac <= 0) return chart;
+                return Stack(
+                  children: [
+                    chart,
+                    _uncoveredBand(c.maxWidth, uncoveredFrac, fresh, cs),
+                  ],
                 );
               },
             ),
@@ -144,6 +206,73 @@ class _HourlyChartState extends State<HourlyChart> {
           const SizedBox(height: 6),
           _legend(context, ordered, colorOf, nameOf),
         ],
+      ),
+    );
+  }
+
+  // ---- 占位(异常 / 空 / 补齐中) ----
+  Widget _placeholder(ColorScheme cs,
+      {IconData? icon, required String text, VoidCallback? onTap, bool spinner = false}) {
+    final row = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (spinner)
+          const SizedBox(
+              width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2))
+        else if (icon != null)
+          Icon(icon, size: 14, color: cs.onSurfaceVariant),
+        const SizedBox(width: 6),
+        Text(text, style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant)),
+      ],
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+      child: SizedBox(
+        height: _areaHeight,
+        child: Center(
+          child: onTap == null
+              ? row
+              : InkWell(borderRadius: BorderRadius.circular(6), onTap: onTap, child: Padding(padding: const EdgeInsets.all(6), child: row)),
+        ),
+      ),
+    );
+  }
+
+  // ---- 未采集带:覆盖窗口左侧 frac 比例,半透明灰 + 右边界 + 标签 ----
+  Widget _uncoveredBand(
+      double width, double frac, bool fresh, ColorScheme cs) {
+    return Positioned(
+      left: 0,
+      top: 0,
+      bottom: _labelReserve,
+      width: (width * frac).clamp(0.0, width),
+      child: IgnorePointer(
+        child: Container(
+          decoration: BoxDecoration(
+            color: cs.onSurface.withValues(alpha: 0.06),
+            border: Border(
+                right: BorderSide(
+                    color: cs.outlineVariant.withValues(alpha: 0.7),
+                    width: 1)),
+          ),
+          alignment: Alignment.topLeft,
+          padding: const EdgeInsets.only(left: 4, top: 2),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (fresh) ...[
+                SizedBox(
+                    width: 9,
+                    height: 9,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 1.6, color: cs.onSurfaceVariant)),
+                const SizedBox(width: 4),
+              ],
+              Text(fresh ? '补齐中…' : '未采集',
+                  style: TextStyle(fontSize: 9, color: cs.onSurfaceVariant)),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -265,7 +394,7 @@ class _HourlyChartState extends State<HourlyChart> {
     );
   }
 
-  // ---- 共用:底部小时标签(稀疏) ----
+  // ---- 共用:底部桶起始小时标签(稀疏) ----
   FlTitlesData _titles(List<_Slot> slots, int labelStep, ColorScheme cs) =>
       FlTitlesData(
         leftTitles:
@@ -276,14 +405,14 @@ class _HourlyChartState extends State<HourlyChart> {
         bottomTitles: AxisTitles(
           sideTitles: SideTitles(
             showTitles: true,
-            reservedSize: 18,
+            reservedSize: _labelReserve,
             interval: 1,
             getTitlesWidget: (value, meta) {
               final i = value.round();
               if (i < 0 || i >= slots.length || i % labelStep != 0) {
                 return const SizedBox.shrink();
               }
-              final h = slots[i].hour;
+              final h = slots[i].start;
               return Padding(
                 padding: const EdgeInsets.only(top: 2),
                 child: Text(
@@ -302,7 +431,7 @@ class _HourlyChartState extends State<HourlyChart> {
   BorderSide _tooltipBorder(ColorScheme cs) =>
       BorderSide(color: cs.outlineVariant.withValues(alpha: 0.5), width: 0.6);
 
-  // ---- tooltip:柱(整小时各系列明细) ----
+  // ---- tooltip:柱(整桶各系列明细 + 桶区间) ----
   BarTooltipItem? _barTooltip(_Slot slot, List<UsageSeries> ordered,
       Map<String, Color> colorOf, Map<String, String> nameOf, ColorScheme cs) {
     if (slot.points.isEmpty) return null;
@@ -324,14 +453,14 @@ class _HourlyChartState extends State<HourlyChart> {
       style: TextStyle(color: onText.withValues(alpha: 0.7), fontSize: 10),
     ));
     return BarTooltipItem(
-      _head(slot.hour),
+      _head(slot),
       TextStyle(color: onText, fontSize: 11, fontWeight: FontWeight.w600),
       children: spans,
       textAlign: TextAlign.left,
     );
   }
 
-  // ---- tooltip:线(被命中的各系列;首条带小时表头) ----
+  // ---- tooltip:线(被命中的各系列;首条带桶区间表头) ----
   List<LineTooltipItem?> _lineTooltip(
       List<LineBarSpot> spots,
       List<_Slot> slots,
@@ -359,7 +488,7 @@ class _HourlyChartState extends State<HourlyChart> {
       if (!headerPlaced) {
         headerPlaced = true;
         out.add(LineTooltipItem(
-          _head(slots[i].hour),
+          _head(slots[i]),
           TextStyle(color: onText, fontSize: 11, fontWeight: FontWeight.w600),
           textAlign: TextAlign.left,
           children: [
@@ -384,11 +513,18 @@ class _HourlyChartState extends State<HourlyChart> {
       '入${fmtTokens(p.input)}·出${fmtTokens(p.output)}·'
       '缓${fmtTokens(p.cacheCreate + p.cacheRead)} = ${fmtTokens(p.sum)}';
 
-  String _head(DateTime h) =>
-      '${h.month.toString().padLeft(2, '0')}-${h.day.toString().padLeft(2, '0')} '
-      '${h.hour.toString().padLeft(2, '0')}:00';
+  /// 桶表头:单小时桶显示 "MM-DD HH:00";多小时桶显示 "MM-DD HH:00–HH:00 · Nh累计"。
+  String _head(_Slot s) {
+    final a = s.start;
+    final base =
+        '${a.month.toString().padLeft(2, '0')}-${a.day.toString().padLeft(2, '0')} '
+        '${a.hour.toString().padLeft(2, '0')}:00';
+    if (s.spanHours <= 1) return base;
+    final e = s.end;
+    return '$base–${e.hour.toString().padLeft(2, '0')}:00 · ${s.spanHours}h累计';
+  }
 
-  // ---- 图例:系列色点 + 名字 ----
+  // ---- 图例:系列色点 + 名字;点击开关该系列(隐藏置灰划线) ----
   Widget _legend(BuildContext context, List<UsageSeries> ordered,
       Map<String, Color> colorOf, Map<String, String> nameOf) {
     final style = Theme.of(context).textTheme.labelSmall;
@@ -397,7 +533,24 @@ class _HourlyChartState extends State<HourlyChart> {
       runSpacing: 2,
       children: [
         for (final ser in ordered)
-          Row(
+          _legendItem(ser, colorOf, nameOf, style),
+      ],
+    );
+  }
+
+  Widget _legendItem(UsageSeries ser, Map<String, Color> colorOf,
+      Map<String, String> nameOf, TextStyle? style) {
+    final hidden = _hidden.contains(ser.key);
+    return InkWell(
+      borderRadius: BorderRadius.circular(4),
+      onTap: () => setState(() {
+        if (!_hidden.remove(ser.key)) _hidden.add(ser.key);
+      }),
+      child: Opacity(
+        opacity: hidden ? 0.4 : 1,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 1),
+          child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
@@ -409,54 +562,89 @@ class _HourlyChartState extends State<HourlyChart> {
                 ),
               ),
               const SizedBox(width: 3),
-              Text(nameOf[ser.key]!, style: style),
+              Text(
+                nameOf[ser.key]!,
+                style: style?.copyWith(
+                    decoration:
+                        hidden ? TextDecoration.lineThrough : TextDecoration.none),
+              ),
             ],
           ),
-      ],
+        ),
+      ),
     );
   }
 
-  /// 连续小时桶:从 nowHour-(hours-1) 到 nowHour 共 hours 个,逐小时;空桶也保留。
-  /// 每个系列在每小时至多一个点(core 已按小时聚合),据此填入 slot.points[seriesKey]。
-  List<_Slot> _buildSlots(List<UsageSeries> ordered, int hours) {
-    final now = DateTime.now();
-    final nowHour = DateTime(now.year, now.month, now.day, now.hour);
-    final windowStart = nowHour.subtract(Duration(hours: hours - 1));
+  /// 落在覆盖水位之前的窗口时间比例(0=全覆盖;>0=左侧该比例尚未采集)。
+  double _uncoveredFraction(DateTime windowStart, DateTime nowHour) {
+    final cov = _data.coverageFrom;
+    if (cov == null || _data.fullyCovered) return 0;
+    final windowEnd = nowHour.add(const Duration(hours: 1));
+    final spanMin = windowEnd.difference(windowStart).inMinutes;
+    if (spanMin <= 0) return 0;
+    final uncoveredMin = cov.difference(windowStart).inMinutes;
+    return (uncoveredMin / spanMin).clamp(0.0, 1.0);
+  }
 
-    // seriesKey -> (hourEpoch -> HourPoint)
-    final byKey = <String, Map<int, HourPoint>>{};
-    for (final ser in ordered) {
-      final m = <int, HourPoint>{};
+  /// 把窗口按 bucketHours 合并成桶:从 windowStart 起每 K 小时一桶,逐桶累加各系列;
+  /// 空桶也保留(留位)。每桶值 = 该 K 小时内各系列的累计(降精度不丢准确度)。
+  List<_Slot> _buildSlots(List<UsageSeries> series, DateTime windowStart,
+      DateTime nowHour, int bucketHours) {
+    final k = bucketHours < 1 ? 1 : bucketHours;
+    final hours = nowHour.difference(windowStart).inHours + 1;
+    final nB = (hours / k).ceil();
+    final lastHour = nowHour.add(const Duration(hours: 1));
+
+    // bucketIndex -> seriesKey -> [in,out,cacheCreate,cacheRead]
+    final acc = List.generate(nB, (_) => <String, List<int>>{});
+    for (final ser in series) {
       for (final p in ser.points) {
         final hb = DateTime(p.hour.year, p.hour.month, p.hour.day, p.hour.hour);
         if (hb.isBefore(windowStart) || hb.isAfter(nowHour)) continue;
         if (p.sum <= 0) continue;
-        m[hb.millisecondsSinceEpoch] = p;
+        final offset = hb.difference(windowStart).inHours;
+        final bi = (offset ~/ k).clamp(0, nB - 1);
+        final v = acc[bi].putIfAbsent(ser.key, () => [0, 0, 0, 0]);
+        v[0] += p.input;
+        v[1] += p.output;
+        v[2] += p.cacheCreate;
+        v[3] += p.cacheRead;
       }
-      byKey[ser.key] = m;
     }
 
     final slots = <_Slot>[];
-    for (var k = hours - 1; k >= 0; k--) {
-      final t = nowHour.subtract(Duration(hours: k));
-      final epoch = t.millisecondsSinceEpoch;
+    for (var bi = 0; bi < nB; bi++) {
+      final start = windowStart.add(Duration(hours: bi * k));
+      var end = start.add(Duration(hours: k));
+      if (end.isAfter(lastHour)) end = lastHour;
       final points = <String, HourPoint>{};
       var total = 0;
-      for (final ser in ordered) {
-        final p = byKey[ser.key]?[epoch];
-        if (p == null) continue;
-        points[ser.key] = p;
-        total += p.sum;
+      for (final ser in series) {
+        final v = acc[bi][ser.key];
+        if (v == null) continue;
+        final sum = v[0] + v[1] + v[2] + v[3];
+        if (sum <= 0) continue;
+        points[ser.key] = HourPoint(
+          hour: start,
+          input: v[0],
+          output: v[1],
+          cacheCreate: v[2],
+          cacheRead: v[3],
+          total: sum,
+        );
+        total += sum;
       }
-      slots.add(_Slot(t, points, total));
+      slots.add(_Slot(start, end, points, total));
     }
     return slots;
   }
 }
 
 class _Slot {
-  _Slot(this.hour, this.points, this.total);
-  final DateTime hour;
-  final Map<String, HourPoint> points; // seriesKey -> 该小时有量的系列用量
+  _Slot(this.start, this.end, this.points, this.total);
+  final DateTime start; // 桶起始小时
+  final DateTime end; // 桶结束(exclusive,clamp 到 now+1h)
+  final Map<String, HourPoint> points; // seriesKey -> 该桶累计(有量的系列)
   final int total;
+  int get spanHours => end.difference(start).inHours;
 }

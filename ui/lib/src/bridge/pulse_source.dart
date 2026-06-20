@@ -18,9 +18,13 @@ abstract class PulseSource {
   /// 读取当前快照(JSON 数组字符串)。便宜、可频繁调用。
   String snapshotJson();
 
-  /// 按维度(account/api_key/model/user/group)取某实例最近 hours 小时的
-  /// 用量序列 JSON([]Series)。本地 SQLite 查询,便宜。
+  /// 按维度(account/api_key/model/user/group)取某实例最近 hours 小时的图表数据 JSON
+  /// ({series,coverageFrom,requestedFrom})。本地 SQLite 查询,便宜。空串=取数异常。
   String chartSeriesJson(String instance, String dimension, int hours);
+
+  /// 触发按需回填:确保某实例本地覆盖延伸到 now-hours(异步、即时返回)。
+  /// UI 在拉大跨度时调用,补齐进度由后续 chartSeriesJson 的 coverageFrom 体现。
+  void ensureCoverage(String instance, int hours);
 
   /// 告知引擎弹层是否打开(打开则提频)。
   void setForeground(bool open);

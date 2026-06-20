@@ -111,6 +111,42 @@ func TestStoreEventsQuerySeriesMultiDim(t *testing.T) {
 	}
 }
 
+func TestStoreCoverageWatermark(t *testing.T) {
+	st := openTmp(t)
+	if st.CoverageFrom("inst") != 0 {
+		t.Fatal("初始覆盖水位应为 0")
+	}
+	// 先设一个较晚的水位(稳态近窗),再设更早的(冷启动/补齐)——只应向更早推进。
+	st.NoteCoverage("inst", 2000)
+	st.NoteCoverage("inst", 1000)
+	if got := st.CoverageFrom("inst"); got != 1000 {
+		t.Fatalf("水位应取 min=1000,得 %d", got)
+	}
+	// 再设更晚的不应抬高(稳态 now-2h 不能覆盖掉冷启动的更早水位)。
+	st.NoteCoverage("inst", 1500)
+	if got := st.CoverageFrom("inst"); got != 1000 {
+		t.Fatalf("更晚的水位不应抬高,仍应 1000,得 %d", got)
+	}
+	// 无效值 no-op。
+	st.NoteCoverage("inst", 0)
+	if got := st.CoverageFrom("inst"); got != 1000 {
+		t.Fatalf("0 应被忽略,仍应 1000,得 %d", got)
+	}
+	// 与 AddEvents 互不破坏:AddEvents 推进 last_id,不动 backfilled_from。
+	loc := time.Local
+	if err := st.AddEvents("inst", []model.UsageEvent{
+		ev(5, time.Date(2026, 6, 19, 14, 5, 0, 0, loc), "2", "A", "3", "k", "opus", 1, 1, 0, 0),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if st.LastID("inst") != 5 {
+		t.Fatalf("AddEvents 应推进 last_id=5,得 %d", st.LastID("inst"))
+	}
+	if got := st.CoverageFrom("inst"); got != 1000 {
+		t.Fatalf("AddEvents 不应改动覆盖水位,仍应 1000,得 %d", got)
+	}
+}
+
 func TestStoreEmptyAndLastID(t *testing.T) {
 	st := openTmp(t)
 	if st.LastID("x") != 0 {

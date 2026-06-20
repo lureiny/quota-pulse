@@ -68,10 +68,17 @@ class _PopoverPageState extends State<PopoverPage> {
       animation: widget.controller,
       builder: (context, _) {
         final groups = _groupByInstance(widget.controller.pulses);
+        // 图表视图控件:全局一处,放在底栏上方一条独立细条(控制所有实例)。
+        final showChartBar =
+            widget.chartEnabled && widget.controller.pulses.isNotEmpty;
         return Column(
           children: [
             Expanded(child: _body(context, groups)),
             const Divider(height: 1),
+            if (showChartBar) ...[
+              _chartViewBar(context),
+              const Divider(height: 1),
+            ],
             _footer(context),
           ],
         );
@@ -134,9 +141,9 @@ class _PopoverPageState extends State<PopoverPage> {
             dimension: widget.chartGroupBy.dimension,
             rangeHours: widget.chartRangeHours,
             chartType: widget.chartType,
-            fetchSeriesJson: widget.controller.chartSeriesJson,
+            fetchChart: widget.controller.chartData,
+            ensureCoverage: widget.controller.ensureCoverage,
           ));
-          children.add(_chartViewBar(context)); // 控件贴在该实例图表下方
         }
       }
     });
@@ -172,17 +179,16 @@ class _PopoverPageState extends State<PopoverPage> {
                       ...e.value.map((p) => AccountTile(p,
                           onRefresh: () => widget.controller.refreshAccount(p.key),
                           resetMode: widget.resetMode)),
-                      if (widget.chartEnabled) ...[
+                      if (widget.chartEnabled)
                         HourlyChart(
                           key: ValueKey('chart-${e.key}'),
                           instance: e.key,
                           dimension: widget.chartGroupBy.dimension,
                           rangeHours: widget.chartRangeHours,
                           chartType: widget.chartType,
-                          fetchSeriesJson: widget.controller.chartSeriesJson,
+                          fetchChart: widget.controller.chartData,
+                          ensureCoverage: widget.controller.ensureCoverage,
                         ),
-                        _chartViewBar(context), // 控件贴在该实例图表下方
-                      ],
                     ],
                   ),
               ],
@@ -268,12 +274,12 @@ class _PopoverPageState extends State<PopoverPage> {
     return InkWell(onTap: onToggle, child: row);
   }
 
-  // 主面板「用量图表」视图控件:全局一处,控制所有实例的分组维度 + 柱/线样式。
-  // 即时切换、持久化(由壳保存),不重启核心、不刷新用量。
+  // 主面板「用量图表」视图控件:全局一处(底栏上方独立细条),控制所有实例的
+  // 分组维度 + 柱/线样式。即时切换、持久化(由壳保存),不重启核心、不刷新用量。
   Widget _chartViewBar(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 8, 10),
+      padding: const EdgeInsets.fromLTRB(12, 5, 8, 5),
       child: Row(
         children: [
           Icon(Icons.insights_outlined,

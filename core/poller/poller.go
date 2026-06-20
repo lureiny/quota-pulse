@@ -27,10 +27,11 @@ type Poller struct {
 
 	bindings []binding
 
-	chart    config.ChartConfig // 小时图表配置
-	usageDB  *usage.Store       // 本地小时聚合库(nil=关闭/开库失败,降级不展示图)
-	syncMu   sync.Mutex
-	lastSync map[string]time.Time // instance → 上次同步时刻(每实例节流)
+	chart       config.ChartConfig // 小时图表配置
+	usageDB     *usage.Store       // 本地原始事件库(nil=关闭/开库失败,降级不展示图)
+	syncMu      sync.Mutex
+	lastSync    map[string]time.Time // instance → 上次同步时刻(每实例节流)
+	backfilling map[string]bool      // instance → 是否有按需回填在途(防并发堆叠)
 
 	mu      sync.Mutex
 	ctx     context.Context // 运行期 ctx,供手动刷新使用
@@ -40,10 +41,11 @@ type Poller struct {
 
 func New(store *Store, onUpdate func([]model.AccountPulse)) *Poller {
 	return &Poller{
-		store:    store,
-		onUpdate: onUpdate,
-		maxConc:  6,
-		lastSync: make(map[string]time.Time),
+		store:       store,
+		onUpdate:    onUpdate,
+		maxConc:     6,
+		lastSync:    make(map[string]time.Time),
+		backfilling: make(map[string]bool),
 	}
 }
 
@@ -95,7 +97,82 @@ func (p *Poller) syncInstance(ctx context.Context, b binding) {
 	if err := p.usageDB.AddEvents(b.instance, evs); err != nil {
 		return
 	}
+	// 记录覆盖水位:本拍确实查询了 [from, now],把 W 向更早推进(min,稳态的 now-2h 不抬高)。
+	p.usageDB.NoteCoverage(b.instance, from.Unix())
 	p.usageDB.Evict(b.instance, time.Now().Add(-time.Duration(p.chart.RetentionHours)*time.Hour).Unix())
+}
+
+// Backfill 按需把该实例的本地覆盖补齐到 now-hours(用户在图表上拉大跨度时触发)。
+// 只抓缺口 [target, W)(W=当前覆盖水位),抓到哪就把 W 推到哪:抓全 → W=target;
+// 被 pageCap 截断 → W=最老抓到的事件(诚实,不谎称覆盖)。每实例串行(在途即跳过)。
+// 阻塞执行(含网络),调用方应在 goroutine 里跑。
+func (p *Poller) Backfill(instance string, hours int) {
+	if p.usageDB == nil || !p.chart.Enabled || hours <= 0 {
+		return
+	}
+
+	p.syncMu.Lock()
+	if p.backfilling[instance] {
+		p.syncMu.Unlock()
+		return
+	}
+	p.backfilling[instance] = true
+	p.syncMu.Unlock()
+	defer func() {
+		p.syncMu.Lock()
+		delete(p.backfilling, instance)
+		p.syncMu.Unlock()
+	}()
+
+	now := time.Now()
+	target := now.Add(-time.Duration(hours) * time.Hour)
+	// 不补保留窗口之外:再早也会被 Evict,补了白补。
+	if floor := now.Add(-time.Duration(p.chart.RetentionHours) * time.Hour); target.Before(floor) {
+		target = floor
+	}
+	// 已覆盖到 target 则无需补。
+	to := now
+	if w := p.usageDB.CoverageFrom(instance); w > 0 {
+		if !target.Before(time.Unix(w, 0)) {
+			return
+		}
+		to = time.Unix(w, 0) // 只补缺口左半段 [target, W)
+	}
+
+	p.mu.Lock()
+	ctx := p.ctx
+	var lf provider.UsageLogFetcher
+	for i := range p.bindings {
+		if p.bindings[i].instance == instance {
+			lf, _ = p.bindings[i].prov.(provider.UsageLogFetcher)
+			break
+		}
+	}
+	p.mu.Unlock()
+	if ctx == nil || lf == nil {
+		return
+	}
+
+	cctx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	evs, complete, err := lf.FetchUsageWindow(cctx, target, to, p.chart.PageCap)
+	cancel()
+	if err != nil {
+		return
+	}
+	if err := p.usageDB.AddEvents(instance, evs); err != nil {
+		return
+	}
+	newW := target.Unix()
+	if !complete && len(evs) > 0 {
+		oldest := evs[0].CreatedAt
+		for _, e := range evs {
+			if e.CreatedAt.Before(oldest) {
+				oldest = e.CreatedAt
+			}
+		}
+		newW = oldest.Unix() // 没抓到 target:覆盖只到最老抓到的事件
+	}
+	p.usageDB.NoteCoverage(instance, newW)
 }
 
 // AddProvider 注册一个 provider 与其调度器(须在 Start 前调用)。

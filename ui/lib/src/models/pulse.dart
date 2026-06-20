@@ -114,6 +114,72 @@ class UsageSeries {
   }
 }
 
+/// ChartData 是一次图表取数的结果:序列 + 本地覆盖水位。供 UI 区分三态:
+///   1) 取数/解析失败(ok=false)              → 「数据获取异常」
+///   2) series 空且整段已被本地覆盖             → 「该维度暂无请求」(真零)
+///   3) coverageFrom 晚于 requestedFrom        → 区间未被本地覆盖,画灰色「未采集/补齐中」带
+/// 对应 core/app.chartResp({series,coverageFrom,requestedFrom});时间为 unix 秒。
+class ChartData {
+  final List<UsageSeries> series;
+  final DateTime? coverageFrom; // 本地完整覆盖的最早时刻(null=未知/未提供)
+  final DateTime? requestedFrom; // 请求左界 now-hours
+  final bool ok; // 取数/解析是否成功(false=异常态)
+
+  const ChartData({
+    this.series = const [],
+    this.coverageFrom,
+    this.requestedFrom,
+    this.ok = true,
+  });
+
+  static const ChartData failed = ChartData(ok: false);
+
+  /// 请求区间是否都已被本地覆盖(coverageFrom 不晚于 requestedFrom);
+  /// 缺水位信息时按「已覆盖」处理(不画未采集带)。
+  bool get fullyCovered {
+    final c = coverageFrom, r = requestedFrom;
+    if (c == null || r == null) return true;
+    return !c.isAfter(r);
+  }
+
+  /// 解析 QP_ChartSeries 返回。兼容旧的裸数组;空串/非法 → 失败态(ok=false)。
+  static ChartData parse(String s) {
+    if (s.isEmpty) return failed;
+    Object? decoded;
+    try {
+      decoded = jsonDecode(s);
+    } catch (_) {
+      return failed;
+    }
+    if (decoded is List) {
+      // 兼容旧形态(裸 []Series):无水位信息。
+      return ChartData(
+        series: decoded
+            .map((e) => UsageSeries.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
+    }
+    if (decoded is Map) {
+      final list = (decoded['series'] as List?) ?? const [];
+      return ChartData(
+        series: list
+            .map((e) => UsageSeries.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        coverageFrom: _unixSecToLocal(decoded['coverageFrom']),
+        requestedFrom: _unixSecToLocal(decoded['requestedFrom']),
+      );
+    }
+    return failed;
+  }
+}
+
+/// unix 秒 → 本地 DateTime(<=0 视为无,返回 null)。与 HourPoint.hour(本地)可比。
+DateTime? _unixSecToLocal(Object? v) {
+  final n = (v as num?)?.toInt() ?? 0;
+  if (n <= 0) return null;
+  return DateTime.fromMillisecondsSinceEpoch(n * 1000);
+}
+
 /// AccountPulse 是一个账户的用量脉搏(与 core/model.AccountPulse 对应)。
 class AccountPulse {
   final String accountId;

@@ -92,7 +92,7 @@ func QP_SnapshotJSON() *C.char {
 
 // QP_ChartSeries 按维度聚合用量序列(JSON 进、JSON 出)。
 // argsJSON: {"instance":"...","dimension":"account|api_key|model|user|group","hours":168}
-// 返回 []Series 的 JSON;返回的 C 字符串由调用方用 QP_Free 释放。
+// 返回 {series,coverageFrom,requestedFrom} 的 JSON;返回的 C 字符串由调用方用 QP_Free 释放。
 //
 //export QP_ChartSeries
 func QP_ChartSeries(argsJSON *C.char) *C.char {
@@ -100,7 +100,7 @@ func QP_ChartSeries(argsJSON *C.char) *C.char {
 	a := engine
 	mu.Unlock()
 	if a == nil {
-		return C.CString("[]")
+		return C.CString(`{"series":[],"coverageFrom":0,"requestedFrom":0}`)
 	}
 	var args struct {
 		Instance  string `json:"instance"`
@@ -109,6 +109,25 @@ func QP_ChartSeries(argsJSON *C.char) *C.char {
 	}
 	_ = json.Unmarshal([]byte(C.GoString(argsJSON)), &args)
 	return C.CString(a.ChartSeriesJSON(args.Instance, args.Dimension, args.Hours))
+}
+
+// QP_EnsureCoverage 触发按需回填:确保某实例本地覆盖延伸到 now-hours(异步、立即返回)。
+// argsJSON: {"instance":"...","hours":168}
+//
+//export QP_EnsureCoverage
+func QP_EnsureCoverage(argsJSON *C.char) {
+	mu.Lock()
+	a := engine
+	mu.Unlock()
+	if a == nil {
+		return
+	}
+	var args struct {
+		Instance string `json:"instance"`
+		Hours    int    `json:"hours"`
+	}
+	_ = json.Unmarshal([]byte(C.GoString(argsJSON)), &args)
+	a.EnsureCoverage(args.Instance, args.Hours)
 }
 
 // QP_Refresh 触发一次强制回源。

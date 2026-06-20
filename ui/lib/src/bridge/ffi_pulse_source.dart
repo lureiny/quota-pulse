@@ -32,7 +32,13 @@ class FfiPulseSource implements PulseSource {
   String chartSeriesJson(String instance, String dimension, int hours) {
     final args = jsonEncode(
         {'instance': instance, 'dimension': dimension, 'hours': hours});
-    return _core?.chartSeries(args) ?? '[]';
+    return _core?.chartSeries(args) ?? '';
+  }
+
+  @override
+  void ensureCoverage(String instance, int hours) {
+    final args = jsonEncode({'instance': instance, 'hours': hours});
+    _core?.ensureCoverage(args);
   }
 
   @override

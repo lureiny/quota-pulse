@@ -55,4 +55,11 @@ type Provider interface {
 // 返回 id>sinceID 的全部新事件(精确时间、各类 token、cost、维度 Dims)。
 type UsageLogFetcher interface {
 	FetchUsageSince(ctx context.Context, sinceID int64, from time.Time, pageCap int) ([]model.UsageEvent, error)
+
+	// FetchUsageWindow 抓取 [from, to] 时间窗内的「全部」事件(不走 id 游标,靠主键
+	// INSERT OR IGNORE 去重),供按需回填历史(用户拉大图表跨度时补齐更早数据)。
+	// complete=true 表示在 pageCap 内翻到了末页、窗口内数据已抓全;false 表示被 pageCap
+	// 截断(desc 排序下只抓到较新的一段,更早的没拿到 —— 调用方据此把覆盖水位只推到最老
+	// 抓到的事件,而非 from,保持诚实)。
+	FetchUsageWindow(ctx context.Context, from, to time.Time, pageCap int) (events []model.UsageEvent, complete bool, err error)
 }

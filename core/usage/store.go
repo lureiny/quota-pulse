@@ -21,8 +21,9 @@ import (
 	"github.com/lureiny/quota-pulse/core/model"
 )
 
-// schemaVersion 升版即触发迁移(旧版是小时聚合表,不兼容 → 重建 + 重新回填原始事件)。
-const schemaVersion = 2
+// schemaVersion 升版即触发迁移。v1→v2:旧小时聚合表不兼容,重建 + 重新回填原始事件。
+// v2→v3:sync_state 增 backfilled_from(覆盖水位 W),保留既有事件、就地补列 + 播种。
+const schemaVersion = 3
 
 // dimPaths 是可分组维度的白名单:维度名 → (取键的 JSON path, 取展示名的 JSON path)。
 // 既约束允许的维度,也避免把外部字符串拼进 SQL。加维度:这里加一行 + 采集侧往 dims 塞键。
@@ -70,8 +71,9 @@ func Open(path string) (*Store, error) {
 func (s *Store) initSchema() error {
 	var ver int
 	_ = s.db.QueryRow("PRAGMA user_version").Scan(&ver)
-	if ver < schemaVersion {
-		// 旧 schema(小时聚合)不兼容:清掉旧表 + 游标,强制按新结构重新回填原始事件。
+	if ver < 2 {
+		// 旧 v1 schema(小时聚合)不兼容:清掉旧表 + 游标,强制按新结构重新回填原始事件。
+		// v2→v3 不在此列:保留 usage_events 与游标,只就地补列(见下),避免重新回填。
 		if _, err := s.db.Exec(`DROP TABLE IF EXISTS hourly_usage; DROP TABLE IF EXISTS sync_state;`); err != nil {
 			return err
 		}
@@ -92,18 +94,52 @@ CREATE TABLE IF NOT EXISTS usage_events(
 );
 CREATE INDEX IF NOT EXISTS idx_events_hour ON usage_events(instance, hour_local);
 CREATE TABLE IF NOT EXISTS sync_state(
-  instance   TEXT    PRIMARY KEY,
-  last_id    INTEGER NOT NULL DEFAULT 0,
-  updated_at INTEGER NOT NULL DEFAULT 0
+  instance        TEXT    PRIMARY KEY,
+  last_id         INTEGER NOT NULL DEFAULT 0,
+  updated_at      INTEGER NOT NULL DEFAULT 0,
+  backfilled_from INTEGER NOT NULL DEFAULT 0  -- 覆盖水位 W:已回填到的最早时刻(unix 秒)
 );`); err != nil {
 		return err
 	}
+	// v2→v3:老 sync_state 无 backfilled_from 列 → 就地补列,并用现有事件的最早时刻播种
+	// 覆盖水位(我们确实持有这些数据,视为已覆盖;否则升级后整段会被误标“未采集”)。
+	if !s.hasColumn("sync_state", "backfilled_from") {
+		if _, err := s.db.Exec(`ALTER TABLE sync_state ADD COLUMN backfilled_from INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+		if _, err := s.db.Exec(`UPDATE sync_state SET backfilled_from =
+  COALESCE((SELECT MIN(created_at) FROM usage_events e WHERE e.instance = sync_state.instance), 0)
+WHERE backfilled_from = 0`); err != nil {
+			return err
+		}
+	}
 	if ver < schemaVersion {
-		if _, err := s.db.Exec("PRAGMA user_version=2"); err != nil {
+		if _, err := s.db.Exec(`PRAGMA user_version=3`); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// hasColumn 报告 table 是否含某列(用于幂等迁移)。table 仅来自内部字面量,拼接安全。
+func (s *Store) hasColumn(table, col string) bool {
+	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, ctype string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			continue
+		}
+		if name == col {
+			return true
+		}
+	}
+	return false
 }
 
 // Close 关闭数据库。
@@ -127,6 +163,28 @@ func (s *Store) SyncedAt(instance string) int64 {
 	var t int64
 	_ = s.db.QueryRow(`SELECT updated_at FROM sync_state WHERE instance=?`, instance).Scan(&t)
 	return t
+}
+
+// CoverageFrom 返回该实例本地「完整覆盖」的最早时刻 W(unix 秒;0=尚未覆盖任何区间)。
+// [W, now] 区间被视为完整(id 游标 + 主键去重 + 近窗回看保证);W 之前为未知,
+// 图表据此把更早的请求跨度标为「未采集」而非误当成零。
+func (s *Store) CoverageFrom(instance string) int64 {
+	var t int64
+	_ = s.db.QueryRow(`SELECT backfilled_from FROM sync_state WHERE instance=?`, instance).Scan(&t)
+	return t
+}
+
+// NoteCoverage 记录覆盖水位 W:只向更早推进(取 min),稳态的近窗同步不会抬高它。
+// fromUnix<=0 视为无效(no-op)。
+func (s *Store) NoteCoverage(instance string, fromUnix int64) {
+	if fromUnix <= 0 {
+		return
+	}
+	_, _ = s.db.Exec(`
+INSERT INTO sync_state(instance,last_id,updated_at,backfilled_from) VALUES(?,0,0,?)
+ON CONFLICT(instance) DO UPDATE SET backfilled_from =
+  CASE WHEN backfilled_from=0 OR excluded.backfilled_from < backfilled_from
+       THEN excluded.backfilled_from ELSE backfilled_from END`, instance, fromUnix)
 }
 
 // hourBucket 把事件时间截断到本地小时起点的 unix 秒。
