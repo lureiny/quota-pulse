@@ -365,18 +365,20 @@ class _ShellState extends State<Shell> with WindowListener {
     if (s.configured) _startCore(s); // 已配置才有核心可重启
   }
 
-  void _onChartChanged(
-      bool enabled, ChartRange range, ChartType type, ChartGroupBy groupBy) {
+  // 设置页:图表开关 + 跨度。仅开关变化重启核心(它进 toConfigJson);跨度纯 UI。
+  void _onChartChanged(bool enabled, ChartRange range) {
     final enabledChanged = enabled != _settings.chartEnabled;
-    final s = _settings.copyWith(
-        chartEnabled: enabled,
-        chartRange: range,
-        chartType: type,
-        chartGroupBy: groupBy);
+    final s = _settings.copyWith(chartEnabled: enabled, chartRange: range);
     SettingsStore.save(s);
-    setState(() => _settings = s); // 跨度/样式/维度纯 UI:即刷 PopoverPage,不动核心
-    // 仅开关变化才重启核心(它进 toConfigJson);改跨度/样式/维度不刷新用量。
+    setState(() => _settings = s);
     if (enabledChanged && s.configured) _startCore(s);
+  }
+
+  // 主面板视图控件:分组维度 + 柱/线。纯 UI,持久化 + 重渲染,不重启核心。
+  void _onChartViewChanged(ChartGroupBy groupBy, ChartType type) {
+    final s = _settings.copyWith(chartGroupBy: groupBy, chartType: type);
+    SettingsStore.save(s);
+    setState(() => _settings = s);
   }
 
   Future<void> _quit() async {
@@ -428,7 +430,8 @@ class _ShellState extends State<Shell> with WindowListener {
       chartEnabled: _settings.chartEnabled,
       chartRangeHours: _settings.chartRange.hours,
       chartType: _settings.chartType,
-      chartDimension: _settings.chartGroupBy.dimension,
+      chartGroupBy: _settings.chartGroupBy,
+      onChartViewChanged: _onChartViewChanged,
       onRefresh: () => _controller?.refreshNow(),
       onSettings: () => setState(() => _view = _View.settings),
     );

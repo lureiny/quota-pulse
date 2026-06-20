@@ -57,11 +57,9 @@ class SettingsPage extends StatefulWidget {
     bool activeEnabled,
     int activeSecs,
   )? onPollChanged;
-  // 小时用量图表:开关 + 跨度 + 样式 + 分组维度。壳持久化;仅开关变化需重启核心
-  // (跨度/样式/维度纯 UI)。
-  final void Function(
-          bool enabled, ChartRange range, ChartType type, ChartGroupBy groupBy)?
-      onChartChanged;
+  // 小时用量图表:开关 + 跨度(样式/分组维度是主面板视图控件,不在此)。
+  // 壳持久化;仅开关变化需重启核心。
+  final void Function(bool enabled, ChartRange range)? onChartChanged;
   final Future<void> Function()? onTestNotification; // 发送测试通知
   final VoidCallback? onResetTickerPosition; // Windows 跑马灯重置到默认位置
   final double? tickerMaxWidth; // Windows 滚动浮窗宽度滑块上限(主屏逻辑宽)
@@ -126,8 +124,6 @@ class _SettingsPageState extends State<SettingsPage> {
   late int _pollActiveSecs; // 自动回源间隔(秒)
   late bool _chartEnabled; // 小时用量图表开关
   late ChartRange _chartRange; // 小时用量图表跨度
-  late ChartType _chartType; // 小时用量图表样式(柱/线)
-  late ChartGroupBy _chartGroupBy; // 小时用量图表分组维度
   int _idSeq = 0;
 
   // Windows 滚动浮窗「宽度」滑块上限:主屏逻辑宽(壳传入),缺省兜底 1920,下限保底 240
@@ -173,8 +169,6 @@ class _SettingsPageState extends State<SettingsPage> {
         : 600;
     _chartEnabled = widget.initial.chartEnabled;
     _chartRange = widget.initial.chartRange;
-    _chartType = widget.initial.chartType;
-    _chartGroupBy = widget.initial.chartGroupBy;
   }
 
   @override
@@ -203,9 +197,8 @@ class _SettingsPageState extends State<SettingsPage> {
         _pollActiveSecs,
       );
 
-  /// 小时图表开关/跨度/样式/维度改动:通知壳持久化(仅开关变化时重启核心)。
-  void _emitChart() => widget.onChartChanged
-      ?.call(_chartEnabled, _chartRange, _chartType, _chartGroupBy);
+  /// 小时图表开关/跨度改动:通知壳持久化(仅开关变化时重启核心)。
+  void _emitChart() => widget.onChartChanged?.call(_chartEnabled, _chartRange);
 
   _Draft _newDraft() {
     _idSeq++;
@@ -263,8 +256,9 @@ class _SettingsPageState extends State<SettingsPage> {
         pollActiveSecs: _pollActiveSecs,
         chartEnabled: _chartEnabled,
         chartRange: _chartRange,
-        chartType: _chartType,
-        chartGroupBy: _chartGroupBy,
+        // 样式/分组维度由主面板视图控件管理,这里原样透传,避免「保存并连接」清空。
+        chartType: widget.initial.chartType,
+        chartGroupBy: widget.initial.chartGroupBy,
       );
 
   void _save() => widget.onSave(_currentSettings());
@@ -543,8 +537,8 @@ class _SettingsPageState extends State<SettingsPage> {
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           dense: true,
-          title: const Text('每站点小时柱状图', style: TextStyle(fontSize: 13)),
-          subtitle: Text('主面板每个站点下按账户着色的小时 token 用量;关闭则不额外请求',
+          title: const Text('每站点小时用量图', style: TextStyle(fontSize: 13)),
+          subtitle: Text('主面板每个站点下的小时 token 用量(可多维度聚合);关闭则不额外请求',
               style: theme.textTheme.bodySmall),
           value: _chartEnabled,
           onChanged: (v) {
@@ -554,27 +548,6 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         if (_chartEnabled) ...[
           const SizedBox(height: 4),
-          Text('样式', style: theme.textTheme.bodySmall),
-          const SizedBox(height: 4),
-          SegmentedButton<ChartType>(
-            showSelectedIcon: false,
-            segments: const [
-              ButtonSegment(
-                  value: ChartType.bar,
-                  label: Text('柱状图'),
-                  icon: Icon(Icons.bar_chart, size: 15)),
-              ButtonSegment(
-                  value: ChartType.line,
-                  label: Text('曲线图'),
-                  icon: Icon(Icons.show_chart, size: 15)),
-            ],
-            selected: {_chartType},
-            onSelectionChanged: (s) {
-              setState(() => _chartType = s.first);
-              _emitChart();
-            },
-          ),
-          const SizedBox(height: 8),
           Row(
             children: [
               const Expanded(child: Text('时间跨度', style: TextStyle(fontSize: 13))),
@@ -596,32 +569,9 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              const Expanded(child: Text('分组维度', style: TextStyle(fontSize: 13))),
-              _boxed(
-                DropdownButton<ChartGroupBy>(
-                  value: _chartGroupBy,
-                  isDense: true,
-                  underline: const SizedBox.shrink(),
-                  items: [
-                    for (final g in ChartGroupBy.values)
-                      DropdownMenuItem(value: g, child: Text(g.label)),
-                  ],
-                  onChanged: (v) {
-                    if (v == null) return;
-                    setState(() => _chartGroupBy = v);
-                    _emitChart();
-                  },
-                ),
-              ),
-            ],
-          ),
           Padding(
             padding: const EdgeInsets.only(top: 2),
-            child: Text('可按账户/API Key/模型/用户/分组聚合;悬停看 in/out/cache 明细。'
-                '切样式/跨度/维度即时生效,不刷新用量',
+            child: Text('分组维度(账户/API Key/模型/用户/分组)与 柱/线 在主面板顶部直接切换',
                 style: theme.textTheme.bodySmall),
           ),
         ],

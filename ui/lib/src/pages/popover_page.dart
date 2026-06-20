@@ -22,7 +22,8 @@ class PopoverPage extends StatefulWidget {
     this.chartEnabled = false,
     this.chartRangeHours = 24,
     this.chartType = ChartType.bar,
-    this.chartDimension = 'account',
+    this.chartGroupBy = ChartGroupBy.account,
+    this.onChartViewChanged,
   });
 
   final PulseController controller;
@@ -33,8 +34,10 @@ class PopoverPage extends StatefulWidget {
   final Map<String, String> instanceUrls; // 实例名 → 后台 URL(把实例名做成超链接)
   final bool chartEnabled; // 是否在每个站点分组下显示小时用量图
   final int chartRangeHours; // 图表回看小时数(随设置 chartRange)
-  final ChartType chartType; // 图表样式:柱状 / 曲线
-  final String chartDimension; // 分组维度(account/api_key/model/user/group)
+  final ChartType chartType; // 图表样式:柱状 / 曲线(主面板视图控件,即时切换)
+  final ChartGroupBy chartGroupBy; // 分组维度(主面板视图控件,即时切换)
+  // 主面板「视图控件」变更(维度/样式):壳持久化 + 重渲染,不重启核心。
+  final void Function(ChartGroupBy groupBy, ChartType type)? onChartViewChanged;
 
   @override
   State<PopoverPage> createState() => _PopoverPageState();
@@ -67,6 +70,7 @@ class _PopoverPageState extends State<PopoverPage> {
         final groups = _groupByInstance(widget.controller.pulses);
         return Column(
           children: [
+            if (widget.chartEnabled) _chartViewBar(context),
             Expanded(child: _body(context, groups)),
             const Divider(height: 1),
             _footer(context),
@@ -128,7 +132,7 @@ class _PopoverPageState extends State<PopoverPage> {
           children.add(HourlyChart(
             key: ValueKey('chart-$instance'),
             instance: instance,
-            dimension: widget.chartDimension,
+            dimension: widget.chartGroupBy.dimension,
             rangeHours: widget.chartRangeHours,
             chartType: widget.chartType,
             fetchSeriesJson: widget.controller.chartSeriesJson,
@@ -172,7 +176,7 @@ class _PopoverPageState extends State<PopoverPage> {
                         HourlyChart(
                           key: ValueKey('chart-${e.key}'),
                           instance: e.key,
-                          dimension: widget.chartDimension,
+                          dimension: widget.chartGroupBy.dimension,
                           rangeHours: widget.chartRangeHours,
                           chartType: widget.chartType,
                           fetchSeriesJson: widget.controller.chartSeriesJson,
@@ -260,6 +264,54 @@ class _PopoverPageState extends State<PopoverPage> {
     if (!collapsible) return row;
     // 整行可点折叠;刷新按钮在手势竞技场里仍优先响应自己的点击。
     return InkWell(onTap: onToggle, child: row);
+  }
+
+  // 主面板「用量图表」视图控件:全局一处,控制所有实例的分组维度 + 柱/线样式。
+  // 即时切换、持久化(由壳保存),不重启核心、不刷新用量。
+  Widget _chartViewBar(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 6, 8, 0),
+      child: Row(
+        children: [
+          Icon(Icons.insights_outlined,
+              size: 14, color: theme.colorScheme.onSurfaceVariant),
+          const SizedBox(width: 5),
+          DropdownButton<ChartGroupBy>(
+            value: widget.chartGroupBy,
+            isDense: true,
+            underline: const SizedBox.shrink(),
+            items: [
+              for (final g in ChartGroupBy.values)
+                DropdownMenuItem(
+                    value: g,
+                    child:
+                        Text(g.label, style: const TextStyle(fontSize: 12))),
+            ],
+            onChanged: (v) {
+              if (v != null) widget.onChartViewChanged?.call(v, widget.chartType);
+            },
+          ),
+          const Spacer(),
+          SegmentedButton<ChartType>(
+            showSelectedIcon: false,
+            style: const ButtonStyle(
+              visualDensity: VisualDensity.compact,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            segments: const [
+              ButtonSegment(
+                  value: ChartType.bar, icon: Icon(Icons.bar_chart, size: 15)),
+              ButtonSegment(
+                  value: ChartType.line, icon: Icon(Icons.show_chart, size: 15)),
+            ],
+            selected: {widget.chartType},
+            onSelectionChanged: (s) =>
+                widget.onChartViewChanged?.call(widget.chartGroupBy, s.first),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _footer(BuildContext context) {
