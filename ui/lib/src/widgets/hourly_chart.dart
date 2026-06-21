@@ -187,10 +187,11 @@ class _HourlyChartState extends State<HourlyChart> {
                 final barWidth =
                     (slotW * 0.6).clamp(2.0, _maxBarWidth).toDouble();
 
+                // 只渲染可见系列(隐藏的从堆叠/曲线里彻底去掉,而非画成全 0 线)。
                 final chart = widget.chartType == ChartType.line
                     ? _lineChart(
-                        slots, ordered, colorOf, nameOf, maxY, labelStep, cs)
-                    : _barChart(slots, ordered, colorOf, nameOf, maxY, labelStep,
+                        slots, visible, colorOf, nameOf, maxY, labelStep, cs)
+                    : _barChart(slots, visible, colorOf, nameOf, maxY, labelStep,
                         barWidth, cs);
 
                 if (uncoveredFrac <= 0) return chart;

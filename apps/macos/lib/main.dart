@@ -365,18 +365,19 @@ class _ShellState extends State<Shell> with WindowListener {
     if (s.configured) _startCore(s); // 已配置才有核心可重启
   }
 
-  // 设置页:图表开关 + 跨度。仅开关变化重启核心(它进 toConfigJson);跨度纯 UI。
-  void _onChartChanged(bool enabled, ChartRange range) {
+  // 设置页:图表开关。仅它进 toConfigJson,变化才重启核心(跨度/维度/样式纯 UI)。
+  void _onChartChanged(bool enabled) {
     final enabledChanged = enabled != _settings.chartEnabled;
-    final s = _settings.copyWith(chartEnabled: enabled, chartRange: range);
+    final s = _settings.copyWith(chartEnabled: enabled);
     SettingsStore.save(s);
     setState(() => _settings = s);
     if (enabledChanged && s.configured) _startCore(s);
   }
 
-  // 主面板视图控件:分组维度 + 柱/线。纯 UI,持久化 + 重渲染,不重启核心。
-  void _onChartViewChanged(ChartGroupBy groupBy, ChartType type) {
-    final s = _settings.copyWith(chartGroupBy: groupBy, chartType: type);
+  // 主面板视图控件:时间跨度 + 分组维度 + 柱/线。纯 UI,持久化 + 重渲染,不重启核心。
+  void _onChartViewChanged(ChartGroupBy groupBy, ChartType type, ChartRange range) {
+    final s = _settings.copyWith(
+        chartGroupBy: groupBy, chartType: type, chartRange: range);
     SettingsStore.save(s);
     setState(() => _settings = s);
   }
@@ -428,7 +429,7 @@ class _ShellState extends State<Shell> with WindowListener {
       resetMode: _settings.resetMode,
       instanceUrls: _settings.instanceUrls(),
       chartEnabled: _settings.chartEnabled,
-      chartRangeHours: _settings.chartRange.hours,
+      chartRange: _settings.chartRange,
       chartType: _settings.chartType,
       chartGroupBy: _settings.chartGroupBy,
       onChartViewChanged: _onChartViewChanged,

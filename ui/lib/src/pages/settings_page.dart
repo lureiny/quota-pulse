@@ -57,9 +57,9 @@ class SettingsPage extends StatefulWidget {
     bool activeEnabled,
     int activeSecs,
   )? onPollChanged;
-  // 小时用量图表:开关 + 跨度(样式/分组维度是主面板视图控件,不在此)。
+  // 小时用量图表:仅开关(跨度/样式/分组维度都是主面板视图控件,不在此)。
   // 壳持久化;仅开关变化需重启核心。
-  final void Function(bool enabled, ChartRange range)? onChartChanged;
+  final void Function(bool enabled)? onChartChanged;
   final Future<void> Function()? onTestNotification; // 发送测试通知
   final VoidCallback? onResetTickerPosition; // Windows 跑马灯重置到默认位置
   final double? tickerMaxWidth; // Windows 滚动浮窗宽度滑块上限(主屏逻辑宽)
@@ -122,8 +122,7 @@ class _SettingsPageState extends State<SettingsPage> {
   late int _pollPassiveSecs; // 被动刷新间隔(秒)
   late bool _pollActiveEnabled; // 自动强制回源开关
   late int _pollActiveSecs; // 自动回源间隔(秒)
-  late bool _chartEnabled; // 小时用量图表开关
-  late ChartRange _chartRange; // 小时用量图表跨度
+  late bool _chartEnabled; // 小时用量图表开关(跨度/样式/维度是主面板视图控件)
   int _idSeq = 0;
 
   // Windows 滚动浮窗「宽度」滑块上限:主屏逻辑宽(壳传入),缺省兜底 1920,下限保底 240
@@ -168,7 +167,6 @@ class _SettingsPageState extends State<SettingsPage> {
         ? widget.initial.pollActiveSecs
         : 600;
     _chartEnabled = widget.initial.chartEnabled;
-    _chartRange = widget.initial.chartRange;
   }
 
   @override
@@ -197,8 +195,8 @@ class _SettingsPageState extends State<SettingsPage> {
         _pollActiveSecs,
       );
 
-  /// 小时图表开关/跨度改动:通知壳持久化(仅开关变化时重启核心)。
-  void _emitChart() => widget.onChartChanged?.call(_chartEnabled, _chartRange);
+  /// 小时图表开关改动:通知壳持久化(开关变化时重启核心)。
+  void _emitChart() => widget.onChartChanged?.call(_chartEnabled);
 
   _Draft _newDraft() {
     _idSeq++;
@@ -255,8 +253,8 @@ class _SettingsPageState extends State<SettingsPage> {
         pollActiveEnabled: _pollActiveEnabled,
         pollActiveSecs: _pollActiveSecs,
         chartEnabled: _chartEnabled,
-        chartRange: _chartRange,
-        // 样式/分组维度由主面板视图控件管理,这里原样透传,避免「保存并连接」清空。
+        // 跨度/样式/分组维度由主面板视图控件管理,这里原样透传,避免「保存并连接」清空。
+        chartRange: widget.initial.chartRange,
         chartType: widget.initial.chartType,
         chartGroupBy: widget.initial.chartGroupBy,
       );
@@ -546,35 +544,12 @@ class _SettingsPageState extends State<SettingsPage> {
             _emitChart();
           },
         ),
-        if (_chartEnabled) ...[
-          const SizedBox(height: 4),
-          Row(
-            children: [
-              const Expanded(child: Text('时间跨度', style: TextStyle(fontSize: 13))),
-              _boxed(
-                DropdownButton<ChartRange>(
-                  value: _chartRange,
-                  isDense: true,
-                  underline: const SizedBox.shrink(),
-                  items: [
-                    for (final r in ChartRange.values)
-                      DropdownMenuItem(value: r, child: Text(r.label)),
-                  ],
-                  onChanged: (v) {
-                    if (v == null) return;
-                    setState(() => _chartRange = v);
-                    _emitChart();
-                  },
-                ),
-              ),
-            ],
-          ),
+        if (_chartEnabled)
           Padding(
             padding: const EdgeInsets.only(top: 2),
-            child: Text('分组维度(账户/API Key/模型/用户/分组)与 柱/线 在主面板顶部直接切换',
+            child: Text('时间跨度 / 分组维度(账户·API Key·模型·用户·分组) / 柱·线 都在主面板底部一条直接切换',
                 style: theme.textTheme.bodySmall),
           ),
-        ],
         const Divider(height: 24),
 
         Text('主题', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),

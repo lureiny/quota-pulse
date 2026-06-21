@@ -54,7 +54,7 @@ enum TrayMetric { usage, remaining }
 enum ResetMode { countdown, absolute }
 
 /// 主面板小时用量图表的时间跨度(回看多少小时)。
-enum ChartRange { h6, h12, h24, d3, d7 }
+enum ChartRange { h6, h12, h24, d3, d7, d30 }
 
 extension ChartRangeX on ChartRange {
   int get hours => switch (this) {
@@ -63,6 +63,7 @@ extension ChartRangeX on ChartRange {
         ChartRange.h24 => 24,
         ChartRange.d3 => 72,
         ChartRange.d7 => 168,
+        ChartRange.d30 => 720,
       };
   String get label => switch (this) {
         ChartRange.h6 => '6 小时',
@@ -70,6 +71,16 @@ extension ChartRangeX on ChartRange {
         ChartRange.h24 => '24 小时',
         ChartRange.d3 => '3 天',
         ChartRange.d7 => '7 天',
+        ChartRange.d30 => '30 天',
+      };
+  /// 紧凑标签(主面板控件条空间有限,用 6h/3d/30d 这种短写)。
+  String get shortLabel => switch (this) {
+        ChartRange.h6 => '6h',
+        ChartRange.h12 => '12h',
+        ChartRange.h24 => '24h',
+        ChartRange.d3 => '3d',
+        ChartRange.d7 => '7d',
+        ChartRange.d30 => '30d',
       };
 }
 

@@ -20,7 +20,7 @@ class PopoverPage extends StatefulWidget {
     this.resetMode = ResetMode.countdown,
     this.instanceUrls = const {},
     this.chartEnabled = false,
-    this.chartRangeHours = 24,
+    this.chartRange = ChartRange.h24,
     this.chartType = ChartType.bar,
     this.chartGroupBy = ChartGroupBy.account,
     this.onChartViewChanged,
@@ -33,11 +33,12 @@ class PopoverPage extends StatefulWidget {
   final ResetMode resetMode; // 重置显示:倒计时 / 绝对(随设置,透传到 MeterBar)
   final Map<String, String> instanceUrls; // 实例名 → 后台 URL(把实例名做成超链接)
   final bool chartEnabled; // 是否在每个站点分组下显示小时用量图
-  final int chartRangeHours; // 图表回看小时数(随设置 chartRange)
+  final ChartRange chartRange; // 图表时间跨度(主面板视图控件,即时切换)
   final ChartType chartType; // 图表样式:柱状 / 曲线(主面板视图控件,即时切换)
   final ChartGroupBy chartGroupBy; // 分组维度(主面板视图控件,即时切换)
-  // 主面板「视图控件」变更(维度/样式):壳持久化 + 重渲染,不重启核心。
-  final void Function(ChartGroupBy groupBy, ChartType type)? onChartViewChanged;
+  // 主面板「视图控件」变更(跨度/维度/样式):壳持久化 + 重渲染,不重启核心。
+  final void Function(ChartGroupBy groupBy, ChartType type, ChartRange range)?
+      onChartViewChanged;
 
   @override
   State<PopoverPage> createState() => _PopoverPageState();
@@ -139,7 +140,7 @@ class _PopoverPageState extends State<PopoverPage> {
             key: ValueKey('chart-$instance'),
             instance: instance,
             dimension: widget.chartGroupBy.dimension,
-            rangeHours: widget.chartRangeHours,
+            rangeHours: widget.chartRange.hours,
             chartType: widget.chartType,
             fetchChart: widget.controller.chartData,
             ensureCoverage: widget.controller.ensureCoverage,
@@ -184,7 +185,7 @@ class _PopoverPageState extends State<PopoverPage> {
                           key: ValueKey('chart-${e.key}'),
                           instance: e.key,
                           dimension: widget.chartGroupBy.dimension,
-                          rangeHours: widget.chartRangeHours,
+                          rangeHours: widget.chartRange.hours,
                           chartType: widget.chartType,
                           fetchChart: widget.controller.chartData,
                           ensureCoverage: widget.controller.ensureCoverage,
@@ -275,7 +276,7 @@ class _PopoverPageState extends State<PopoverPage> {
   }
 
   // 主面板「用量图表」视图控件:全局一处(底栏上方独立细条),控制所有实例的
-  // 分组维度 + 柱/线样式。即时切换、持久化(由壳保存),不重启核心、不刷新用量。
+  // 时间跨度 + 分组维度 + 柱/线样式。即时切换、持久化(由壳保存),不重启核心、不刷新用量。
   Widget _chartViewBar(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
@@ -297,7 +298,30 @@ class _PopoverPageState extends State<PopoverPage> {
                         Text(g.label, style: const TextStyle(fontSize: 12))),
             ],
             onChanged: (v) {
-              if (v != null) widget.onChartViewChanged?.call(v, widget.chartType);
+              if (v != null) {
+                widget.onChartViewChanged
+                    ?.call(v, widget.chartType, widget.chartRange);
+              }
+            },
+          ),
+          const SizedBox(width: 10),
+          // 时间跨度(紧凑短标签,省横向空间)。
+          DropdownButton<ChartRange>(
+            value: widget.chartRange,
+            isDense: true,
+            underline: const SizedBox.shrink(),
+            items: [
+              for (final r in ChartRange.values)
+                DropdownMenuItem(
+                    value: r,
+                    child: Text(r.shortLabel,
+                        style: const TextStyle(fontSize: 12))),
+            ],
+            onChanged: (v) {
+              if (v != null) {
+                widget.onChartViewChanged
+                    ?.call(widget.chartGroupBy, widget.chartType, v);
+              }
             },
           ),
           const Spacer(),
@@ -314,8 +338,8 @@ class _PopoverPageState extends State<PopoverPage> {
                   value: ChartType.line, icon: Icon(Icons.show_chart, size: 15)),
             ],
             selected: {widget.chartType},
-            onSelectionChanged: (s) =>
-                widget.onChartViewChanged?.call(widget.chartGroupBy, s.first),
+            onSelectionChanged: (s) => widget.onChartViewChanged
+                ?.call(widget.chartGroupBy, s.first, widget.chartRange),
           ),
         ],
       ),

@@ -23,7 +23,7 @@ type ChartConfig struct {
 	// 以下为采集/存储调参(一般留空走默认):
 	DBPath         string `json:"db_path,omitempty"`         // 空=os.UserConfigDir()/quota-pulse/usage.db
 	BackfillHours  int    `json:"backfill_hours,omitempty"`  // 冷启动回填窗口(默认 24=1d;更大跨度按需补齐)
-	RetentionHours int    `json:"retention_hours,omitempty"` // 本地保留窗口(默认 720=30d)
+	RetentionHours int    `json:"retention_hours,omitempty"` // 本地保留窗口(默认 744=31d,给 30d 视图留边)
 	SyncMinSecs    int    `json:"sync_min_secs,omitempty"`   // 每实例同步最小间隔(默认 60s)
 	PageCap        int    `json:"page_cap,omitempty"`        // 单次同步翻页上限(默认 20 页×1000 行)
 }
@@ -41,7 +41,7 @@ func (c ChartConfig) withDefaults() ChartConfig {
 		c.BackfillHours = 24
 	}
 	if c.RetentionHours <= 0 {
-		c.RetentionHours = 720
+		c.RetentionHours = 744
 	}
 	if c.SyncMinSecs <= 0 {
 		c.SyncMinSecs = 60
