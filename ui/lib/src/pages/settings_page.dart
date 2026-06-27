@@ -339,10 +339,11 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Future<void> _saveExportToFile(String yamlText) async {
+  Future<void> _saveExportToFile(String yamlText,
+      {String suggestedName = 'quota-pulse-config.yaml'}) async {
     try {
       final loc = await getSaveLocation(
-        suggestedName: 'quota-pulse-config.yaml',
+        suggestedName: suggestedName,
         acceptedTypeGroups: const [
           XTypeGroup(label: 'YAML', extensions: ['yaml', 'yml']),
         ],
@@ -446,6 +447,182 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  // ---------- 单个实例的导出 / 导入 ----------
+
+  /// 导出某一张实例卡片(WYSIWYG:取卡片当前、含未保存的输入)。
+  Future<void> _showInstanceExportDialog(_Draft d) async {
+    bool includeKeys = true;
+    final label = d.name.text.trim().isEmpty ? '' : '「${d.name.text.trim()}」';
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          final theme = Theme.of(ctx);
+          final yamlText =
+              exportInstanceYaml(d.toInstance(), includeKeys: includeKeys);
+          return AlertDialog(
+            title: Text('导出实例$label'),
+            content: SizedBox(
+              width: 460,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    value: includeKeys,
+                    onChanged: (v) => setLocal(() => includeKeys = v ?? true),
+                    title:
+                        const Text('包含 API 密钥', style: TextStyle(fontSize: 13)),
+                  ),
+                  if (includeKeys)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text('⚠️ 含 API 密钥明文,妥善保管、勿外传',
+                          style: theme.textTheme.bodySmall
+                              ?.copyWith(color: theme.colorScheme.error)),
+                    ),
+                  Container(
+                    width: double.infinity,
+                    constraints: const BoxConstraints(maxHeight: 240),
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surfaceContainerHighest
+                          .withValues(alpha: 0.4),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: SingleChildScrollView(
+                      child: SelectableText(yamlText,
+                          style: const TextStyle(
+                              fontFamily: 'monospace', fontSize: 12)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: yamlText));
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('已复制到剪贴板')));
+                  }
+                },
+                child: const Text('复制'),
+              ),
+              TextButton(
+                onPressed: () => _saveExportToFile(yamlText,
+                    suggestedName: 'quota-pulse-instance.yaml'),
+                child: const Text('保存为文件…'),
+              ),
+              TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('关闭')),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  /// 导入单个实例:解析成功即「始终新增一份」并入当前配置、立即持久化生效
+  /// (复用 onImport → 壳持久化 + 按需重启核心 + 切回主面板)。同名由唯一名逻辑自动加后缀。
+  Future<void> _showInstanceImportDialog() async {
+    final controller = TextEditingController();
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('导入实例'),
+        content: SizedBox(
+          width: 460,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('粘贴单个实例配置(YAML),或从文件选择;导入会作为新实例追加并立即生效。',
+                  style: Theme.of(ctx).textTheme.bodySmall),
+              const SizedBox(height: 8),
+              TextField(
+                controller: controller,
+                minLines: 6,
+                maxLines: 12,
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                  hintText: 'app: quota-pulse\nkind: instance\ninstance:\n  name: ...\n  base_url: ...',
+                ),
+              ),
+              const SizedBox(height: 6),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () async {
+                    final text = await _pickImportFile();
+                    if (text != null) controller.text = text;
+                  },
+                  icon: const Icon(Icons.folder_open, size: 16),
+                  label: const Text('从文件选择…'),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('取消')),
+          FilledButton(
+            onPressed: () {
+              Sub2apiInstance parsed;
+              try {
+                parsed = importInstanceYaml(controller.text);
+              } catch (e) {
+                final msg = e is FormatException ? e.message : '$e';
+                ScaffoldMessenger.of(context)
+                    .showSnackBar(SnackBar(content: Text('导入失败:$msg')));
+                return;
+              }
+              // 始终新增一份:铸新 id(同 _newDraft 方案,避免与现有实例 id 串号)。
+              _idSeq++;
+              final newId = 'i${DateTime.now().microsecondsSinceEpoch}_$_idSeq';
+              final label =
+                  parsed.name.trim().isEmpty ? '' : '「${parsed.name.trim()}」';
+              Navigator.of(ctx).pop();
+              // 无密钥导入(导出时未含密钥):无法连接,立即生效没有意义。加为草稿留在
+              // 设置页,让用户就地补填 Admin Key 再「保存并连接」,提示也诚实。
+              if (parsed.apiKey.trim().isEmpty) {
+                setState(() => _drafts.add(_Draft(newId,
+                    name: parsed.name, url: parsed.baseUrl, key: parsed.apiKey)));
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                    content: Text('已导入实例$label(未含密钥,请填写 Admin Key 后「保存并连接」)')));
+                return;
+              }
+              // 有密钥:立即合并生效(保留当前含未保存的表单状态)。
+              final withId = Sub2apiInstance(
+                id: newId,
+                name: parsed.name,
+                baseUrl: parsed.baseUrl,
+                apiKey: parsed.apiKey,
+              );
+              final cur = _currentSettings();
+              final merged =
+                  cur.copyWith(instances: [...cur.instances, withId]);
+              ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('已导入实例$label并生效')));
+              widget.onImport?.call(merged);
+            },
+            child: const Text('导入'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -484,13 +661,20 @@ class _SettingsPageState extends State<SettingsPage> {
         Row(
           children: [
             Expanded(
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: _addInstance,
-                  icon: const Icon(Icons.add, size: 16),
-                  label: const Text('添加 sub2api'),
-                ),
+              child: Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  TextButton.icon(
+                    onPressed: _addInstance,
+                    icon: const Icon(Icons.add, size: 16),
+                    label: const Text('添加 sub2api'),
+                  ),
+                  TextButton.icon(
+                    onPressed: _showInstanceImportDialog,
+                    icon: const Icon(Icons.file_upload_outlined, size: 16),
+                    label: const Text('导入实例'),
+                  ),
+                ],
               ),
             ),
             FilledButton(onPressed: _save, child: const Text('保存并连接')),
@@ -1047,6 +1231,11 @@ class _SettingsPageState extends State<SettingsPage> {
                   // 就近映射成 Bold,导致这一项看起来「莫名加粗」而其它字段正常。
                   style: const TextStyle(fontSize: 13),
                 ),
+              ),
+              IconButton(
+                tooltip: '导出此实例',
+                icon: const Icon(Icons.file_download_outlined, size: 18),
+                onPressed: () => _showInstanceExportDialog(d),
               ),
               if (_drafts.length > 1)
                 IconButton(
