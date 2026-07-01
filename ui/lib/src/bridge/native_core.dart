@@ -36,6 +36,12 @@ class NativeCore {
   late final _StrArgD _free = _lib.lookupFunction<_StrArgC, _StrArgD>('QP_Free');
   late final _IntArgD _setForeground =
       _lib.lookupFunction<_IntArgC, _IntArgD>('QP_SetForeground');
+  late final _StrArgD _debugSet =
+      _lib.lookupFunction<_StrArgC, _StrArgD>('QP_DebugSet');
+  late final _StrToStrD _debugReport =
+      _lib.lookupFunction<_StrToStrC, _StrToStrD>('QP_DebugReport');
+  late final _VoidD _debugReset =
+      _lib.lookupFunction<_VoidC, _VoidD>('QP_DebugReset');
 
   /// 按平台选择核心库文件名:
   ///   macOS → libqp.dylib · Windows → libqp.dll · Linux → libqp.so
@@ -135,4 +141,28 @@ class NativeCore {
       malloc.free(p);
     }
   }
+
+  /// 开/关调试采样。argsJson: {"enabled","maxSamples","maxMemBytes"}。
+  void debugSet(String argsJson) {
+    final p = argsJson.toNativeUtf8();
+    try {
+      _debugSet(p);
+    } finally {
+      malloc.free(p);
+    }
+  }
+
+  /// 读取调试采样报告(JSON)。C 字符串由 Go 分配,须 QP_Free 释放。
+  String debugReport() {
+    final ptr = _debugReport();
+    if (ptr == nullptr) return '{"enabled":false,"instances":[]}';
+    try {
+      return ptr.toDartString();
+    } finally {
+      _free(ptr);
+    }
+  }
+
+  /// 清空已采样本(保留开关与上限)。
+  void debugReset() => _debugReset();
 }

@@ -25,6 +25,7 @@ export 'src/widgets/hourly_chart.dart';
 // 页面
 export 'src/pages/popover_page.dart';
 export 'src/pages/settings_page.dart';
+export 'src/pages/debug_panel.dart';
 
 // 状态
 export 'src/state/pulse_controller.dart';

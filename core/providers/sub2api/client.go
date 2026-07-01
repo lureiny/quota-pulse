@@ -55,6 +55,10 @@ func New(cfg config.ProviderConfig) (provider.Provider, error) {
 func (p *Provider) Type() string        { return providerType }
 func (p *Provider) DisplayName() string { return p.name }
 
+// SetLabel 实现 provider.LabelSetter:把去重后的实例名贴到 HTTP 客户端上,
+// 供调试采样(core/netstat)按实例区分读流量。
+func (p *Provider) SetLabel(label string) { p.client.Label = label }
+
 func (p *Provider) Capabilities() provider.Capabilities {
 	return provider.Capabilities{
 		HasRollingWindows:      true,

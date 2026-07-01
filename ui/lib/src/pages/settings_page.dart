@@ -35,6 +35,11 @@ class SettingsPage extends StatefulWidget {
     this.onInstancesChanged, // 实例启用/禁用即时生效:壳持久化 + 按需重启核心(不导航)
     this.autostartEnabled = false, // 开机自启动当前状态(由壳查询 OS 得到)
     this.onAutostartChanged,
+    this.debugSampling = false, // 调试:客户端读流量采样开关
+    this.debugMaxSamples = 200000,
+    this.debugMaxMemMB = 32,
+    this.onDebugChanged, // (enabled, maxSamples, maxMemMB):壳持久化 + 调 FFI
+    this.onOpenDebug, // 打开独立调试面板视图
   });
 
   final Settings initial;
@@ -69,6 +74,12 @@ class SettingsPage extends StatefulWidget {
   final void Function(Settings)? onInstancesChanged;
   final bool autostartEnabled;
   final void Function(bool)? onAutostartChanged;
+  // 调试:客户端读流量采样。开关即时生效(壳持久化 + 调 FFI);上限在调试面板内配置。
+  final bool debugSampling;
+  final int debugMaxSamples;
+  final int debugMaxMemMB;
+  final void Function(bool enabled, int maxSamples, int maxMemMB)? onDebugChanged;
+  final VoidCallback? onOpenDebug;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -1262,6 +1273,32 @@ class _SettingsPageState extends State<SettingsPage> {
             ],
           ),
         ),
+        const SizedBox(height: 12),
+        const Divider(height: 1),
+        const SizedBox(height: 8),
+        // 网络采样(调试):客户端统计每个实例每次请求拿到的读流量。默认关、零开销。
+        Text('网络采样(调试)',
+            style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: const Text('开启读流量采样', style: TextStyle(fontSize: 13)),
+          subtitle: Text('在内存里记录每个实例每次请求的数据量与 page_size,用于分析网络传输。'
+              '默认关闭;开启后有轻微开销。上限在调试面板内配置',
+              style: theme.textTheme.bodySmall),
+          value: widget.debugSampling,
+          onChanged: (v) => widget.onDebugChanged
+              ?.call(v, widget.debugMaxSamples, widget.debugMaxMemMB),
+        ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: widget.onOpenDebug,
+            icon: const Icon(Icons.insights_outlined, size: 16),
+            label: const Text('打开调试面板'),
+          ),
+        ),
+
         const SizedBox(height: 4),
         // MiSans 仅 Windows 打包使用;其许可要求「在软件中特别注明」,故只在 Windows 显示署名。
         if (theme.platform == TargetPlatform.windows) ...[

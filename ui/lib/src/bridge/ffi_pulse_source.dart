@@ -43,4 +43,24 @@ class FfiPulseSource implements PulseSource {
 
   @override
   void setForeground(bool open) => _core?.setForeground(open);
+
+  @override
+  void debugSet(
+      {required bool enabled,
+      required int maxSamples,
+      required int maxMemBytes}) {
+    final args = jsonEncode({
+      'enabled': enabled,
+      'maxSamples': maxSamples,
+      'maxMemBytes': maxMemBytes,
+    });
+    _core?.debugSet(args);
+  }
+
+  @override
+  String debugReportJson() =>
+      _core?.debugReport() ?? '{"enabled":false,"instances":[]}';
+
+  @override
+  void debugReset() => _core?.debugReset();
 }

@@ -44,6 +44,12 @@ type Provider interface {
 	Capabilities() Capabilities
 }
 
+// LabelSetter 是一个可选能力:接收一个稳定的实例显示名(app 算出去重后回填)。
+// 供调试采样(core/netstat)按实例区分流量。由 app 通过类型断言探测。
+type LabelSetter interface {
+	SetLabel(label string)
+}
+
 // UsageLogFetcher 是一个可选能力:增量拉取该来源的原始请求日志(供本地按
 // 「账户×本地小时」聚合,见 core/usage)。并非所有 provider 都支持(目前仅 sub2api),
 // 故独立于 Provider 主接口,由 poller 通过类型断言探测。三条流各有一法:

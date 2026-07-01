@@ -1,6 +1,8 @@
 package provider
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/lureiny/quota-pulse/core/netstat"
 )
 
 // AuthScheme 描述一个 provider 的鉴权方式。不同平台 header 不同:
@@ -45,6 +49,7 @@ type Client struct {
 	BaseURL string
 	Auth    AuthScheme
 	HTTP    *http.Client
+	Label   string // 实例名(调试采样按此分实例;由 app 在算出去重实例名后回填)
 
 	mu    sync.Mutex
 	cache map[string]cacheEntry // path -> 上次 etag + data(供 304 复用)
@@ -128,6 +133,14 @@ func (c *Client) doOnce(ctx context.Context, path string, conditional, forceFres
 		req.Header.Set("Pragma", "no-cache")
 	}
 
+	// 调试采样开启时接管内容编码:自己声明 gzip 使 net/http 不再透明解压,
+	// 从而量到「真实压缩后网络字节」(wire),再自行解压得到「数据量」(payload)。
+	// 关闭时逐字走原路径(Go 自动 gzip + 自动解压),仅一次原子读的开销。
+	dbg := netstat.Enabled()
+	if dbg {
+		req.Header.Set("Accept-Encoding", "gzip")
+	}
+
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return nil, 0, err
@@ -135,12 +148,27 @@ func (c *Client) doOnce(ctx context.Context, path string, conditional, forceFres
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotModified {
+		if dbg {
+			netstat.Record(c.Label, path, 0, 0, resp.StatusCode) // 304:响应体≈0 字节
+		}
 		return nil, resp.StatusCode, nil
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
 		return nil, resp.StatusCode, err
+	}
+	if dbg {
+		wire := len(body) // 接管编码后 body 即网络原始字节(可能是 gzip 流)
+		if strings.EqualFold(resp.Header.Get("Content-Encoding"), "gzip") {
+			if gr, gzErr := gzip.NewReader(bytes.NewReader(body)); gzErr == nil {
+				if dec, dErr := io.ReadAll(io.LimitReader(gr, 32<<20)); dErr == nil {
+					body = dec // 解压后交给下方信封解析
+				}
+				_ = gr.Close()
+			}
+		}
+		netstat.Record(c.Label, path, wire, len(body), resp.StatusCode)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, resp.StatusCode, fmt.Errorf("GET %s -> %d: %s", path, resp.StatusCode, snippet(body))

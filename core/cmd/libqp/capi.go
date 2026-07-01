@@ -158,6 +158,47 @@ func QP_SetAsleep(v C.int) {
 	withApp(func(a *app.App) { a.SetAsleep(v != 0) })
 }
 
+// QP_DebugSet 开启/关闭客户端读流量采样(调试)。
+// argsJSON: {"enabled":true,"maxSamples":200000,"maxMemBytes":33554432}
+// enabled=true 重置缓冲并开采;false 停采(保留已采样本)。上限省略/<=0 走默认。
+//
+//export QP_DebugSet
+func QP_DebugSet(argsJSON *C.char) {
+	mu.Lock()
+	a := engine
+	mu.Unlock()
+	if a == nil {
+		return
+	}
+	var args struct {
+		Enabled     bool  `json:"enabled"`
+		MaxSamples  int   `json:"maxSamples"`
+		MaxMemBytes int64 `json:"maxMemBytes"`
+	}
+	_ = json.Unmarshal([]byte(C.GoString(argsJSON)), &args)
+	a.DebugSet(args.Enabled, args.MaxSamples, args.MaxMemBytes)
+}
+
+// QP_DebugReport 返回当前采样报告(JSON)。返回的 C 字符串由调用方用 QP_Free 释放。
+//
+//export QP_DebugReport
+func QP_DebugReport() *C.char {
+	mu.Lock()
+	a := engine
+	mu.Unlock()
+	if a == nil {
+		return C.CString(`{"enabled":false,"instances":[]}`)
+	}
+	return C.CString(a.DebugReportJSON())
+}
+
+// QP_DebugReset 清空已采样本(保留开关与上限)。
+//
+//export QP_DebugReset
+func QP_DebugReset() {
+	withApp(func(a *app.App) { a.DebugReset() })
+}
+
 // QP_Free 释放由本库返回的 C 字符串。
 //
 //export QP_Free

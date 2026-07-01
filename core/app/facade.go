@@ -13,6 +13,7 @@ import (
 
 	"github.com/lureiny/quota-pulse/core/config"
 	"github.com/lureiny/quota-pulse/core/model"
+	"github.com/lureiny/quota-pulse/core/netstat"
 	"github.com/lureiny/quota-pulse/core/poller"
 	"github.com/lureiny/quota-pulse/core/provider"
 	"github.com/lureiny/quota-pulse/core/usage"
@@ -75,6 +76,11 @@ func New(cfg config.Config) (*App, error) {
 			instance = fmt.Sprintf("%s (%d)", base, k)
 		}
 		used[instance] = true
+
+		// 把去重后的实例名回填给 provider(供调试采样按实例区分读流量)。
+		if ls, ok := prov.(provider.LabelSetter); ok {
+			ls.SetLabel(instance)
+		}
 
 		sched := poller.NewScheduler(pc.Poll)
 		a.poll.AddProvider(prov, sched, instance)
@@ -219,6 +225,24 @@ func (a *App) SetAsleep(v bool) {
 		s.SetAsleep(v)
 	}
 }
+
+// --- 调试:客户端读流量采样(core/netstat) ---
+
+// DebugSet 开启/关闭采样。enabled=true 时重置缓冲并按上限开采;false 时停采(保留已采样本)。
+// maxSamples/maxMemBytes <=0 走 netstat 默认值。
+func (a *App) DebugSet(enabled bool, maxSamples int, maxMemBytes int64) {
+	if enabled {
+		netstat.Enable(maxSamples, maxMemBytes)
+	} else {
+		netstat.Disable()
+	}
+}
+
+// DebugReportJSON 返回当前采样报告 JSON(无论开关状态均有效)。
+func (a *App) DebugReportJSON() string { return string(netstat.Report()) }
+
+// DebugReset 清空已采样本(保留开关与上限)。
+func (a *App) DebugReset() { netstat.Reset() }
 
 func (a *App) broadcast(snap []model.AccountPulse) {
 	b, err := json.Marshal(snap)

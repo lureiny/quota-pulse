@@ -76,6 +76,15 @@ String fmtCost(double v) {
   return '\$${v.toStringAsFixed(4)}';
 }
 
+/// 字节数 → "1.2 KB" / "3.4 MB"(1024 进制,调试面板用)。
+String fmtBytes(num n) {
+  final v = n.toDouble();
+  if (v < 1024) return '${v.toStringAsFixed(0)} B';
+  if (v < 1024 * 1024) return '${(v / 1024).toStringAsFixed(1)} KB';
+  if (v < 1024 * 1024 * 1024) return '${(v / (1024 * 1024)).toStringAsFixed(1)} MB';
+  return '${(v / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+}
+
 /// 把剩余秒数格式化为 "2天3h" / "3h13m" / "45m" / "30s"。0 天不显示天。
 String fmtDuration(int secs) {
   if (secs <= 0) return '';

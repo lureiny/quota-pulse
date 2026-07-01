@@ -330,6 +330,11 @@ class Settings {
   final ChartGroupBy chartGroupBy; // 分组维度:账户/api_key/模型/用户/分组(默认账户;纯 UI)
   final ChartMetric chartMetric; // 度量:token 量 / 花费(默认 token;纯 UI)
 
+  // 调试:客户端读流量采样(运行时开关,通过 FFI 控制;这里仅持久化开关与上限)。
+  final bool debugSampling; // 是否开启采样(默认关)
+  final int debugMaxSamples; // 最大采样次数(默认 200000)
+  final int debugMaxMemMB; // 采样内存上限(MB,默认 32)
+
   const Settings({
     this.instances = const [],
     this.layout = ListLayout.grouped,
@@ -348,6 +353,9 @@ class Settings {
     this.chartType = ChartType.bar,
     this.chartGroupBy = ChartGroupBy.account,
     this.chartMetric = ChartMetric.tokens,
+    this.debugSampling = false,
+    this.debugMaxSamples = 200000,
+    this.debugMaxMemMB = 32,
   });
 
   // 至少有一个「已启用且已配置」的实例才算可用;全部禁用 → 视为未配置(壳回到设置页)。
@@ -371,6 +379,9 @@ class Settings {
     ChartType? chartType,
     ChartGroupBy? chartGroupBy,
     ChartMetric? chartMetric,
+    bool? debugSampling,
+    int? debugMaxSamples,
+    int? debugMaxMemMB,
   }) =>
       Settings(
         instances: instances ?? this.instances,
@@ -390,6 +401,9 @@ class Settings {
         chartType: chartType ?? this.chartType,
         chartGroupBy: chartGroupBy ?? this.chartGroupBy,
         chartMetric: chartMetric ?? this.chartMetric,
+        debugSampling: debugSampling ?? this.debugSampling,
+        debugMaxSamples: debugMaxSamples ?? this.debugMaxSamples,
+        debugMaxMemMB: debugMaxMemMB ?? this.debugMaxMemMB,
       );
 
   /// 已配置实例 → (唯一展示名, 实例)。唯一名规则与核心 facade 去重一致(避免 key 串号),
@@ -473,6 +487,9 @@ class Settings {
         'chart_type': chartType.name,
         'chart_group_by': chartGroupBy.name,
         'chart_metric': chartMetric.name,
+        'debug_sampling': debugSampling,
+        'debug_max_samples': debugMaxSamples,
+        'debug_max_mem_mb': debugMaxMemMB,
       };
 
   factory Settings.fromJson(Map<String, dynamic> j) => Settings(
@@ -520,6 +537,9 @@ class Settings {
           (m) => m.name == j['chart_metric'],
           orElse: () => ChartMetric.tokens,
         ),
+        debugSampling: j['debug_sampling'] as bool? ?? false,
+        debugMaxSamples: (j['debug_max_samples'] as num?)?.toInt() ?? 200000,
+        debugMaxMemMB: (j['debug_max_mem_mb'] as num?)?.toInt() ?? 32,
       );
 }
 

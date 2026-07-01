@@ -28,4 +28,18 @@ abstract class PulseSource {
 
   /// 告知引擎弹层是否打开(打开则提频)。
   void setForeground(bool open);
+
+  // ---- 调试:客户端读流量采样 ----
+
+  /// 开/关采样。enabled=true 重置缓冲并按上限开采;false 停采(保留已采样本)。
+  void debugSet(
+      {required bool enabled,
+      required int maxSamples,
+      required int maxMemBytes});
+
+  /// 读取采样报告 JSON(无论开关状态均有效)。
+  String debugReportJson();
+
+  /// 清空已采样本(保留开关与上限)。
+  void debugReset();
 }

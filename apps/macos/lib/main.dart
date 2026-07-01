@@ -86,7 +86,7 @@ class _QuotaPulseAppState extends State<QuotaPulseApp> {
   }
 }
 
-enum _View { list, settings }
+enum _View { list, settings, debug }
 
 class Shell extends StatefulWidget {
   const Shell({
@@ -111,6 +111,7 @@ class _ShellState extends State<Shell> with WindowListener {
   _View _view = _View.list;
   String? _error;
   bool _autostartEnabled = false; // 开机自启动:真值以 OS 为准,启动时查询
+  bool _debugOpen = false; // 调试面板打开时:窗口放大 + 失焦不自动收起
 
   // 菜单栏滚动参数由设置映射(macOS 专属、可在设置页实时调):
   //   速度 tickerMs(ms/字,20-1000)→ pps(点/秒);宽度 tickerWidth(字,8-40)→ 点。
@@ -238,6 +239,7 @@ class _ShellState extends State<Shell> with WindowListener {
 
   @override
   void onWindowBlur() {
+    if (_debugOpen) return; // 调试面板是独立视图,失焦不收起
     _hidePopover(); // 点击弹层外即收起(popover 行为)
   }
 
@@ -255,6 +257,7 @@ class _ShellState extends State<Shell> with WindowListener {
         _controller!.addListener(_onPulse);
       }
       _controller!.startPolling();
+      _applyDebug(); // 重启核心后按持久化配置重挂调试采样
       _error = null;
     } catch (e) {
       _error = e.toString();
@@ -396,6 +399,52 @@ class _ShellState extends State<Shell> with WindowListener {
     setState(() => _settings = s);
   }
 
+  // 调试:客户端读流量采样。开关/上限改动即持久化并调 FFI;开关或上限变化都以新配置重开采样。
+  void _onDebugChanged(bool enabled, int maxSamples, int maxMemMB) {
+    final s = _settings.copyWith(
+      debugSampling: enabled,
+      debugMaxSamples: maxSamples,
+      debugMaxMemMB: maxMemMB,
+    );
+    SettingsStore.save(s);
+    setState(() => _settings = s);
+    _applyDebug();
+  }
+
+  // 把当前调试采样配置下发到核心(壳持久化的开关/上限 → FFI)。
+  void _applyDebug() {
+    try {
+      _source.debugSet(
+        enabled: _settings.debugSampling,
+        maxSamples: _settings.debugMaxSamples,
+        maxMemBytes: _settings.debugMaxMemMB * 1024 * 1024,
+      );
+    } catch (_) {}
+  }
+
+  // 打开调试面板:放大窗口居中、标记独立视图(失焦不收起)。
+  Future<void> _openDebug() async {
+    setState(() {
+      _debugOpen = true;
+      _view = _View.debug;
+    });
+    await windowManager.setSize(const Size(760, 560));
+    await windowManager.setAlignment(Alignment.center);
+    await windowManager.show();
+    await windowManager.focus();
+    _source.setForeground(true);
+  }
+
+  // 关闭调试面板:恢复弹层尺寸并贴回菜单栏下方,回到设置页。
+  Future<void> _closeDebug() async {
+    setState(() {
+      _debugOpen = false;
+      _view = _View.settings;
+    });
+    await windowManager.setSize(const Size(340, 460));
+    await _positionUnderTray();
+  }
+
   Future<void> _quit() async {
     try {
       _source.stop();
@@ -415,6 +464,17 @@ class _ShellState extends State<Shell> with WindowListener {
   }
 
   Widget _content() {
+    if (_view == _View.debug) {
+      return DebugPanel(
+        enabled: _settings.debugSampling,
+        maxSamples: _settings.debugMaxSamples,
+        maxMemMB: _settings.debugMaxMemMB,
+        onChanged: _onDebugChanged,
+        fetchReport: () => _source.debugReportJson(),
+        onReset: () => _source.debugReset(),
+        onClose: _closeDebug,
+      );
+    }
     if (_view == _View.settings || !_settings.configured) {
       return SettingsPage(
         initial: _settings,
@@ -432,6 +492,11 @@ class _ShellState extends State<Shell> with WindowListener {
         onInstancesChanged: _onInstancesChanged,
         autostartEnabled: _autostartEnabled,
         onAutostartChanged: _onAutostartChanged,
+        debugSampling: _settings.debugSampling,
+        debugMaxSamples: _settings.debugMaxSamples,
+        debugMaxMemMB: _settings.debugMaxMemMB,
+        onDebugChanged: _onDebugChanged,
+        onOpenDebug: _openDebug,
         onCancel: _settings.configured ? () => setState(() => _view = _View.list) : null,
       );
     }
