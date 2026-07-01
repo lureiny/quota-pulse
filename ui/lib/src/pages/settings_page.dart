@@ -666,9 +666,49 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
         Expanded(
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(14, 6, 14, 14),
-            children: [
+          child: DefaultTabController(
+            length: 5,
+            child: Column(
+              children: [
+                TabBar(
+                  isScrollable: false,
+                  labelStyle: theme.textTheme.labelMedium
+                      ?.copyWith(fontWeight: FontWeight.w600),
+                  labelPadding: const EdgeInsets.symmetric(horizontal: 2),
+                  tabs: const [
+                    Tab(height: 38, text: '实例'),
+                    Tab(height: 38, text: '显示'),
+                    Tab(height: 38, text: '托盘'),
+                    Tab(height: 38, text: '通知'),
+                    Tab(height: 38, text: '高级'),
+                  ],
+                ),
+                Expanded(
+                  child: TabBarView(
+                    children: [
+                      _instancesTab(theme),
+                      _displayTab(theme),
+                      _trayTab(theme),
+                      _alertsTab(theme),
+                      _advancedTab(theme),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ===== 分标签内容:设置内容/逻辑与重组前完全一致,仅按类别归入不同标签 =====
+
+  // 「实例」标签:sub2api 实例卡 + 添加/导入 + 保存并连接。
+  Widget _instancesTab(ThemeData theme) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 16),
+      children: [
         Text('sub2api 实例', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
         for (var i = 0; i < _drafts.length; i++) _instanceCard(i),
@@ -696,20 +736,32 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         Padding(
           padding: const EdgeInsets.only(top: 2),
-          child: Text('实例改动需点「保存并连接」生效;以下其余设置均改动即时生效。',
+          child: Text('实例改动需点「保存并连接」生效;其余标签的设置均改动即时生效。',
               style: theme.textTheme.bodySmall),
         ),
-        const Divider(height: 24),
+      ],
+    );
+  }
 
-        Text('启动', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          dense: true,
-          title: const Text('开机自启动', style: TextStyle(fontSize: 13)),
-          subtitle: Text('登录系统后自动在后台启动(macOS 下次登录生效)',
-              style: theme.textTheme.bodySmall),
-          value: widget.autostartEnabled,
-          onChanged: widget.onAutostartChanged,
+  // 「显示」标签:主题 / 列表布局 / 用量图表 / 重置时间显示。
+  Widget _displayTab(ThemeData theme) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 16),
+      children: [
+        Text('主题', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+        const SizedBox(height: 8),
+        SegmentedButton<ThemeChoice>(
+          showSelectedIcon: false,
+          segments: const [
+            ButtonSegment(value: ThemeChoice.system, label: Text('跟随系统')),
+            ButtonSegment(value: ThemeChoice.light, label: Text('浅色')),
+            ButtonSegment(value: ThemeChoice.dark, label: Text('深色')),
+          ],
+          selected: {_theme},
+          onSelectionChanged: (s) {
+            setState(() => _theme = s.first);
+            widget.onThemeChanged?.call(s.first); // 即时生效 + 持久化(由壳处理)
+          },
         ),
         const Divider(height: 24),
 
@@ -745,28 +797,40 @@ class _SettingsPageState extends State<SettingsPage> {
         if (_chartEnabled)
           Padding(
             padding: const EdgeInsets.only(top: 2),
-            child: Text('时间跨度 / 分组维度(账户·API Key·模型·用户·分组) / 柱·线 都在主面板底部一条直接切换',
+            child: Text('时间跨度 / 分组维度(账户·API Key·模型·用户·分组) / 柱·线 / Token·花费 都在主面板底部一条直接切换',
                 style: theme.textTheme.bodySmall),
           ),
         const Divider(height: 24),
 
-        Text('主题', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+        Text('重置时间显示',
+            style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
-        SegmentedButton<ThemeChoice>(
+        SegmentedButton<ResetMode>(
           showSelectedIcon: false,
           segments: const [
-            ButtonSegment(value: ThemeChoice.system, label: Text('跟随系统')),
-            ButtonSegment(value: ThemeChoice.light, label: Text('浅色')),
-            ButtonSegment(value: ThemeChoice.dark, label: Text('深色')),
+            ButtonSegment(value: ResetMode.countdown, label: Text('剩余时间')),
+            ButtonSegment(value: ResetMode.absolute, label: Text('绝对时间')),
           ],
-          selected: {_theme},
+          selected: {_resetMode},
           onSelectionChanged: (s) {
-            setState(() => _theme = s.first);
-            widget.onThemeChanged?.call(s.first); // 即时生效 + 持久化(由壳处理)
+            setState(() => _resetMode = s.first);
+            widget.onResetModeChanged?.call(s.first); // 主页 + 托盘/菜单栏即时生效
           },
         ),
-        const Divider(height: 24),
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text('主页与悬浮窗/菜单栏同时生效;倒计时支持到「天」',
+              style: theme.textTheme.bodySmall),
+        ),
+      ],
+    );
+  }
 
+  // 「托盘」标签:托盘悬停内容 + 平台专属(macOS 菜单栏滚动 / Windows 悬浮窗口)。
+  Widget _trayTab(ThemeData theme) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 16),
+      children: [
         Text('托盘悬停内容', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
         _boxed(
@@ -840,159 +904,6 @@ class _SettingsPageState extends State<SettingsPage> {
                   style: theme.textTheme.bodySmall),
             ),
         ],
-
-        const Divider(height: 24),
-        Text('重置时间显示',
-            style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
-        const SizedBox(height: 8),
-        SegmentedButton<ResetMode>(
-          showSelectedIcon: false,
-          segments: const [
-            ButtonSegment(value: ResetMode.countdown, label: Text('剩余时间')),
-            ButtonSegment(value: ResetMode.absolute, label: Text('绝对时间')),
-          ],
-          selected: {_resetMode},
-          onSelectionChanged: (s) {
-            setState(() => _resetMode = s.first);
-            widget.onResetModeChanged?.call(s.first); // 主页 + 托盘/菜单栏即时生效
-          },
-        ),
-        Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: Text('主页与悬浮窗/菜单栏同时生效;倒计时支持到「天」',
-              style: theme.textTheme.bodySmall),
-        ),
-
-        const Divider(height: 24),
-        Text('用量提醒',
-            style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          dense: true,
-          title: const Text('启用用量通知', style: TextStyle(fontSize: 13)),
-          subtitle: Text('关闭后下列通知都不发送;每个窗口同类通知一个重置周期内只提醒一次',
-              style: theme.textTheme.bodySmall),
-          value: _alertEnabled,
-          onChanged: (v) {
-            setState(() => _alertEnabled = v);
-            _emitAlert();
-          },
-        ),
-        Row(children: [
-          SizedBox(
-              width: 76,
-              child: Text('阈值 $_alertThreshold%', style: theme.textTheme.bodySmall)),
-          Expanded(
-            child: Slider(
-              min: 50,
-              max: 100,
-              divisions: 50,
-              value: _alertThreshold.toDouble(),
-              onChanged: _alertEnabled
-                  ? (v) {
-                      setState(() => _alertThreshold = v.round());
-                      _emitAlert();
-                    }
-                  : null,
-            ),
-          ),
-        ]),
-        const SizedBox(height: 4),
-        Text('超阈值提醒 · 用量越过阈值时', style: theme.textTheme.bodySmall),
-        const SizedBox(height: 4),
-        _windowChips(_alertOverWindows),
-        const SizedBox(height: 10),
-        Text('额度恢复提醒 · 回落到阈值以下(含窗口重置)时', style: theme.textTheme.bodySmall),
-        const SizedBox(height: 4),
-        _windowChips(_alertRecoverWindows),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: () {
-              widget.onTestNotification?.call(); // fire-and-forget
-            },
-            icon: const Icon(Icons.notifications_active_outlined, size: 16),
-            label: const Text('发送测试通知'),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.only(left: 8),
-          child: Text('依次弹出 🚨 告警 / 🛑 已满 / ✅ 恢复 三种样例',
-              style: theme.textTheme.bodySmall),
-        ),
-
-        const Divider(height: 24),
-        Text('后台拉取',
-            style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
-        const SizedBox(height: 8),
-        // 被动刷新:读 sub2api 缓存,始终开,仅周期可配。
-        Row(
-          children: [
-            const Expanded(child: Text('刷新间隔', style: TextStyle(fontSize: 13))),
-            _boxed(
-              DropdownButton<int>(
-                value: _pollPassiveSecs,
-                isDense: true,
-                underline: const SizedBox.shrink(),
-                items: const [
-                  DropdownMenuItem(value: 30, child: Text('30 秒')),
-                  DropdownMenuItem(value: 60, child: Text('1 分钟(默认)')),
-                  DropdownMenuItem(value: 120, child: Text('2 分钟')),
-                  DropdownMenuItem(value: 300, child: Text('5 分钟')),
-                ],
-                onChanged: (v) {
-                  if (v == null) return;
-                  setState(() => _pollPassiveSecs = v);
-                  _emitPoll();
-                },
-              ),
-            ),
-          ],
-        ),
-        Padding(
-          padding: const EdgeInsets.only(top: 2),
-          child: Text('读取 sub2api 缓存的节奏(面板打开自动提速、电池供电降速)',
-              style: theme.textTheme.bodySmall),
-        ),
-        const SizedBox(height: 4),
-        // 自动强制回源:有自动化特征,默认关;手动刷新按钮不受影响。
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          dense: true,
-          title: const Text('自动强制回源', style: TextStyle(fontSize: 13)),
-          subtitle: Text('周期性强制 sub2api 回源刷新上游;有明显自动化特征,默认关闭。'
-              '启动加载与手动刷新仍会回源一次(加载全部账户),不受此开关影响',
-              style: theme.textTheme.bodySmall),
-          value: _pollActiveEnabled,
-          onChanged: (v) {
-            setState(() => _pollActiveEnabled = v);
-            _emitPoll();
-          },
-        ),
-        if (_pollActiveEnabled)
-          Row(
-            children: [
-              const Expanded(child: Text('回源间隔', style: TextStyle(fontSize: 13))),
-              _boxed(
-                DropdownButton<int>(
-                  value: _pollActiveSecs,
-                  isDense: true,
-                  underline: const SizedBox.shrink(),
-                  items: const [
-                    DropdownMenuItem(value: 300, child: Text('5 分钟')),
-                    DropdownMenuItem(value: 600, child: Text('10 分钟(默认)')),
-                    DropdownMenuItem(value: 1800, child: Text('30 分钟')),
-                    DropdownMenuItem(value: 3600, child: Text('1 小时')),
-                  ],
-                  onChanged: (v) {
-                    if (v == null) return;
-                    setState(() => _pollActiveSecs = v);
-                    _emitPoll();
-                  },
-                ),
-              ),
-            ],
-          ),
 
         // macOS 专属:菜单栏「全部账户」流水屏滚动调参(拖动即时预览)。
         if (theme.platform == TargetPlatform.macOS) ...[
@@ -1171,6 +1082,163 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ],
         ],
+      ],
+    );
+  }
+
+  // 「通知」标签:用量提醒(启用/阈值/超阈值窗口/恢复窗口/测试通知)。
+  Widget _alertsTab(ThemeData theme) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 16),
+      children: [
+        Text('用量提醒',
+            style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: const Text('启用用量通知', style: TextStyle(fontSize: 13)),
+          subtitle: Text('关闭后下列通知都不发送;每个窗口同类通知一个重置周期内只提醒一次',
+              style: theme.textTheme.bodySmall),
+          value: _alertEnabled,
+          onChanged: (v) {
+            setState(() => _alertEnabled = v);
+            _emitAlert();
+          },
+        ),
+        Row(children: [
+          SizedBox(
+              width: 76,
+              child: Text('阈值 $_alertThreshold%', style: theme.textTheme.bodySmall)),
+          Expanded(
+            child: Slider(
+              min: 50,
+              max: 100,
+              divisions: 50,
+              value: _alertThreshold.toDouble(),
+              onChanged: _alertEnabled
+                  ? (v) {
+                      setState(() => _alertThreshold = v.round());
+                      _emitAlert();
+                    }
+                  : null,
+            ),
+          ),
+        ]),
+        const SizedBox(height: 4),
+        Text('超阈值提醒 · 用量越过阈值时', style: theme.textTheme.bodySmall),
+        const SizedBox(height: 4),
+        _windowChips(_alertOverWindows),
+        const SizedBox(height: 10),
+        Text('额度恢复提醒 · 回落到阈值以下(含窗口重置)时', style: theme.textTheme.bodySmall),
+        const SizedBox(height: 4),
+        _windowChips(_alertRecoverWindows),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: () {
+              widget.onTestNotification?.call(); // fire-and-forget
+            },
+            icon: const Icon(Icons.notifications_active_outlined, size: 16),
+            label: const Text('发送测试通知'),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(left: 8),
+          child: Text('依次弹出 🚨 告警 / 🛑 已满 / ✅ 恢复 三种样例',
+              style: theme.textTheme.bodySmall),
+        ),
+      ],
+    );
+  }
+
+  // 「高级」标签:开机自启动 / 后台拉取 / 配置导入导出 + 署名 + 版本。
+  Widget _advancedTab(ThemeData theme) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 16),
+      children: [
+        Text('启动', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: const Text('开机自启动', style: TextStyle(fontSize: 13)),
+          subtitle: Text('登录系统后自动在后台启动(macOS 下次登录生效)',
+              style: theme.textTheme.bodySmall),
+          value: widget.autostartEnabled,
+          onChanged: widget.onAutostartChanged,
+        ),
+        const Divider(height: 24),
+
+        Text('后台拉取',
+            style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+        const SizedBox(height: 8),
+        // 被动刷新:读 sub2api 缓存,始终开,仅周期可配。
+        Row(
+          children: [
+            const Expanded(child: Text('刷新间隔', style: TextStyle(fontSize: 13))),
+            _boxed(
+              DropdownButton<int>(
+                value: _pollPassiveSecs,
+                isDense: true,
+                underline: const SizedBox.shrink(),
+                items: const [
+                  DropdownMenuItem(value: 30, child: Text('30 秒')),
+                  DropdownMenuItem(value: 60, child: Text('1 分钟(默认)')),
+                  DropdownMenuItem(value: 120, child: Text('2 分钟')),
+                  DropdownMenuItem(value: 300, child: Text('5 分钟')),
+                ],
+                onChanged: (v) {
+                  if (v == null) return;
+                  setState(() => _pollPassiveSecs = v);
+                  _emitPoll();
+                },
+              ),
+            ),
+          ],
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Text('读取 sub2api 缓存的节奏(面板打开自动提速、电池供电降速)',
+              style: theme.textTheme.bodySmall),
+        ),
+        const SizedBox(height: 4),
+        // 自动强制回源:有自动化特征,默认关;手动刷新按钮不受影响。
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: const Text('自动强制回源', style: TextStyle(fontSize: 13)),
+          subtitle: Text('周期性强制 sub2api 回源刷新上游;有明显自动化特征,默认关闭。'
+              '启动加载与手动刷新仍会回源一次(加载全部账户),不受此开关影响',
+              style: theme.textTheme.bodySmall),
+          value: _pollActiveEnabled,
+          onChanged: (v) {
+            setState(() => _pollActiveEnabled = v);
+            _emitPoll();
+          },
+        ),
+        if (_pollActiveEnabled)
+          Row(
+            children: [
+              const Expanded(child: Text('回源间隔', style: TextStyle(fontSize: 13))),
+              _boxed(
+                DropdownButton<int>(
+                  value: _pollActiveSecs,
+                  isDense: true,
+                  underline: const SizedBox.shrink(),
+                  items: const [
+                    DropdownMenuItem(value: 300, child: Text('5 分钟')),
+                    DropdownMenuItem(value: 600, child: Text('10 分钟(默认)')),
+                    DropdownMenuItem(value: 1800, child: Text('30 分钟')),
+                    DropdownMenuItem(value: 3600, child: Text('1 小时')),
+                  ],
+                  onChanged: (v) {
+                    if (v == null) return;
+                    setState(() => _pollActiveSecs = v);
+                    _emitPoll();
+                  },
+                ),
+              ),
+            ],
+          ),
 
         const SizedBox(height: 12),
         // 配置导入 / 导出(跨平台,YAML;方便迁移到不同机器)。
@@ -1214,9 +1282,6 @@ class _SettingsPageState extends State<SettingsPage> {
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
             ),
-          ),
-        ),
-            ],
           ),
         ),
       ],
