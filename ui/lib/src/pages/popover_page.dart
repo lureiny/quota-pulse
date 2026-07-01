@@ -23,6 +23,7 @@ class PopoverPage extends StatefulWidget {
     this.chartRange = ChartRange.h24,
     this.chartType = ChartType.bar,
     this.chartGroupBy = ChartGroupBy.account,
+    this.chartMetric = ChartMetric.tokens,
     this.onChartViewChanged,
   });
 
@@ -36,9 +37,10 @@ class PopoverPage extends StatefulWidget {
   final ChartRange chartRange; // 图表时间跨度(主面板视图控件,即时切换)
   final ChartType chartType; // 图表样式:柱状 / 曲线(主面板视图控件,即时切换)
   final ChartGroupBy chartGroupBy; // 分组维度(主面板视图控件,即时切换)
-  // 主面板「视图控件」变更(跨度/维度/样式):壳持久化 + 重渲染,不重启核心。
-  final void Function(ChartGroupBy groupBy, ChartType type, ChartRange range)?
-      onChartViewChanged;
+  final ChartMetric chartMetric; // 度量:token 量 / 花费($)(主面板视图控件,即时切换)
+  // 主面板「视图控件」变更(跨度/维度/样式/度量):壳持久化 + 重渲染,不重启核心。
+  final void Function(ChartGroupBy groupBy, ChartType type, ChartRange range,
+      ChartMetric metric)? onChartViewChanged;
 
   @override
   State<PopoverPage> createState() => _PopoverPageState();
@@ -142,6 +144,7 @@ class _PopoverPageState extends State<PopoverPage> {
             dimension: widget.chartGroupBy.dimension,
             rangeHours: widget.chartRange.hours,
             chartType: widget.chartType,
+            metric: widget.chartMetric,
             fetchChart: widget.controller.chartData,
             ensureCoverage: widget.controller.ensureCoverage,
           ));
@@ -187,6 +190,7 @@ class _PopoverPageState extends State<PopoverPage> {
                           dimension: widget.chartGroupBy.dimension,
                           rangeHours: widget.chartRange.hours,
                           chartType: widget.chartType,
+                          metric: widget.chartMetric,
                           fetchChart: widget.controller.chartData,
                           ensureCoverage: widget.controller.ensureCoverage,
                         ),
@@ -299,8 +303,8 @@ class _PopoverPageState extends State<PopoverPage> {
             ],
             onChanged: (v) {
               if (v != null) {
-                widget.onChartViewChanged
-                    ?.call(v, widget.chartType, widget.chartRange);
+                widget.onChartViewChanged?.call(
+                    v, widget.chartType, widget.chartRange, widget.chartMetric);
               }
             },
           ),
@@ -319,12 +323,34 @@ class _PopoverPageState extends State<PopoverPage> {
             ],
             onChanged: (v) {
               if (v != null) {
-                widget.onChartViewChanged
-                    ?.call(widget.chartGroupBy, widget.chartType, v);
+                widget.onChartViewChanged?.call(
+                    widget.chartGroupBy, widget.chartType, v, widget.chartMetric);
               }
             },
           ),
           const Spacer(),
+          // 度量:按 token 量 / 按花费($)。花费视图下堆叠柱即各维度花费占比。
+          SegmentedButton<ChartMetric>(
+            showSelectedIcon: false,
+            style: const ButtonStyle(
+              visualDensity: VisualDensity.compact,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            segments: const [
+              ButtonSegment(
+                  value: ChartMetric.tokens,
+                  icon: Icon(Icons.toll_outlined, size: 15),
+                  tooltip: 'Token 量'),
+              ButtonSegment(
+                  value: ChartMetric.cost,
+                  icon: Icon(Icons.attach_money, size: 15),
+                  tooltip: '花费($)'),
+            ],
+            selected: {widget.chartMetric},
+            onSelectionChanged: (s) => widget.onChartViewChanged?.call(
+                widget.chartGroupBy, widget.chartType, widget.chartRange, s.first),
+          ),
+          const SizedBox(width: 8),
           SegmentedButton<ChartType>(
             showSelectedIcon: false,
             style: const ButtonStyle(
@@ -339,7 +365,8 @@ class _PopoverPageState extends State<PopoverPage> {
             ],
             selected: {widget.chartType},
             onSelectionChanged: (s) => widget.onChartViewChanged
-                ?.call(widget.chartGroupBy, s.first, widget.chartRange),
+                ?.call(widget.chartGroupBy, s.first, widget.chartRange,
+                    widget.chartMetric),
           ),
         ],
       ),

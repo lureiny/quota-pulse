@@ -503,10 +503,14 @@ class _ShellState extends State<Shell>
     _updateTicker(); // 同步桌面悬浮窗口
   }
 
-  // 主面板视图控件:时间跨度 + 分组维度 + 柱/线。纯 UI,持久化 + 重渲染,不重启核心。
-  void _onChartViewChanged(ChartGroupBy groupBy, ChartType type, ChartRange range) {
+  // 主面板视图控件:时间跨度 + 分组维度 + 柱/线 + 度量。纯 UI,持久化 + 重渲染,不重启核心。
+  void _onChartViewChanged(ChartGroupBy groupBy, ChartType type,
+      ChartRange range, ChartMetric metric) {
     final s = _settings.copyWith(
-        chartGroupBy: groupBy, chartType: type, chartRange: range);
+        chartGroupBy: groupBy,
+        chartType: type,
+        chartRange: range,
+        chartMetric: metric);
     SettingsStore.save(s);
     setState(() => _settings = s);
   }
@@ -564,6 +568,7 @@ class _ShellState extends State<Shell>
       chartRange: _settings.chartRange,
       chartType: _settings.chartType,
       chartGroupBy: _settings.chartGroupBy,
+      chartMetric: _settings.chartMetric,
       onChartViewChanged: _onChartViewChanged,
       onRefresh: () => _controller?.refreshNow(),
       onSettings: () => setState(() => _view = _View.settings),

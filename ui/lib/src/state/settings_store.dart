@@ -107,6 +107,16 @@ extension ChartTypeX on ChartType {
       };
 }
 
+/// 图表度量:按 token 量 / 按花费($)。二者不严格成正比,切到花费可看各维度花费占比。
+enum ChartMetric { tokens, cost }
+
+extension ChartMetricX on ChartMetric {
+  String get label => switch (this) {
+        ChartMetric.tokens => 'Token',
+        ChartMetric.cost => '花费',
+      };
+}
+
 /// 图表分组维度(按哪种归类聚合 / 着色)。
 enum ChartGroupBy { account, apiKey, model, user, group }
 
@@ -318,6 +328,7 @@ class Settings {
   final ChartRange chartRange; // 显示时间跨度(默认 24h;UI 裁剪,不影响 core 拉取窗口)
   final ChartType chartType; // 样式:柱状图 / 曲线图(默认柱状图;纯 UI)
   final ChartGroupBy chartGroupBy; // 分组维度:账户/api_key/模型/用户/分组(默认账户;纯 UI)
+  final ChartMetric chartMetric; // 度量:token 量 / 花费(默认 token;纯 UI)
 
   const Settings({
     this.instances = const [],
@@ -336,6 +347,7 @@ class Settings {
     this.chartRange = ChartRange.h24,
     this.chartType = ChartType.bar,
     this.chartGroupBy = ChartGroupBy.account,
+    this.chartMetric = ChartMetric.tokens,
   });
 
   // 至少有一个「已启用且已配置」的实例才算可用;全部禁用 → 视为未配置(壳回到设置页)。
@@ -358,6 +370,7 @@ class Settings {
     ChartRange? chartRange,
     ChartType? chartType,
     ChartGroupBy? chartGroupBy,
+    ChartMetric? chartMetric,
   }) =>
       Settings(
         instances: instances ?? this.instances,
@@ -376,6 +389,7 @@ class Settings {
         chartRange: chartRange ?? this.chartRange,
         chartType: chartType ?? this.chartType,
         chartGroupBy: chartGroupBy ?? this.chartGroupBy,
+        chartMetric: chartMetric ?? this.chartMetric,
       );
 
   /// 已配置实例 → (唯一展示名, 实例)。唯一名规则与核心 facade 去重一致(避免 key 串号),
@@ -458,6 +472,7 @@ class Settings {
         'chart_range': chartRange.name,
         'chart_type': chartType.name,
         'chart_group_by': chartGroupBy.name,
+        'chart_metric': chartMetric.name,
       };
 
   factory Settings.fromJson(Map<String, dynamic> j) => Settings(
@@ -500,6 +515,10 @@ class Settings {
         chartGroupBy: ChartGroupBy.values.firstWhere(
           (g) => g.name == j['chart_group_by'],
           orElse: () => ChartGroupBy.account,
+        ),
+        chartMetric: ChartMetric.values.firstWhere(
+          (m) => m.name == j['chart_metric'],
+          orElse: () => ChartMetric.tokens,
         ),
       );
 }

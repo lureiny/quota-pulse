@@ -257,7 +257,7 @@ func (s *Store) QuerySeries(instance, dimension string, sinceUnix int64) []model
 
 	rows, err := s.db.Query(`
 SELECT json_extract(dims, ?) AS k, json_extract(dims, ?) AS nm, hour_local AS h,
-       SUM(input), SUM(output), SUM(cache_create), SUM(cache_read)
+       SUM(input), SUM(output), SUM(cache_create), SUM(cache_read), SUM(cost)
 FROM usage_events
 WHERE instance=? AND hour_local>=?
 GROUP BY k, h
@@ -272,7 +272,8 @@ ORDER BY k, h`, keyPath, namePath, instance, sinceUnix)
 	for rows.Next() {
 		var k, nm sql.NullString
 		var hs, in, ou, cc, cr int64
-		if err := rows.Scan(&k, &nm, &hs, &in, &ou, &cc, &cr); err != nil {
+		var cost float64
+		if err := rows.Scan(&k, &nm, &hs, &in, &ou, &cc, &cr, &cost); err != nil {
 			continue
 		}
 		key := k.String
@@ -293,6 +294,7 @@ ORDER BY k, h`, keyPath, namePath, instance, sinceUnix)
 			CacheCreate: cc,
 			CacheRead:   cr,
 			Total:       in + ou + cc + cr,
+			Cost:        cost,
 		})
 	}
 

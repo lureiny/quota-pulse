@@ -184,6 +184,38 @@ func TestMaxCreatedAt(t *testing.T) {
 	}
 }
 
+// QuerySeries 除 token 外还按维度/桶聚合 cost(花费与 token 不成正比,单独求和)。
+func TestQuerySeriesAggregatesCost(t *testing.T) {
+	st := openTmp(t)
+	loc := time.Local
+	h14a := time.Date(2026, 6, 19, 14, 5, 0, 0, loc)  // 14:00 桶
+	h14b := time.Date(2026, 6, 19, 14, 40, 0, 0, loc) // 同 14:00 桶
+	mk := func(id int64, ts time.Time, acc string, cost float64) model.UsageEvent {
+		return model.UsageEvent{
+			ID: id, CreatedAt: ts, Input: 10, Output: 5, Cost: cost,
+			Dims: map[string]string{"account": acc, "account_name": "A" + acc},
+		}
+	}
+	if err := st.AddEvents("inst", []model.UsageEvent{
+		mk(1, h14a, "2", 1.25),
+		mk(2, h14b, "2", 0.75), // 与 id1 同桶同账户 → cost 应合并为 2.0
+		mk(3, h14a, "9", 0.50), // 另一账户,单独一序列
+	}); err != nil {
+		t.Fatal(err)
+	}
+	acc := seriesByKey(st.QuerySeries("inst", "account", 0))
+	if p := acc["2"].Points; len(p) != 1 || p[0].Cost != 2.0 {
+		t.Errorf("account 2 cost: %+v want 单桶 cost=2.0", p)
+	}
+	if p := acc["9"].Points; len(p) != 1 || p[0].Cost != 0.5 {
+		t.Errorf("account 9 cost: %+v want 单桶 cost=0.5", p)
+	}
+	// token 侧不受影响:账户 2 两条各 15 token → 合计 30。
+	if got := acc["2"].Points[0].Total; got != 30 {
+		t.Errorf("token total=%d want 30(cost 聚合不动 token)", got)
+	}
+}
+
 // Evict 把覆盖下界 W 向前夹到保留下限(数据删了不能再谎报覆盖),且不被更早的 Evict 回拉。
 func TestEvictClampsCoverage(t *testing.T) {
 	st := openTmp(t)

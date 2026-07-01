@@ -67,6 +67,15 @@ String fmtTokens(int n) {
   return '$n';
 }
 
+/// 花费(USD)→ "$12.34" / "$1.2K"。小额自适应加精度(单条请求可能只几厘)。
+String fmtCost(double v) {
+  if (v <= 0) return r'$0';
+  if (v >= 1000) return '\$${(v / 1e3).toStringAsFixed(1)}K';
+  if (v >= 1) return '\$${v.toStringAsFixed(2)}';
+  if (v >= 0.01) return '\$${v.toStringAsFixed(3)}';
+  return '\$${v.toStringAsFixed(4)}';
+}
+
 /// 把剩余秒数格式化为 "2天3h" / "3h13m" / "45m" / "30s"。0 天不显示天。
 String fmtDuration(int secs) {
   if (secs <= 0) return '';
