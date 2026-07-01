@@ -24,6 +24,7 @@ class HourlyChart extends StatefulWidget {
     required this.rangeHours,
     required this.chartType,
     required this.metric,
+    required this.onMetricChanged,
     required this.fetchChart,
     required this.ensureCoverage,
   });
@@ -33,6 +34,7 @@ class HourlyChart extends StatefulWidget {
   final int rangeHours;
   final ChartType chartType;
   final ChartMetric metric; // 度量:token 量 / 花费($)
+  final ValueChanged<ChartMetric> onMetricChanged; // 图右上角小开关切度量(全局持久化)
 
   /// (instance, dimension, hours) → ChartData(本地查询,便宜)。
   final ChartData Function(String instance, String dimension, int hours)
@@ -208,11 +210,13 @@ class _HourlyChartState extends State<HourlyChart> {
                     : _barChart(slots, visible, colorOf, nameOf, maxY, labelStep,
                         barWidth, cs);
 
-                if (uncoveredFrac <= 0) return chart;
                 return Stack(
                   children: [
                     chart,
-                    _uncoveredBand(c.maxWidth, uncoveredFrac, fresh, cs),
+                    if (uncoveredFrac > 0)
+                      _uncoveredBand(c.maxWidth, uncoveredFrac, fresh, cs),
+                    // 度量切换:小开关叠在图右上角(不占控件条),点选 token / 花费。
+                    Positioned(top: 0, right: 0, child: _metricToggle(cs)),
                   ],
                 );
               },
@@ -220,6 +224,48 @@ class _HourlyChartState extends State<HourlyChart> {
           ),
           const SizedBox(height: 6),
           _legend(context, ordered, colorOf, nameOf),
+        ],
+      ),
+    );
+  }
+
+  // ---- 度量小开关(图右上角):Tk / $ 两格,点未选中的一格即切换(全局持久化)----
+  Widget _metricToggle(ColorScheme cs) {
+    Widget cell(String label, ChartMetric m) {
+      final on = widget.metric == m;
+      return InkWell(
+        borderRadius: BorderRadius.circular(4),
+        onTap: on ? null : () => widget.onMetricChanged(m),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+          decoration: BoxDecoration(
+            color: on ? cs.primary.withValues(alpha: 0.9) : Colors.transparent,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(label,
+              style: TextStyle(
+                fontSize: 9,
+                height: 1.3,
+                color: on ? cs.onPrimary : cs.onSurfaceVariant,
+                fontWeight: on ? FontWeight.w700 : FontWeight.w400,
+              )),
+        ),
+      );
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(
+            color: cs.outlineVariant.withValues(alpha: 0.5), width: 0.6),
+      ),
+      padding: const EdgeInsets.all(1),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          cell('Tk', ChartMetric.tokens),
+          cell('\$', ChartMetric.cost),
         ],
       ),
     );

@@ -145,6 +145,8 @@ class _PopoverPageState extends State<PopoverPage> {
             rangeHours: widget.chartRange.hours,
             chartType: widget.chartType,
             metric: widget.chartMetric,
+            onMetricChanged: (m) => widget.onChartViewChanged
+                ?.call(widget.chartGroupBy, widget.chartType, widget.chartRange, m),
             fetchChart: widget.controller.chartData,
             ensureCoverage: widget.controller.ensureCoverage,
           ));
@@ -191,6 +193,11 @@ class _PopoverPageState extends State<PopoverPage> {
                           rangeHours: widget.chartRange.hours,
                           chartType: widget.chartType,
                           metric: widget.chartMetric,
+                          onMetricChanged: (m) => widget.onChartViewChanged?.call(
+                              widget.chartGroupBy,
+                              widget.chartType,
+                              widget.chartRange,
+                              m),
                           fetchChart: widget.controller.chartData,
                           ensureCoverage: widget.controller.ensureCoverage,
                         ),
@@ -329,28 +336,7 @@ class _PopoverPageState extends State<PopoverPage> {
             },
           ),
           const Spacer(),
-          // 度量:按 token 量 / 按花费($)。花费视图下堆叠柱即各维度花费占比。
-          SegmentedButton<ChartMetric>(
-            showSelectedIcon: false,
-            style: const ButtonStyle(
-              visualDensity: VisualDensity.compact,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-            segments: const [
-              ButtonSegment(
-                  value: ChartMetric.tokens,
-                  icon: Icon(Icons.toll_outlined, size: 15),
-                  tooltip: 'Token 量'),
-              ButtonSegment(
-                  value: ChartMetric.cost,
-                  icon: Icon(Icons.attach_money, size: 15),
-                  tooltip: '花费(\$)'),
-            ],
-            selected: {widget.chartMetric},
-            onSelectionChanged: (s) => widget.onChartViewChanged?.call(
-                widget.chartGroupBy, widget.chartType, widget.chartRange, s.first),
-          ),
-          const SizedBox(width: 8),
+          // 度量(Token / 花费)切换已挪到每张图的右上角小开关,这里只留柱/线样式。
           SegmentedButton<ChartType>(
             showSelectedIcon: false,
             style: const ButtonStyle(
