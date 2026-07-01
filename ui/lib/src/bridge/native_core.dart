@@ -38,8 +38,8 @@ class NativeCore {
       _lib.lookupFunction<_IntArgC, _IntArgD>('QP_SetForeground');
   late final _StrArgD _debugSet =
       _lib.lookupFunction<_StrArgC, _StrArgD>('QP_DebugSet');
-  late final _StrToStrD _debugReport =
-      _lib.lookupFunction<_StrToStrC, _StrToStrD>('QP_DebugReport');
+  late final _SnapD _debugReport =
+      _lib.lookupFunction<_SnapC, _SnapD>('QP_DebugReport');
   late final _VoidD _debugReset =
       _lib.lookupFunction<_VoidC, _VoidD>('QP_DebugReset');
 
