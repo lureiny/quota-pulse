@@ -54,6 +54,7 @@ class _HourlyChartState extends State<HourlyChart> {
   static const double _labelReserve = 18; // 底部小时标签预留高
 
   ChartData _data = const ChartData();
+  ChartMetric? _renderedMetric; // 上次渲染用的度量;仅当它变化时禁掉图表过渡动画(切度量=换单位)
   final Set<String> _hidden = {}; // 被图例关掉的系列 key
   DateTime? _backfillStarted; // 本次未覆盖触发补齐的时刻(用于「补齐中」短时态)
   Timer? _timer;
@@ -61,6 +62,7 @@ class _HourlyChartState extends State<HourlyChart> {
   @override
   void initState() {
     super.initState();
+    _renderedMetric = widget.metric; // 首帧与当前度量一致 → 正常入场动画;仅后续切换才瞬时
     _data = _load(); // 直接赋值(initState 里不 setState),build 紧随其后。
     _maybeBackfill();
     // 随新事件 / 补齐进度,定时刷新(与快照 tick 解耦,避免每次重建都打 FFI)。
@@ -128,6 +130,13 @@ class _HourlyChartState extends State<HourlyChart> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+
+    // 切度量本质是换单位(token↔花费,y 值跨数量级):这一帧禁掉 fl_chart 隐式补间,
+    // 避免值从百万滑到个位的过渡动画造成明显卡顿;同度量下的数据刷新仍保留正常动画。
+    final swapDuration = _renderedMetric == widget.metric
+        ? const Duration(milliseconds: 150)
+        : Duration.zero;
+    _renderedMetric = widget.metric;
 
     // 取数/解析异常:明确区别于「真无数据」,可点按重试。
     if (!_data.ok) {
@@ -205,10 +214,10 @@ class _HourlyChartState extends State<HourlyChart> {
 
                 // 只渲染可见系列(隐藏的从堆叠/曲线里彻底去掉,而非画成全 0 线)。
                 final chart = widget.chartType == ChartType.line
-                    ? _lineChart(
-                        slots, visible, colorOf, nameOf, maxY, labelStep, cs)
+                    ? _lineChart(slots, visible, colorOf, nameOf, maxY, labelStep,
+                        cs, swapDuration)
                     : _barChart(slots, visible, colorOf, nameOf, maxY, labelStep,
-                        barWidth, cs);
+                        barWidth, cs, swapDuration);
 
                 return Stack(
                   children: [
@@ -347,7 +356,8 @@ class _HourlyChartState extends State<HourlyChart> {
       double maxY,
       int labelStep,
       double barWidth,
-      ColorScheme cs) {
+      ColorScheme cs,
+      Duration duration) {
     final groups = <BarChartGroupData>[];
     for (var i = 0; i < slots.length; i++) {
       final s = slots[i];
@@ -397,6 +407,7 @@ class _HourlyChartState extends State<HourlyChart> {
         gridData: const FlGridData(show: false),
         borderData: FlBorderData(show: false),
       ),
+      duration: duration, // 切度量的那一帧为 Duration.zero → 无过渡、瞬时切换
     );
   }
 
@@ -408,7 +419,8 @@ class _HourlyChartState extends State<HourlyChart> {
       Map<String, String> nameOf,
       double maxY,
       int labelStep,
-      ColorScheme cs) {
+      ColorScheme cs,
+      Duration duration) {
     final bars = <LineChartBarData>[];
     for (final ser in ordered) {
       final spots = <FlSpot>[
@@ -452,6 +464,7 @@ class _HourlyChartState extends State<HourlyChart> {
         gridData: const FlGridData(show: false),
         borderData: FlBorderData(show: false),
       ),
+      duration: duration, // 切度量的那一帧为 Duration.zero → 无过渡、瞬时切换
     );
   }
 
