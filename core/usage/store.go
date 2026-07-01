@@ -174,6 +174,18 @@ func (s *Store) CoverageFrom(instance string) int64 {
 	return t
 }
 
+// MaxCreatedAt 返回该实例本地最新事件的 created_at(unix 秒;空实例 0)。
+// 它是「前向覆盖上界 covered_to」的派生值:只要前向补齐一律由旧到新连续推进
+// (见 poller.forwardDrain),MAX 恒等于连续覆盖区间的右端 → 免持久化列、跨重启可续补。
+func (s *Store) MaxCreatedAt(instance string) int64 {
+	var t sql.NullInt64
+	_ = s.db.QueryRow(`SELECT MAX(created_at) FROM usage_events WHERE instance=?`, instance).Scan(&t)
+	if t.Valid {
+		return t.Int64
+	}
+	return 0
+}
+
 // NoteCoverage 记录覆盖水位 W:只向更早推进(取 min),稳态的近窗同步不会抬高它。
 // fromUnix<=0 视为无效(no-op)。
 func (s *Store) NoteCoverage(instance string, fromUnix int64) {
@@ -291,7 +303,11 @@ ORDER BY k, h`, keyPath, namePath, instance, sinceUnix)
 	return out
 }
 
-// Evict 删除某实例早于 beforeUnix 的事件(保留窗口外清理)。
+// Evict 删除某实例早于 beforeUnix 的事件(保留窗口外清理),并把覆盖下界 W 向前夹到
+// beforeUnix:数据都删了就不能再声称覆盖到更早(否则 CoverageFrom 谎报、ensureBackfill 也据此
+// 误判已补齐)。夹取只在 W 早于 beforeUnix 时发生,幂等安全。
 func (s *Store) Evict(instance string, beforeUnix int64) {
 	_, _ = s.db.Exec(`DELETE FROM usage_events WHERE instance=? AND hour_local<?`, instance, beforeUnix)
+	_, _ = s.db.Exec(`UPDATE sync_state SET backfilled_from=? WHERE instance=? AND backfilled_from>0 AND backfilled_from<?`,
+		beforeUnix, instance, beforeUnix)
 }

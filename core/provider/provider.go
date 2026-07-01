@@ -46,20 +46,29 @@ type Provider interface {
 
 // UsageLogFetcher 是一个可选能力:增量拉取该来源的原始请求日志(供本地按
 // 「账户×本地小时」聚合,见 core/usage)。并非所有 provider 都支持(目前仅 sub2api),
-// 故独立于 Provider 主接口,由 poller 通过类型断言探测。
-//
-//	sinceID  只取 id 大于它的新行(增量游标;0=冷启动回填)
-//	from     起始日期(date 粒度过滤的下界;实际仍按 id 精确去重)
-//	pageCap  翻页上限(防失控;desc 排序下截断只丢最老的行)
-//
-// 返回 id>sinceID 的全部新事件(精确时间、各类 token、cost、维度 Dims)。
+// 故独立于 Provider 主接口,由 poller 通过类型断言探测。三条流各有一法:
+//   - 稳态增量:FetchUsageSince(小页 id-desc,追到游标即停)
+//   - 前向补空缺:FetchUsageWindowAsc(大页 id-asc,由旧到新,截断只剩最新一段)
+//   - 反向补历史:FetchUsageWindow(大页 desc,按需回填更早)
 type UsageLogFetcher interface {
-	FetchUsageSince(ctx context.Context, sinceID int64, from time.Time, pageCap int) ([]model.UsageEvent, error)
+	// FetchUsageSince 稳态增量:按 id 降序小页翻,收集 id>sinceID 的新行。
+	//
+	//	sinceID   增量游标(上次并入的最大 id)
+	//	from      起始日期(date 粒度窗口下界,仅用于收窄查询)
+	//	pageSize  每页行数(调用方按上周期新增量动态给,内部夹到 [1,1000])
+	//
+	// 终止条件「有且仅有一个」:本页出现 id<=sinceID(id 降序 → 其后必更旧,追到游标)。
+	// 空页作物理兜底(数据有限必然终止)。绝不按行数/页数截断(那会漏行)。
+	FetchUsageSince(ctx context.Context, sinceID int64, from time.Time, pageSize int) ([]model.UsageEvent, error)
 
-	// FetchUsageWindow 抓取 [from, to] 时间窗内的「全部」事件(不走 id 游标,靠主键
-	// INSERT OR IGNORE 去重),供按需回填历史(用户拉大图表跨度时补齐更早数据)。
-	// complete=true 表示在 pageCap 内翻到了末页、窗口内数据已抓全;false 表示被 pageCap
-	// 截断(desc 排序下只抓到较新的一段,更早的没拿到 —— 调用方据此把覆盖水位只推到最老
-	// 抓到的事件,而非 from,保持诚实)。
+	// FetchUsageWindow 抓取 [from, to] 时间窗内的「全部」事件(desc,不走 id 游标,靠主键
+	// INSERT OR IGNORE 去重),供反向回填历史。complete=true 表示 pageCap 内翻到末页、
+	// 窗口抓全;false 表示被截断(只抓到较新一段,调用方把覆盖水位只推到最老抓到的事件)。
 	FetchUsageWindow(ctx context.Context, from, to time.Time, pageCap int) (events []model.UsageEvent, complete bool, err error)
+
+	// FetchUsageWindowAsc 前向补空缺:按 id 升序(由旧到新)抓 [from, to],从 startPage 起翻,
+	// 单次受 rowBudget 封顶,返回 nextPage 供**同一 from 续翻**(from 固定、只推进 page,
+	// 避免日历天粒度下反复重取同一天首页而卡住漏行)。complete=true 表示翻到末页(窗口抓全);
+	// false 表示被 rowBudget 截断。maxSeen=本次抓到的最大 created_at(升序连续右端)。
+	FetchUsageWindowAsc(ctx context.Context, from, to time.Time, pageSize, rowBudget, startPage int) (events []model.UsageEvent, complete bool, maxSeen time.Time, nextPage int, err error)
 }

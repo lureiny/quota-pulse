@@ -159,3 +159,45 @@ func TestStoreEmptyAndLastID(t *testing.T) {
 		t.Error("empty AddEvents must not change LastID")
 	}
 }
+
+// MaxCreatedAt = 派生的覆盖上界 covered_to:空实例 0;取最新;Evict 掉更老桶不影响。
+func TestMaxCreatedAt(t *testing.T) {
+	st := openTmp(t)
+	if st.MaxCreatedAt("inst") != 0 {
+		t.Errorf("空实例 MaxCreatedAt 应为 0")
+	}
+	t1 := time.Now().Add(-3 * time.Hour)
+	t2 := time.Now().Add(-1 * time.Hour)
+	if err := st.AddEvents("inst", []model.UsageEvent{
+		ev(1, t1, "1", "", "", "", "m", 0, 0, 0, 0),
+		ev(2, t2, "1", "", "", "", "m", 0, 0, 0, 0),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.MaxCreatedAt("inst"); got != t2.Unix() {
+		t.Errorf("MaxCreatedAt=%d want %d(最新)", got, t2.Unix())
+	}
+	// Evict 掉最老桶,MAX 仍是 t2(前向覆盖右端不被中/老段清理动摇)。
+	st.Evict("inst", t1.Add(30*time.Minute).Unix())
+	if got := st.MaxCreatedAt("inst"); got != t2.Unix() {
+		t.Errorf("Evict 后 MaxCreatedAt=%d want %d", got, t2.Unix())
+	}
+}
+
+// Evict 把覆盖下界 W 向前夹到保留下限(数据删了不能再谎报覆盖),且不被更早的 Evict 回拉。
+func TestEvictClampsCoverage(t *testing.T) {
+	st := openTmp(t)
+	old := time.Now().Add(-40 * 24 * time.Hour).Unix() // W 声称覆盖到 40d 前
+	st.NoteCoverage("inst", old)
+
+	floor := time.Now().Add(-31 * 24 * time.Hour).Unix() // 保留下限 31d
+	st.Evict("inst", floor)
+	if got := st.CoverageFrom("inst"); got != floor {
+		t.Errorf("Evict 后 W=%d want 夹到 floor %d", got, floor)
+	}
+	// 更早的 Evict 不应把 W 往回拉(只向前夹)。
+	st.Evict("inst", time.Now().Add(-50*24*time.Hour).Unix())
+	if got := st.CoverageFrom("inst"); got != floor {
+		t.Errorf("更早 Evict 后 W=%d 不应回拉,want %d", got, floor)
+	}
+}
