@@ -344,7 +344,7 @@ class _PopoverPageState extends State<PopoverPage> {
               ButtonSegment(
                   value: ChartMetric.cost,
                   icon: Icon(Icons.attach_money, size: 15),
-                  tooltip: '花费($)'),
+                  tooltip: '花费(\$)'),
             ],
             selected: {widget.chartMetric},
             onSelectionChanged: (s) => widget.onChartViewChanged?.call(
