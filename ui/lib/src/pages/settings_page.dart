@@ -32,6 +32,7 @@ class SettingsPage extends StatefulWidget {
     this.onResetTickerPosition, // Windows 悬浮窗口「重置位置」
     this.tickerMaxWidth, // Windows 滚动浮窗「宽度」滑块上限(=主屏逻辑宽;null 用兜底)
     this.onImport, // 导入一份完整配置:壳持久化 + 重启核心 + 刷新托盘/浮窗
+    this.onInstancesChanged, // 实例启用/禁用即时生效:壳持久化 + 按需重启核心(不导航)
     this.autostartEnabled = false, // 开机自启动当前状态(由壳查询 OS 得到)
     this.onAutostartChanged,
   });
@@ -64,6 +65,8 @@ class SettingsPage extends StatefulWidget {
   final VoidCallback? onResetTickerPosition; // Windows 跑马灯重置到默认位置
   final double? tickerMaxWidth; // Windows 滚动浮窗宽度滑块上限(主屏逻辑宽)
   final void Function(Settings)? onImport; // 导入配置(跨平台)
+  // 实例启用/禁用即时生效:传当前完整 Settings(WYSIWYG),壳持久化 + 按需重启核心、不导航。
+  final void Function(Settings)? onInstancesChanged;
   final bool autostartEnabled;
   final void Function(bool)? onAutostartChanged;
 
@@ -78,8 +81,10 @@ class _Draft {
   final TextEditingController url;
   final TextEditingController key;
   bool obscure;
+  bool enabled; // 是否启用;false=临时禁用(立即生效,见 _toggleEnabled)
 
-  _Draft(this.id, {String name = '', String url = '', String key = ''})
+  _Draft(this.id,
+      {String name = '', String url = '', String key = '', this.enabled = true})
       : name = TextEditingController(text: name),
         url = TextEditingController(text: url),
         key = TextEditingController(text: key),
@@ -96,6 +101,7 @@ class _Draft {
         name: name.text.trim(),
         baseUrl: url.text.trim(),
         apiKey: key.text.trim(),
+        enabled: enabled,
       );
 }
 
@@ -134,7 +140,8 @@ class _SettingsPageState extends State<SettingsPage> {
   void initState() {
     super.initState();
     _drafts = widget.initial.instances
-        .map((i) => _Draft(i.id, name: i.name, url: i.baseUrl, key: i.apiKey))
+        .map((i) => _Draft(i.id,
+            name: i.name, url: i.baseUrl, key: i.apiKey, enabled: i.enabled))
         .toList();
     if (_drafts.isEmpty) _drafts.add(_newDraft());
     _layout = widget.initial.layout;
@@ -217,6 +224,13 @@ class _SettingsPageState extends State<SettingsPage> {
         _drafts[i].dispose();
         _drafts.removeAt(i);
       });
+
+  /// 实例启用/禁用即时生效:翻转后立刻把当前完整表单交给壳持久化 + 按需重启核心
+  /// (不离开设置页)。禁用 = 从核心配置排除 → 停轮询、从主面板消失,配置保留可恢复。
+  void _toggleEnabled(int i) {
+    setState(() => _drafts[i].enabled = !_drafts[i].enabled);
+    widget.onInstancesChanged?.call(_currentSettings());
+  }
 
   TraySettings _tray() => TraySettings(
         mode: _trayMode,
@@ -1211,11 +1225,12 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Widget _instanceCard(int i) {
     final d = _drafts[i];
+    final cs = Theme.of(context).colorScheme;
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.fromLTRB(12, 6, 6, 12),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+        color: cs.surfaceContainerHighest.withValues(alpha: 0.4),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
@@ -1232,6 +1247,20 @@ class _SettingsPageState extends State<SettingsPage> {
                   style: const TextStyle(fontSize: 13),
                 ),
               ),
+              if (!d.enabled)
+                Padding(
+                  padding: const EdgeInsets.only(left: 6),
+                  child: Text('已禁用',
+                      style:
+                          TextStyle(fontSize: 11, color: cs.onSurfaceVariant)),
+                ),
+              IconButton(
+                tooltip: d.enabled ? '已启用,点击临时禁用' : '已禁用,点击启用',
+                icon: Icon(d.enabled ? Icons.toggle_on : Icons.toggle_off,
+                    size: 22,
+                    color: d.enabled ? cs.primary : cs.onSurfaceVariant),
+                onPressed: () => _toggleEnabled(i),
+              ),
               IconButton(
                 tooltip: '导出此实例',
                 icon: const Icon(Icons.file_download_outlined, size: 18),
@@ -1245,23 +1274,34 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
             ],
           ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: d.url,
-            decoration: _dec('Base URL,如 https://host'),
-            style: const TextStyle(fontSize: 13),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: d.key,
-            obscureText: d.obscure,
-            decoration: _dec('Admin API Key (x-api-key)').copyWith(
-              suffixIcon: IconButton(
-                icon: Icon(d.obscure ? Icons.visibility_off : Icons.visibility, size: 16),
-                onPressed: () => setState(() => d.obscure = !d.obscure),
-              ),
+          // 禁用态:URL/密钥变灰(仍可编辑,便于禁用期间改好密钥再启用)。
+          Opacity(
+            opacity: d.enabled ? 1.0 : 0.45,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 8),
+                TextField(
+                  controller: d.url,
+                  decoration: _dec('Base URL,如 https://host'),
+                  style: const TextStyle(fontSize: 13),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: d.key,
+                  obscureText: d.obscure,
+                  decoration: _dec('Admin API Key (x-api-key)').copyWith(
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                          d.obscure ? Icons.visibility_off : Icons.visibility,
+                          size: 16),
+                      onPressed: () => setState(() => d.obscure = !d.obscure),
+                    ),
+                  ),
+                  style: const TextStyle(fontSize: 13),
+                ),
+              ],
             ),
-            style: const TextStyle(fontSize: 13),
           ),
         ],
       ),

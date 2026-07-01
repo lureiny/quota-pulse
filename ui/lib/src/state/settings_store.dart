@@ -9,24 +9,33 @@ class Sub2apiInstance {
   final String name;
   final String baseUrl;
   final String apiKey;
+  final bool enabled; // 是否参与轮询;false=临时禁用(保留配置、从核心配置/主面板排除)
 
   const Sub2apiInstance({
     required this.id,
     this.name = '',
     this.baseUrl = '',
     this.apiKey = '',
+    this.enabled = true,
   });
 
   bool get configured => baseUrl.trim().isNotEmpty && apiKey.trim().isNotEmpty;
 
-  Map<String, dynamic> toJson() =>
-      {'id': id, 'name': name, 'base_url': baseUrl, 'api_key': apiKey};
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'base_url': baseUrl,
+        'api_key': apiKey,
+        'enabled': enabled,
+      };
 
   factory Sub2apiInstance.fromJson(Map<String, dynamic> j) => Sub2apiInstance(
         id: j['id'] as String? ?? '',
         name: j['name'] as String? ?? '',
         baseUrl: j['base_url'] as String? ?? '',
         apiKey: j['api_key'] as String? ?? '',
+        // 老配置无此键 → 默认启用(无回归)。
+        enabled: j['enabled'] as bool? ?? true,
       );
 }
 
@@ -329,7 +338,8 @@ class Settings {
     this.chartGroupBy = ChartGroupBy.account,
   });
 
-  bool get configured => instances.any((i) => i.configured);
+  // 至少有一个「已启用且已配置」的实例才算可用;全部禁用 → 视为未配置(壳回到设置页)。
+  bool get configured => instances.any((i) => i.enabled && i.configured);
 
   Settings copyWith({
     List<Sub2apiInstance>? instances,
@@ -375,7 +385,8 @@ class Settings {
     final out = <MapEntry<String, Sub2apiInstance>>[];
     for (var i = 0; i < instances.length; i++) {
       final inst = instances[i];
-      if (!inst.configured) continue;
+      // 未配置或已禁用都不进核心配置/主面板(此处一改,toConfigJson 与 instanceUrls 同步排除)。
+      if (!inst.configured || !inst.enabled) continue;
       final base = inst.name.trim().isEmpty ? 'sub2api ${i + 1}' : inst.name.trim();
       var unique = base;
       var k = 2;

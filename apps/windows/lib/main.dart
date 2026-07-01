@@ -492,6 +492,17 @@ class _ShellState extends State<Shell>
     if (enabledChanged && s.configured) _startCore(s);
   }
 
+  // 实例启用/禁用即时生效:持久化 + 仅当核心配置变化时重启(不导航,留在设置页)。
+  // 不卡 configured 门槛 —— 禁用最后一个实例时也要重启成空 providers,真正停掉其轮询。
+  void _onInstancesChanged(Settings s) {
+    final coreChanged = _settings.toConfigJson() != s.toConfigJson();
+    SettingsStore.save(s);
+    setState(() => _settings = s);
+    if (coreChanged) _startCore(s);
+    _updateTray(); // 账户集变了,刷新托盘
+    _updateTicker(); // 同步桌面悬浮窗口
+  }
+
   // 主面板视图控件:时间跨度 + 分组维度 + 柱/线。纯 UI,持久化 + 重渲染,不重启核心。
   void _onChartViewChanged(ChartGroupBy groupBy, ChartType type, ChartRange range) {
     final s = _settings.copyWith(
@@ -535,6 +546,7 @@ class _ShellState extends State<Shell>
         onResetTickerPosition: _onResetTickerPosition,
         tickerMaxWidth: _screenWidth, // 宽度滑块上限=整屏宽(null 时设置页用兜底)
         onImport: _onImportConfig,
+        onInstancesChanged: _onInstancesChanged,
         autostartEnabled: _autostartEnabled,
         onAutostartChanged: _onAutostartChanged,
         onCancel: _settings.configured ? () => setState(() => _view = _View.list) : null,

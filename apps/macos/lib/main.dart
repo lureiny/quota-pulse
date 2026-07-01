@@ -374,6 +374,16 @@ class _ShellState extends State<Shell> with WindowListener {
     if (enabledChanged && s.configured) _startCore(s);
   }
 
+  // 实例启用/禁用即时生效:持久化 + 仅当核心配置变化时重启(不导航,留在设置页)。
+  // 不卡 configured 门槛 —— 禁用最后一个实例时也要重启成空 providers,真正停掉其轮询。
+  void _onInstancesChanged(Settings s) {
+    final coreChanged = _settings.toConfigJson() != s.toConfigJson();
+    SettingsStore.save(s);
+    setState(() => _settings = s);
+    if (coreChanged) _startCore(s);
+    _updateTray(); // 账户集变了,刷新菜单栏
+  }
+
   // 主面板视图控件:时间跨度 + 分组维度 + 柱/线。纯 UI,持久化 + 重渲染,不重启核心。
   void _onChartViewChanged(ChartGroupBy groupBy, ChartType type, ChartRange range) {
     final s = _settings.copyWith(
@@ -415,6 +425,7 @@ class _ShellState extends State<Shell> with WindowListener {
         onChartChanged: _onChartChanged,
         onTestNotification: () => _alerter.testNotification(),
         onImport: _onImportConfig,
+        onInstancesChanged: _onInstancesChanged,
         autostartEnabled: _autostartEnabled,
         onAutostartChanged: _onAutostartChanged,
         onCancel: _settings.configured ? () => setState(() => _view = _View.list) : null,

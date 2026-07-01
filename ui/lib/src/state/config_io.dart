@@ -98,6 +98,8 @@ String exportInstanceYaml(Sub2apiInstance inst, {required bool includeKeys}) {
     'kind': 'instance',
     'version': appVersion,
     'exported_at': DateTime.now().toIso8601String(),
+    // 刻意不导出 enabled:单实例是「连接配置」,导入侧一律启用(导入即用),
+    // 见 importInstanceYaml。整份配置导出(exportConfigYaml)才保留各实例的 enabled。
     'instance': <String, dynamic>{
       'name': inst.name,
       'base_url': inst.baseUrl,
@@ -156,6 +158,9 @@ Sub2apiInstance importInstanceYaml(String text) {
 
   final m = Map<String, dynamic>.from(pick);
   m['id'] = ''; // id 机器本地,导入侧铸新;忽略来源里的 id
+  // 单实例导入一律启用:忽略来源里可能存在的 enabled。避免导入后静默不轮询,
+  // 也让「已导入并生效」提示始终诚实(禁用态由整份配置导入才保留)。
+  m['enabled'] = true;
   final result = Sub2apiInstance.fromJson(m);
   if (result.name.trim().isEmpty &&
       result.baseUrl.trim().isEmpty &&
