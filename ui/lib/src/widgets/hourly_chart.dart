@@ -547,7 +547,9 @@ class _HourlyChartState extends State<HourlyChart> {
     final spans = <TextSpan>[];
     for (final ser in ordered) {
       final p = slot.points[ser.key];
-      if (p == null) continue;
+      // 当前度量下为 0 的系列不列入明细:count 度量放宽了 both-empty 守卫,零 token/花费
+      // 但计次的系列会进 slot.points,token/花费视图不应为它显示「入0·出0=0」「$0」幽灵行。
+      if (p == null || _val(p) <= 0) continue;
       spans.add(TextSpan(
         text: '\n${nameOf[ser.key]}  ${_detail(p, slotTotal)}',
         style: TextStyle(
@@ -587,7 +589,8 @@ class _HourlyChartState extends State<HourlyChart> {
       final p = (ser != null && i >= 0 && i < slots.length)
           ? slots[i].points[ser.key]
           : null;
-      if (ser == null || p == null) {
+      // 与柱 tooltip 一致:当前度量下为 0 的系列(如仅计次的零 token 系列)不出命中行。
+      if (ser == null || p == null || _val(p) <= 0) {
         out.add(null);
         continue;
       }
