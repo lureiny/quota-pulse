@@ -22,13 +22,13 @@ type ChartConfig struct {
 
 	// 以下为采集/存储调参(一般留空走默认):
 	DBPath         string  `json:"db_path,omitempty"`          // 空=os.UserConfigDir()/quota-pulse/usage.db
-	BackfillHours  int     `json:"backfill_hours,omitempty"`   // 冷启动回填窗口(默认 24=1d;更大跨度按需补齐)
+	BackfillHours  int     `json:"backfill_hours,omitempty"`   // 首拍(首次运行、本地零进度)时间播种窗口(默认 12h);更早历史按需补齐
 	RetentionHours int     `json:"retention_hours,omitempty"`  // 本地保留窗口(默认 744=31d,给 30d 视图留边)
 	SyncMinSecs    int     `json:"sync_min_secs,omitempty"`    // 每实例同步最小间隔(默认 60s)
 	PageCap        int     `json:"page_cap,omitempty"`         // 反向回填翻页上限(默认 20 页×1000 行)
-	RowBudget      int     `json:"row_budget,omitempty"`       // 前向补空缺单块行预算(默认 5000)
-	GapThreshHours int     `json:"gap_thresh_hours,omitempty"` // regime 门限:gap 超此值走前向大页补(默认 2h)
-	PageMargin     float64 `json:"page_margin,omitempty"`      // 稳态动态页 = 上周期新增×margin(默认 2.0)
+	RowBudget      int     `json:"row_budget,omitempty"`       // deprecated:三流合并后不再使用(原前向单块行预算)
+	GapThreshHours int     `json:"gap_thresh_hours,omitempty"` // deprecated:三流合并后不再使用(原 regime 门限)
+	PageMargin     float64 `json:"page_margin,omitempty"`      // 增量动态页 = 上周期新增×margin(默认 2.0)
 }
 
 const chartMaxRangeHours = 168 // 7d,上限防误配拉太宽
@@ -41,7 +41,7 @@ func (c ChartConfig) withDefaults() ChartConfig {
 		c.RangeHours = chartMaxRangeHours
 	}
 	if c.BackfillHours <= 0 {
-		c.BackfillHours = 24
+		c.BackfillHours = 12 // 首拍播种窗口 = 图表默认 12h
 	}
 	if c.RetentionHours <= 0 {
 		c.RetentionHours = 744

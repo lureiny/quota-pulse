@@ -13,15 +13,13 @@ import (
 	"github.com/lureiny/quota-pulse/core/usage"
 )
 
-// logProv 实现 Provider + UsageLogFetcher,可编程各方法响应并计数(测三条同步流)。
+// logProv 实现 Provider + UsageLogFetcher(合并后两法),可编程响应并计数。
 type logProv struct {
 	accounts []model.Account
 	mu       sync.Mutex
-	sinceN   int
-	ascN     int
-	winN     int
+	sinceN   int // FetchUsageSince 调用次数(增量流A)
+	winN     int // FetchUsageWindow 调用次数(首拍播种 / 反向流B)
 	since    func(sinceID int64) []model.UsageEvent
-	asc      func(from, to time.Time, startPage int) ([]model.UsageEvent, bool, time.Time)
 	window   func(from, to time.Time) ([]model.UsageEvent, bool)
 }
 
@@ -52,16 +50,6 @@ func (f *logProv) FetchUsageWindow(_ context.Context, from, to time.Time, _ int)
 		return evs, c, nil
 	}
 	return nil, true, nil
-}
-func (f *logProv) FetchUsageWindowAsc(_ context.Context, from, to time.Time, _, _, startPage int) ([]model.UsageEvent, bool, time.Time, int, error) {
-	f.mu.Lock()
-	f.ascN++
-	f.mu.Unlock()
-	if f.asc != nil {
-		evs, c, m := f.asc(from, to, startPage)
-		return evs, c, m, startPage + 1, nil
-	}
-	return nil, true, time.Time{}, startPage + 1, nil
 }
 
 func evt(id int64, ts time.Time) model.UsageEvent {
@@ -105,121 +93,123 @@ func TestSteadyPageSizeEnvelope(t *testing.T) {
 	}
 }
 
-// 空实例:前向 drain 直接返回,不打接口。
-func TestForwardDrainSkipsEmptyInstance(t *testing.T) {
-	fp := &logProv{}
-	p, _ := newSyncPoller(t, fp)
-	p.forwardDrain(context.Background(), p.bindings[0], fp)
-	if fp.ascN != 0 {
-		t.Errorf("空实例不该调 asc,ascN=%d", fp.ascN)
-	}
-}
-
-// 前向 drain:12h 空缺由旧到新补齐,事件入库、maxTS 前移、追上即停。
-func TestForwardDrainFillsGap(t *testing.T) {
-	fp := &logProv{}
-	p, db := newSyncPoller(t, fp)
-	old := time.Now().Add(-12 * time.Hour)
-	if err := db.AddEvents("inst", []model.UsageEvent{evt(1, old)}); err != nil {
-		t.Fatal(err)
-	}
-	recent := time.Now().Add(-20 * time.Minute) // 追上门限(2h)内
-	fp.asc = func(from, to time.Time, _ int) ([]model.UsageEvent, bool, time.Time) {
-		return []model.UsageEvent{evt(2, time.Now().Add(-1*time.Hour)), evt(3, recent)}, true, recent
-	}
-	p.forwardDrain(context.Background(), p.bindings[0], fp)
-
-	if fp.ascN != 1 {
-		t.Fatalf("ascN=%d want 1", fp.ascN)
-	}
-	if db.LastID("inst") != 3 {
-		t.Errorf("lastID=%d want 3", db.LastID("inst"))
-	}
-	if mx := db.MaxCreatedAt("inst"); mx != recent.Unix() {
-		t.Errorf("maxTS=%d want %d(前移到最新)", mx, recent.Unix())
-	}
-}
-
-// 前向翻页续抓:单块 rowBudget 截断后,用 nextPage 从同一 from 续翻,不卡在同一天(修 HIGH-2)。
-func TestForwardDrainPageContinuation(t *testing.T) {
-	fp := &logProv{}
-	p, db := newSyncPoller(t, fp)
-	old := time.Now().Add(-6 * time.Hour)
-	if err := db.AddEvents("inst", []model.UsageEvent{evt(1, old)}); err != nil {
-		t.Fatal(err)
-	}
-	mid := time.Now().Add(-3 * time.Hour)
-	recent := time.Now().Add(-10 * time.Minute)
-	fp.asc = func(_, _ time.Time, startPage int) ([]model.UsageEvent, bool, time.Time) {
-		if startPage == 1 { // 首块:截断(complete=false),maxSeen 仍落后门限
-			return []model.UsageEvent{evt(2, old.Add(time.Hour)), evt(3, mid)}, false, mid
-		}
-		return []model.UsageEvent{evt(4, recent)}, true, recent // 续块:抓全
-	}
-	p.forwardDrain(context.Background(), p.bindings[0], fp)
-
-	if fp.ascN != 2 {
-		t.Fatalf("ascN=%d want 2(截断后应 nextPage 续翻,不卡天)", fp.ascN)
-	}
-	if db.LastID("inst") != 4 {
-		t.Errorf("lastID=%d want 4(续块也入库)", db.LastID("inst"))
-	}
-}
-
-// steady↔forward 互斥:前向在途时稳态跳过。
-func TestSteadyYieldsWhenForwardInflight(t *testing.T) {
-	fp := &logProv{}
-	p, _ := newSyncPoller(t, fp)
-	p.syncMu.Lock()
-	p.guardFor("inst").forward = true
-	p.syncMu.Unlock()
-
-	p.steadySync(context.Background(), p.bindings[0], fp)
-	if fp.sinceN != 0 {
-		t.Errorf("前向在途时稳态不该拉取,sinceN=%d", fp.sinceN)
-	}
-}
-
-// 反向补历史:冷启动把覆盖下界补到 ~30d(30d 内 complete → W 到 target)。
-func TestEnsureBackfillReachesRetention(t *testing.T) {
+// 首拍(LastID==0):按时间播种 [now-12h, now],写 last_id 与覆盖水位 W;不走 id 游标。
+func TestFirstRunSeedsWindowAndCoverage(t *testing.T) {
 	fp := &logProv{}
 	p, db := newSyncPoller(t, fp)
 	fp.window = func(from, to time.Time) ([]model.UsageEvent, bool) {
-		return []model.UsageEvent{evt(1, time.Now().Add(-1*time.Hour))}, true // 一次抓全
+		return []model.UsageEvent{evt(7, time.Now().Add(-3*time.Hour))}, true // 抓全
 	}
-	p.ensureBackfill(context.Background(), "inst")
+	p.sync(context.Background(), p.bindings[0], fp)
 
-	if fp.winN < 1 {
-		t.Fatalf("winN=%d want>=1", fp.winN)
+	if fp.winN != 1 {
+		t.Fatalf("首拍应走时间播种(FetchUsageWindow),winN=%d want 1", fp.winN)
 	}
-	w := db.CoverageFrom("inst")
-	target := time.Now().Add(-744 * time.Hour).Unix()
-	if !(w > 0 && w <= target+3600) {
-		t.Errorf("覆盖下界 W=%d 未到 ~30d(target=%d)", w, target)
+	if fp.sinceN != 0 {
+		t.Errorf("首拍不该走 id 游标,sinceN=%d want 0", fp.sinceN)
+	}
+	if db.LastID("inst") != 7 {
+		t.Errorf("首拍应写 last_id=7,got %d", db.LastID("inst"))
+	}
+	// W 应 ≈ now-12h(BackfillHours 默认 12,抓全 → W=seedFrom)。
+	wantW := time.Now().Add(-12 * time.Hour).Unix()
+	if w := db.CoverageFrom("inst"); w == 0 || abs(w-wantW) > 5 {
+		t.Errorf("首拍覆盖水位 W=%d want≈%d(now-12h)", w, wantW)
 	}
 }
 
-// 稳态增量:追到游标即停,新增量喂给环比;不谎报覆盖水位(修既有 bug)。
-func TestSteadyDoesNotOverclaimCoverage(t *testing.T) {
+// 关键回归:已播种(LastID>0)且最新事件很旧(3h 前,原设计会判「落后」走 1000 前向重扫),
+// 现在只走 id 游标一次小请求,绝不再触发时间窗/1000 大页重扫。
+func TestCursorNoRescanWhenNewestEventOld(t *testing.T) {
 	fp := &logProv{}
 	p, db := newSyncPoller(t, fp)
-	// 先播一条近端事件,使 regime=CAUGHT_UP。
+	// 播一条 3h 前的事件:LastID=10、MAX=now-3h(旧)。
+	if err := db.AddEvents("inst", []model.UsageEvent{evt(10, time.Now().Add(-3*time.Hour))}); err != nil {
+		t.Fatal(err)
+	}
+	fp.since = func(sinceID int64) []model.UsageEvent { return nil } // 上游无新数据
+
+	p.sync(context.Background(), p.bindings[0], fp)
+
+	if fp.sinceN != 1 {
+		t.Fatalf("应走 id 游标增量一次,sinceN=%d want 1", fp.sinceN)
+	}
+	if fp.winN != 0 {
+		t.Fatalf("空闲不该重扫时间窗/1000 大页,winN=%d want 0(空转 bug 回归)", fp.winN)
+	}
+}
+
+// 已播种:id 游标增量并入新行、喂环比;增量流不动覆盖水位 W。
+func TestCursorMergesNewAndKeepsCoverage(t *testing.T) {
+	fp := &logProv{}
+	p, db := newSyncPoller(t, fp)
 	if err := db.AddEvents("inst", []model.UsageEvent{evt(10, time.Now().Add(-5*time.Minute))}); err != nil {
 		t.Fatal(err)
 	}
 	fp.since = func(sinceID int64) []model.UsageEvent {
 		return []model.UsageEvent{evt(11, time.Now().Add(-1*time.Minute))}
 	}
-	p.steadySync(context.Background(), p.bindings[0], fp)
+	p.sync(context.Background(), p.bindings[0], fp)
 
 	if fp.sinceN != 1 {
 		t.Fatalf("sinceN=%d want 1", fp.sinceN)
 	}
-	// 稳态不得把覆盖下界 W 抬到 from(now-2h);W 应仍为 0(未做反向补齐)。
-	if w := db.CoverageFrom("inst"); w != 0 {
-		t.Errorf("稳态谎报覆盖:W=%d want 0", w)
+	if db.LastID("inst") != 11 {
+		t.Errorf("lastID=%d want 11", db.LastID("inst"))
 	}
 	if p.lastNew["inst"] != 1 {
 		t.Errorf("环比未记录本周期新增:lastNew=%d want 1", p.lastNew["inst"])
 	}
+	// 增量流不得写覆盖水位(未做反向补齐 → W 仍 0)。
+	if w := db.CoverageFrom("inst"); w != 0 {
+		t.Errorf("增量流谎报覆盖:W=%d want 0", w)
+	}
+}
+
+// 反向流B 门槛:未播种(LastID==0)时不跑,交给流A 先播种;已播种后才补。
+func TestBackfillGatedUntilSeeded(t *testing.T) {
+	fp := &logProv{}
+	p, db := newSyncPoller(t, fp)
+	fp.window = func(from, to time.Time) ([]model.UsageEvent, bool) {
+		return []model.UsageEvent{evt(1, time.Now().Add(-2*time.Hour))}, true
+	}
+
+	// 未播种:Backfill 应被门槛拦下。
+	p.Backfill("inst", 168)
+	if fp.winN != 0 {
+		t.Fatalf("未播种时反向流不该跑,winN=%d want 0", fp.winN)
+	}
+
+	// 播种后(LastID>0):Backfill 正常跑。
+	if err := db.AddEvents("inst", []model.UsageEvent{evt(5, time.Now().Add(-1*time.Hour))}); err != nil {
+		t.Fatal(err)
+	}
+	p.Backfill("inst", 168)
+	if fp.winN < 1 {
+		t.Fatalf("已播种后反向流应跑,winN=%d want>=1", fp.winN)
+	}
+	if db.CoverageFrom("inst") == 0 {
+		t.Error("反向补齐后应写覆盖水位 W")
+	}
+}
+
+// 同流重入保护:syncing 在途时 sync 直接返回,不重复拉取。
+func TestSyncGuardPreventsReentry(t *testing.T) {
+	fp := &logProv{}
+	p, _ := newSyncPoller(t, fp)
+	p.syncMu.Lock()
+	p.guardFor("inst").syncing = true
+	p.syncMu.Unlock()
+
+	p.sync(context.Background(), p.bindings[0], fp)
+	if fp.sinceN != 0 || fp.winN != 0 {
+		t.Errorf("在途时不该拉取,sinceN=%d winN=%d want 0/0", fp.sinceN, fp.winN)
+	}
+}
+
+func abs(x int64) int64 {
+	if x < 0 {
+		return -x
+	}
+	return x
 }

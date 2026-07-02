@@ -121,47 +121,75 @@ func TestFetchUsageSinceStopsAtCursorMidPage(t *testing.T) {
 	}
 }
 
-// 前向 ASC drain:id 升序;抓全→complete;rowBudget 截断→complete=false + maxSeen=连续右端。
-func TestFetchUsageWindowAscDrain(t *testing.T) {
-	pages := map[int][]map[string]any{
-		1: {row(1, 1, "2026-06-01T01:00:00Z"), row(2, 1, "2026-06-01T02:00:00Z"), row(3, 1, "2026-06-01T03:00:00Z")},
-		2: {row(4, 1, "2026-06-01T04:00:00Z"), row(5, 1, "2026-06-01T05:00:00Z")},
+// 积压升页:小页(size=2)第 1 页整页皆新且未 straddle → 升到 1000 从 page=1 重收,
+// 在大页里追到游标即停。验证不再一行一页翻很多次(0 塌陷),且不漏不重。
+func TestFetchUsageSinceEscalatesOnBacklog(t *testing.T) {
+	// size=2 探测:page1=[10,9](满且皆>游标5)→ 升 1000 重收。
+	// size=1000 重收:page1 一次给出 [10..6],其中 id=5<=5 straddle → 收 [10,9,8,7,6]。
+	small := map[int][]map[string]any{
+		1: {row(10, 1, "2026-06-19T10:00:00Z"), row(9, 1, "2026-06-19T09:00:00Z")},
 	}
-	srv, reqs := usageServer(t, pages, 2)
+	big := []map[string]any{
+		row(10, 1, "2026-06-19T10:00:00Z"), row(9, 1, "2026-06-19T09:00:00Z"),
+		row(8, 1, "2026-06-19T08:00:00Z"), row(7, 1, "2026-06-19T07:00:00Z"),
+		row(6, 1, "2026-06-19T06:00:00Z"), row(5, 1, "2026-06-19T05:00:00Z"),
+	}
+	// 服务端按 page_size 分流:size<1000 走 small[page];size>=1000 一页给 big。
+	var mu sync.Mutex
+	var sizes []int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		ps, _ := strconv.Atoi(q.Get("page_size"))
+		page, _ := strconv.Atoi(q.Get("page"))
+		mu.Lock()
+		sizes = append(sizes, ps)
+		mu.Unlock()
+		var items []map[string]any
+		if ps >= 1000 {
+			if page == 1 {
+				items = big
+			}
+		} else {
+			items = small[page]
+		}
+		if items == nil {
+			items = []map[string]any{}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code": 0, "message": "ok",
+			"data": map[string]any{"items": items, "page": page, "page_size": ps, "pages": 1},
+		})
+	}))
+	t.Cleanup(srv.Close)
 	p := mkProv(t, srv.URL)
-	from := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	to := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
 
-	// 无截断:drain 全 5 条(page2 不足一页→末页),complete=true,maxSeen=id5 的时间。
-	evs, complete, maxSeen, nextPage, err := p.FetchUsageWindowAsc(context.Background(), from, to, 3, 100, 1)
-	if err != nil || !complete || len(evs) != 5 {
-		t.Fatalf("full drain: complete=%v len=%d err=%v", complete, len(evs), err)
+	rows, err := p.FetchUsageSince(context.Background(), 5, time.Now().Add(-48*time.Hour), 2)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !maxSeen.Equal(time.Date(2026, 6, 1, 5, 0, 0, 0, time.UTC)) {
-		t.Errorf("maxSeen=%v want 05:00", maxSeen)
+	if len(rows) != 5 {
+		t.Fatalf("rows=%d want 5 ([10..6],id=5 straddle)", len(rows))
 	}
-	if reqs()[0]["sort_order"] != "asc" || reqs()[0]["sort_by"] != "id" {
-		t.Errorf("asc query wrong: %v", reqs()[0])
+	for _, r := range rows {
+		if r.ID <= 5 {
+			t.Errorf("收进游标之下的行 id=%d", r.ID)
+		}
 	}
-
-	// rowBudget=3 截断:page1 三条即满,complete=false,maxSeen=id3 时间,nextPage=2(供 from 不变续翻)。
-	evs2, complete2, maxSeen2, next2, _ := p.FetchUsageWindowAsc(context.Background(), from, to, 3, 3, 1)
-	if complete2 || len(evs2) != 3 {
-		t.Fatalf("truncated: complete=%v len=%d want false/3", complete2, len(evs2))
+	mu.Lock()
+	defer mu.Unlock()
+	// 应先 size=2 探一次,后 size=1000 收一次;绝不是一行一页翻很多次。
+	if len(sizes) > 3 {
+		t.Errorf("请求次数=%d 偏多(应小页探 1 次 + 大页收 1~2 次),sizes=%v", len(sizes), sizes)
 	}
-	if !maxSeen2.Equal(time.Date(2026, 6, 1, 3, 0, 0, 0, time.UTC)) {
-		t.Errorf("maxSeen(trunc)=%v want 03:00", maxSeen2)
+	sawBig := false
+	for _, s := range sizes {
+		if s >= 1000 {
+			sawBig = true
+		}
 	}
-	if next2 != 2 {
-		t.Errorf("nextPage=%d want 2", next2)
+	if !sawBig {
+		t.Errorf("积压未升到 1000 大页,sizes=%v", sizes)
 	}
-
-	// 续翻:从 nextPage=2 起(from 不变),拿到剩余 [4,5],complete=true。验证「翻页续抓」拼接无洞。
-	evs3, complete3, _, _, _ := p.FetchUsageWindowAsc(context.Background(), from, to, 3, 100, next2)
-	if !complete3 || len(evs3) != 2 || evs3[0].ID != 4 || evs3[1].ID != 5 {
-		t.Fatalf("resume page2: complete=%v ids=%v want true/[4,5]", complete3, []int64{evs3[0].ID, evs3[1].ID})
-	}
-	_ = nextPage
 }
 
 // clampPageSize:[1,1000] 边界。
