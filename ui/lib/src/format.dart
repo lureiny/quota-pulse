@@ -60,23 +60,23 @@ const List<Color> _chartPalette = [
 /// 取第 i 个账户的稳定颜色(循环复用调色板)。
 Color accountColor(int i) => _chartPalette[i % _chartPalette.length];
 
-/// token 数 → "1.2K" / "3.4M"(与 core mapper 的 humanInt 口径一致)。
+/// 紧凑整数 → "1.2K" / "3.4M" / "1.2B"(千/百万/十亿;与 core mapper 的 humanInt 口径一致)。
+/// token 与请求次数同量级、共用此口径(见 fmtCount)。
 String fmtTokens(int n) {
+  if (n >= 1000000000) return '${(n / 1e9).toStringAsFixed(1)}B';
   if (n >= 1000000) return '${(n / 1e6).toStringAsFixed(1)}M';
   if (n >= 1000) return '${(n / 1e3).toStringAsFixed(1)}K';
   return '$n';
 }
 
-/// 请求次数 → 整数;上万用 "N.N万"(计数通常不大,小值保留精确,与 token 的 K/M 区分)。
-String fmtCount(int n) {
-  if (n >= 100000000) return '${(n / 1e8).toStringAsFixed(1)}亿';
-  if (n >= 10000) return '${(n / 1e4).toStringAsFixed(1)}万';
-  return '$n';
-}
+/// 请求次数 → 复用 token 的 K/M/B 紧凑格式(整数同量级,口径统一)。
+String fmtCount(int n) => fmtTokens(n);
 
-/// 花费(USD)→ "$12.34" / "$1.2K"。小额自适应加精度(单条请求可能只几厘)。
+/// 花费(USD)→ "$12.34" / "$1.2K" / "$3.4M" / "$1.2B"。小额自适应加精度(单条请求可能只几厘)。
 String fmtCost(double v) {
   if (v <= 0) return r'$0';
+  if (v >= 1e9) return '\$${(v / 1e9).toStringAsFixed(1)}B';
+  if (v >= 1e6) return '\$${(v / 1e6).toStringAsFixed(1)}M';
   if (v >= 1000) return '\$${(v / 1e3).toStringAsFixed(1)}K';
   if (v >= 1) return '\$${v.toStringAsFixed(2)}';
   if (v >= 0.01) return '\$${v.toStringAsFixed(3)}';
