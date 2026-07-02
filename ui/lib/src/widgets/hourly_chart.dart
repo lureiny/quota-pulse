@@ -115,17 +115,44 @@ class _HourlyChartState extends State<HourlyChart> {
     }
   }
 
-  // ---- 度量取值(token 量 / 花费):柱高、曲线、占比分母统一走这里,fl_chart 用 double ----
-  double _val(HourPoint p) =>
-      widget.metric == ChartMetric.cost ? p.cost : p.sum.toDouble();
+  // ---- 度量取值(token 量 / 花费 / 请求次数):柱高、曲线、占比分母统一走这里,fl_chart 用 double ----
+  double _val(HourPoint p) => switch (widget.metric) {
+        ChartMetric.cost => p.cost,
+        ChartMetric.count => p.count.toDouble(),
+        ChartMetric.tokens => p.sum.toDouble(),
+      };
   double _valOrZero(HourPoint? p) => p == null ? 0 : _val(p);
-  double _slotVal(_Slot s) =>
-      widget.metric == ChartMetric.cost ? s.costTotal : s.total.toDouble();
+  double _slotVal(_Slot s) => switch (widget.metric) {
+        ChartMetric.cost => s.costTotal,
+        ChartMetric.count => s.countTotal.toDouble(),
+        ChartMetric.tokens => s.total.toDouble(),
+      };
 
-  /// tooltip 尾行「桶合计」:随度量显示花费或 token。
-  String _totalLine(_Slot s) => widget.metric == ChartMetric.cost
-      ? '桶合计 ${fmtCost(s.costTotal)}'
-      : '合计 ${fmtTokens(s.total)} tok';
+  /// tooltip 尾行「桶合计」:随度量显示花费 / token / 请求次数。
+  String _totalLine(_Slot s) => switch (widget.metric) {
+        ChartMetric.cost => '桶合计 ${fmtCost(s.costTotal)}',
+        ChartMetric.count => '合计 ${fmtCount(s.countTotal)} 次',
+        ChartMetric.tokens => '合计 ${fmtTokens(s.total)} tok',
+      };
+
+  /// 单系列在可见窗口 [windowStart, nowHour] 内当前度量的合计(供图例汇总)。
+  /// 逐原始小时点按当前度量取值累加,与柱高口径一致(隐藏系列仍算,便于对比)。
+  double _seriesTotal(UsageSeries s, DateTime windowStart, DateTime nowHour) {
+    var t = 0.0;
+    for (final p in s.points) {
+      final hb = DateTime(p.hour.year, p.hour.month, p.hour.day, p.hour.hour);
+      if (hb.isBefore(windowStart) || hb.isAfter(nowHour)) continue;
+      t += _val(p);
+    }
+    return t;
+  }
+
+  /// 图例汇总数值格式化:随当前度量显示 token / 花费($) / 次数。
+  String _fmtSeriesTotal(double v) => switch (widget.metric) {
+        ChartMetric.cost => fmtCost(v),
+        ChartMetric.count => '${fmtCount(v.round())}次',
+        ChartMetric.tokens => fmtTokens(v.round()),
+      };
 
   @override
   Widget build(BuildContext context) {
@@ -171,6 +198,11 @@ class _HourlyChartState extends State<HourlyChart> {
     final now = DateTime.now();
     final nowHour = DateTime(now.year, now.month, now.day, now.hour);
     final windowStart = nowHour.subtract(Duration(hours: widget.rangeHours - 1));
+
+    // 图例汇总:各系列在所选区间内的当前度量合计(随度量 token/花费/次 切换)。
+    final totalOf = <String, double>{
+      for (final s in ordered) s.key: _seriesTotal(s, windowStart, nowHour),
+    };
 
     // 未采集带:落在覆盖水位之前的窗口时间比例(approximate 横向比例)。
     final uncoveredFrac = _uncoveredFraction(windowStart, nowHour);
@@ -224,7 +256,7 @@ class _HourlyChartState extends State<HourlyChart> {
                     chart,
                     if (uncoveredFrac > 0)
                       _uncoveredBand(c.maxWidth, uncoveredFrac, fresh, cs),
-                    // 度量切换:小开关叠在图右上角(不占控件条),点选 token / 花费。
+                    // 度量切换:小开关叠在图右上角(不占控件条),点选 token / 花费 / 请求次数。
                     Positioned(top: 0, right: 0, child: _metricToggle(cs)),
                   ],
                 );
@@ -232,13 +264,13 @@ class _HourlyChartState extends State<HourlyChart> {
             ),
           ),
           const SizedBox(height: 6),
-          _legend(context, ordered, colorOf, nameOf),
+          _legend(context, ordered, colorOf, nameOf, totalOf),
         ],
       ),
     );
   }
 
-  // ---- 度量小开关(图右上角):Tk / $ 两格,点未选中的一格即切换(全局持久化)----
+  // ---- 度量小开关(图右上角):Tk / $ / 次 三格,点未选中的一格即切换(全局持久化)----
   Widget _metricToggle(ColorScheme cs) {
     Widget cell(String label, ChartMetric m) {
       final on = widget.metric == m;
@@ -275,6 +307,7 @@ class _HourlyChartState extends State<HourlyChart> {
         children: [
           cell('Tk', ChartMetric.tokens),
           cell('\$', ChartMetric.cost),
+          cell('次', ChartMetric.count),
         ],
       ),
     );
@@ -584,15 +617,20 @@ class _HourlyChartState extends State<HourlyChart> {
     return out;
   }
 
-  /// 单系列明细:token 度量维持「入·出·缓 = 合计」;花费度量显示「$x.xx (占比%)」。
+  /// 单系列明细:token 度量维持「入·出·缓 = 合计」;花费 / 请求次数度量显示「值 (占比%)」。
   /// slotTotal 为该桶当前度量的合计,用于算占比(为 0 时占比按 0,避免除零)。
   String _detail(HourPoint p, double slotTotal) {
-    if (widget.metric == ChartMetric.cost) {
-      final share = slotTotal > 0 ? (p.cost / slotTotal * 100).round() : 0;
-      return '${fmtCost(p.cost)} ($share%)';
+    switch (widget.metric) {
+      case ChartMetric.cost:
+        final share = slotTotal > 0 ? (p.cost / slotTotal * 100).round() : 0;
+        return '${fmtCost(p.cost)} ($share%)';
+      case ChartMetric.count:
+        final share = slotTotal > 0 ? (p.count / slotTotal * 100).round() : 0;
+        return '${fmtCount(p.count)} 次 ($share%)';
+      case ChartMetric.tokens:
+        return '入${fmtTokens(p.input)}·出${fmtTokens(p.output)}·'
+            '缓${fmtTokens(p.cacheCreate + p.cacheRead)} = ${fmtTokens(p.sum)}';
     }
-    return '入${fmtTokens(p.input)}·出${fmtTokens(p.output)}·'
-        '缓${fmtTokens(p.cacheCreate + p.cacheRead)} = ${fmtTokens(p.sum)}';
   }
 
   /// 桶表头:单小时桶显示 "MM-DD HH:00";多小时桶显示 "MM-DD HH:00–HH:00 · Nh累计"。
@@ -606,22 +644,29 @@ class _HourlyChartState extends State<HourlyChart> {
     return '$base–${e.hour.toString().padLeft(2, '0')}:00 · ${s.spanHours}h累计';
   }
 
-  // ---- 图例:系列色点 + 名字;点击开关该系列(隐藏置灰划线) ----
+  // ---- 图例:系列色点 + 名字 + 区间合计;点击开关该系列(隐藏置灰划线) ----
   Widget _legend(BuildContext context, List<UsageSeries> ordered,
-      Map<String, Color> colorOf, Map<String, String> nameOf) {
+      Map<String, Color> colorOf, Map<String, String> nameOf,
+      Map<String, double> totalOf) {
     final style = Theme.of(context).textTheme.labelSmall;
+    final cs = Theme.of(context).colorScheme;
     return Wrap(
       spacing: 10,
       runSpacing: 2,
       children: [
         for (final ser in ordered)
-          _legendItem(ser, colorOf, nameOf, style),
+          _legendItem(ser, colorOf, nameOf, style, cs, totalOf[ser.key] ?? 0),
       ],
     );
   }
 
-  Widget _legendItem(UsageSeries ser, Map<String, Color> colorOf,
-      Map<String, String> nameOf, TextStyle? style) {
+  Widget _legendItem(
+      UsageSeries ser,
+      Map<String, Color> colorOf,
+      Map<String, String> nameOf,
+      TextStyle? style,
+      ColorScheme cs,
+      double total) {
     final hidden = _hidden.contains(ser.key);
     return InkWell(
       borderRadius: BorderRadius.circular(4),
@@ -650,6 +695,15 @@ class _HourlyChartState extends State<HourlyChart> {
                     decoration:
                         hidden ? TextDecoration.lineThrough : TextDecoration.none),
               ),
+              const SizedBox(width: 4),
+              // 区间合计:随当前度量(token/花费/次)显示,弱化色以区别于系列名。
+              Text(
+                _fmtSeriesTotal(total),
+                style: style?.copyWith(
+                  color: cs.onSurfaceVariant,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ],
           ),
         ),
@@ -677,14 +731,16 @@ class _HourlyChartState extends State<HourlyChart> {
     final nB = (hours / k).ceil();
     final lastHour = nowHour.add(const Duration(hours: 1));
 
-    // bucketIndex -> seriesKey -> [in,out,cacheCreate,cacheRead];cost 走并行的 double 累加器。
+    // bucketIndex -> seriesKey -> [in,out,cacheCreate,cacheRead];cost / count 走并行累加器。
     final acc = List.generate(nB, (_) => <String, List<int>>{});
     final costAcc = List.generate(nB, (_) => <String, double>{});
+    final countAcc = List.generate(nB, (_) => <String, int>{});
     for (final ser in series) {
       for (final p in ser.points) {
         final hb = DateTime(p.hour.year, p.hour.month, p.hour.day, p.hour.hour);
         if (hb.isBefore(windowStart) || hb.isAfter(nowHour)) continue;
-        if (p.sum <= 0 && p.cost <= 0) continue; // 两个度量都空才跳过
+        // 三个度量都空才跳过:零 token 零花费但确有请求(count>0)的桶必须保留,否则请求次数少计。
+        if (p.sum <= 0 && p.cost <= 0 && p.count <= 0) continue;
         final offset = hb.difference(windowStart).inHours;
         final bi = (offset ~/ k).clamp(0, nB - 1);
         final v = acc[bi].putIfAbsent(ser.key, () => [0, 0, 0, 0]);
@@ -693,6 +749,7 @@ class _HourlyChartState extends State<HourlyChart> {
         v[2] += p.cacheCreate;
         v[3] += p.cacheRead;
         costAcc[bi][ser.key] = (costAcc[bi][ser.key] ?? 0) + p.cost;
+        countAcc[bi][ser.key] = (countAcc[bi][ser.key] ?? 0) + p.count;
       }
     }
 
@@ -704,12 +761,14 @@ class _HourlyChartState extends State<HourlyChart> {
       final points = <String, HourPoint>{};
       var total = 0;
       var costTotal = 0.0;
+      var countTotal = 0;
       for (final ser in series) {
         final v = acc[bi][ser.key];
         if (v == null) continue;
         final sum = v[0] + v[1] + v[2] + v[3];
         final cost = costAcc[bi][ser.key] ?? 0;
-        if (sum <= 0 && cost <= 0) continue;
+        final count = countAcc[bi][ser.key] ?? 0;
+        if (sum <= 0 && cost <= 0 && count <= 0) continue;
         points[ser.key] = HourPoint(
           hour: start,
           input: v[0],
@@ -718,22 +777,26 @@ class _HourlyChartState extends State<HourlyChart> {
           cacheRead: v[3],
           total: sum,
           cost: cost,
+          count: count,
         );
         total += sum;
         costTotal += cost;
+        countTotal += count;
       }
-      slots.add(_Slot(start, end, points, total, costTotal));
+      slots.add(_Slot(start, end, points, total, costTotal, countTotal));
     }
     return slots;
   }
 }
 
 class _Slot {
-  _Slot(this.start, this.end, this.points, this.total, this.costTotal);
+  _Slot(this.start, this.end, this.points, this.total, this.costTotal,
+      this.countTotal);
   final DateTime start; // 桶起始小时
   final DateTime end; // 桶结束(exclusive,clamp 到 now+1h)
   final Map<String, HourPoint> points; // seriesKey -> 该桶累计(有量的系列)
   final int total; // 桶内 token 合计
   final double costTotal; // 桶内花费合计(USD)
+  final int countTotal; // 桶内请求次数合计
   int get spanHours => end.difference(start).inHours;
 }

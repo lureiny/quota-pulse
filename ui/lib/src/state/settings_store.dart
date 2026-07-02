@@ -107,13 +107,15 @@ extension ChartTypeX on ChartType {
       };
 }
 
-/// 图表度量:按 token 量 / 按花费($)。二者不严格成正比,切到花费可看各维度花费占比。
-enum ChartMetric { tokens, cost }
+/// 图表度量:按 token 量 / 按花费($) / 按请求次数。三者正交,切换只改客户端取哪个字段
+/// 作图(度量不跨 FFI);请求次数与 token/花费一样可按任意维度聚合(core 侧 COUNT(*))。
+enum ChartMetric { tokens, cost, count }
 
 extension ChartMetricX on ChartMetric {
   String get label => switch (this) {
         ChartMetric.tokens => 'Token',
         ChartMetric.cost => '花费',
+        ChartMetric.count => '请求次数',
       };
 }
 

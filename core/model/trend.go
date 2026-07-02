@@ -12,6 +12,7 @@ type HourPoint struct {
 	CacheRead   int64     `json:"cache_read"`   // 缓存读取 token
 	Total       int64     `json:"total"`        // 合计 token(= 上面四项之和)
 	Cost        float64   `json:"cost"`         // 花费合计(USD;与 token 不严格成正比,单独聚合)
+	Count       int64     `json:"count"`        // 请求次数(该桶内事件行数 = COUNT(*);与 token/花费正交)
 }
 
 // Series 是某维度下的一条序列(一个维度值 → 它的小时序列)。

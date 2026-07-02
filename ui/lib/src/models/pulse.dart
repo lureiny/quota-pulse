@@ -64,6 +64,7 @@ class HourPoint {
   final int cacheRead;
   final int total;
   final double cost; // 花费合计(USD;与 token 不严格成正比,单独度量)
+  final int count; // 请求次数(该桶事件行数;与 token/花费正交的第三种度量)
 
   HourPoint({
     required this.hour,
@@ -73,6 +74,7 @@ class HourPoint {
     required this.cacheRead,
     required this.total,
     this.cost = 0,
+    this.count = 0,
   });
 
   /// 柱高口径:四类 token 之和(显式含 cache,不依赖服务端 total 的算法)。
@@ -87,6 +89,7 @@ class HourPoint {
         cacheRead: (j['cache_read'] as num?)?.toInt() ?? 0,
         total: (j['total'] as num?)?.toInt() ?? 0,
         cost: (j['cost'] as num?)?.toDouble() ?? 0,
+        count: (j['count'] as num?)?.toInt() ?? 0,
       );
 }
 

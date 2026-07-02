@@ -67,6 +67,13 @@ String fmtTokens(int n) {
   return '$n';
 }
 
+/// 请求次数 → 整数;上万用 "N.N万"(计数通常不大,小值保留精确,与 token 的 K/M 区分)。
+String fmtCount(int n) {
+  if (n >= 100000000) return '${(n / 1e8).toStringAsFixed(1)}亿';
+  if (n >= 10000) return '${(n / 1e4).toStringAsFixed(1)}万';
+  return '$n';
+}
+
 /// 花费(USD)→ "$12.34" / "$1.2K"。小额自适应加精度(单条请求可能只几厘)。
 String fmtCost(double v) {
   if (v <= 0) return r'$0';
