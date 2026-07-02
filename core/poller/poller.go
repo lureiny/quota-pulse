@@ -102,9 +102,9 @@ func (p *Poller) syncInstance(ctx context.Context, b binding) {
 }
 
 // sync 是增量流A(合并了原「稳态①」与「前向补空缺②」)。自驱周期、纯 id 游标、不按时间截断:
-//   - 首拍(LastID==0,完全首次运行、本地零进度):按时间播种 [now-SeedHours, now](SeedHours=
+//   - 首拍(LastID==0,完全首次运行、本地零进度):按时间初始化 [now-初始化窗口, now](初始化窗口=
 //     BackfillHours,默认 12h),同时写 last_id 与覆盖水位 W(唯一同时写二者的地方)。
-//   - 已播种(LastID>0):按 id 降序拉 id>LastID 的全部新行,straddle 到游标即停;查询左界压到
+//   - 已初始化(LastID>0):按 id 降序拉 id>LastID 的全部新行,straddle 到游标即停;查询左界压到
 //     now-RetentionHours 仅作扫描下限(不作终止)→ 单次补齐有界在 30d。空闲时一页即追到游标、
 //     只发 1 次小请求(消除原前向流按 MAX 判落后而无限重扫的空转 bug)。
 //
@@ -127,14 +127,18 @@ func (p *Poller) sync(ctx context.Context, b binding, lf provider.UsageLogFetche
 
 	evictFloor := time.Now().Add(-time.Duration(p.chart.RetentionHours) * time.Hour).Unix()
 
-	if p.usageDB.LastID(b.instance) == 0 {
-		// 首拍时间播种:[now-SeedHours, now]。
-		seedFrom := time.Now().Add(-time.Duration(p.chart.BackfillHours) * time.Hour)
-		if floor := time.Unix(evictFloor, 0); seedFrom.Before(floor) {
-			seedFrom = floor
+	// 初始化门槛用「零进度」判定:LastID==0 且 W==0。只看 LastID 不够——若初始化窗口内恰无事件,
+	// AddEvents(空) 不推进 last_id,会每拍反复重新初始化(同类空闲仍反复请求);而首拍一定会写 W,
+	// 故 W>0 即表示「已播过」,之后走游标(即便还没有任何事件)。旧库(有 last_id、W 可能为 0)
+	// 也不会被误重新初始化,因 LastID>0。
+	if p.usageDB.LastID(b.instance) == 0 && p.usageDB.CoverageFrom(b.instance) == 0 {
+		// 首拍时间初始化:[now-初始化窗口, now]。
+		initFrom := time.Now().Add(-time.Duration(p.chart.BackfillHours) * time.Hour)
+		if floor := time.Unix(evictFloor, 0); initFrom.Before(floor) {
+			initFrom = floor
 		}
 		cctx, cancel := context.WithTimeout(ctx, 120*time.Second)
-		evs, complete, err := lf.FetchUsageWindow(cctx, seedFrom, time.Now(), p.chart.PageCap)
+		evs, complete, err := lf.FetchUsageWindow(cctx, initFrom, time.Now(), p.chart.PageCap)
 		cancel()
 		if err != nil {
 			return
@@ -142,8 +146,8 @@ func (p *Poller) sync(ctx context.Context, b binding, lf provider.UsageLogFetche
 		if err := p.usageDB.AddEvents(b.instance, evs); err != nil {
 			return
 		}
-		// 写覆盖水位 W:抓全 → W=seedFrom;被 pageCap 截断 → W=最老抓到的事件(诚实,不谎报)。
-		w := seedFrom.Unix()
+		// 写覆盖水位 W:抓全 → W=initFrom;被 pageCap 截断 → W=最老抓到的事件(诚实,不谎报)。
+		w := initFrom.Unix()
 		if !complete && len(evs) > 0 {
 			oldest := evs[0].CreatedAt
 			for _, e := range evs {
@@ -159,9 +163,17 @@ func (p *Poller) sync(ctx context.Context, b binding, lf provider.UsageLogFetche
 		return
 	}
 
-	// 已播种:id 游标增量。from 仅作扫描下限(30d),终止靠 straddle。
+	// 已初始化:id 游标增量。from 仅作扫描下限,终止靠 straddle。
 	sinceID := p.usageDB.LastID(b.instance)
 	from := time.Now().Add(-time.Duration(p.chart.RetentionHours) * time.Hour)
+	// sinceID==0(已初始化但初始化窗口内无事件)时,若用 30d 下限 + sinceID=0 会拉全 30d 历史
+	// (越过覆盖窗口 [W,now])。收窄到 W:新事件 created_at≥now≥W 必在 [W,now] 内,不漏;
+	// 更早历史归反向流B。W>0 由初始化门槛保证。
+	if sinceID == 0 {
+		if w := p.usageDB.CoverageFrom(b.instance); w > 0 {
+			from = time.Unix(w, 0)
+		}
+	}
 	pageSize := p.steadyPageSize(b.instance)
 
 	cctx, cancel := context.WithTimeout(ctx, 120*time.Second)
@@ -206,15 +218,17 @@ func (p *Poller) noteSteadyCount(instance string, n int) {
 // 被 pageCap 截断 → W=最老抓到的事件(诚实,不谎称覆盖)。每实例串行(在途即跳过)。
 // 阻塞执行(含网络),调用方应在 goroutine 里跑。
 //
-// 门槛:仅在增量流A 已播种(LastID>0)后才补。首次运行时本地零进度,交给流A 先播种
-// (它同时写 last_id 与 W);此前不补,避免「首拍播种」与「反向补历史」并发导致区间重叠/重复。
-// 无需锁二者:流A 认 last_id、流B 认 W,首拍后职责不重叠。
+// 门槛:仅在增量流A 已初始化后才补(判据与初始化一致 = 「真零进度」LastID==0 且 W==0)。
+// 首次运行时本地零进度,交给流A 先初始化;此前不补,避免「首拍初始化」与「反向补历史」并发
+// 导致区间重叠/重复。**不能只看 LastID**:空实例(初始化窗口内无事件)初始化后 W>0 但 LastID 仍 0,
+// 此时应允许反向补(否则拉大跨度会永久卡在灰色「未采集」)。初始化已写 W,W>0 即代表已初始化,
+// 反向补 [target, W) 与流A 的 [W, now] 区间不重叠,无需锁。
 func (p *Poller) Backfill(instance string, hours int) {
 	if p.usageDB == nil || !p.chart.Enabled || hours <= 0 {
 		return
 	}
-	if p.usageDB.LastID(instance) == 0 {
-		return // 尚未播种:等流A 首拍
+	if p.usageDB.LastID(instance) == 0 && p.usageDB.CoverageFrom(instance) == 0 {
+		return // 尚未初始化:等流A 首拍
 	}
 
 	p.syncMu.Lock()
@@ -304,7 +318,7 @@ func (p *Poller) Start(ctx context.Context) {
 
 	for i := range bindings {
 		go p.loop(ctx, bindings[i])
-		// 不再启动即全量补 30d:首拍由增量流A 播种最近 SeedHours,更早历史由 UI 按需触发反向流B。
+		// 不再启动即全量补 30d:首拍由增量流A 初始化最近 初始化窗口,更早历史由 UI 按需触发反向流B。
 	}
 }
 

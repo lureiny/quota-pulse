@@ -21,6 +21,8 @@ import (
 const (
 	providerType = "sub2api"
 	apiPrefix    = "/api/v1/admin"
+	// maxSincePages 是 FetchUsageSince 翻页的失控上限(纯防护,远高于任何真实数据量)。
+	maxSincePages = 100000
 )
 
 // 包加载时把自己注册进 provider 工厂表。app 侧用 `_ import` 触发。
@@ -185,6 +187,12 @@ func (p *Provider) FetchUsageSince(ctx context.Context, sinceID int64, from time
 		out := make([]model.UsageEvent, 0, 256)
 		escalate := false
 		for page := 1; ; page++ {
+			// 失控防护(从属于调用方 ctx 超时):正常靠 straddle/空页终止;若服务端异常地一直返回
+			// 整页 id>sinceID(永不 straddle 也不空页),此上限兜底报错(不做部分落库→无洞、下拍重来)。
+			// 上限远高于任何真实 30d 数据量与超时内可达页数,正常路径绝不触及。
+			if page > maxSincePages {
+				return nil, fmt.Errorf("FetchUsageSince: 翻页超上限 %d,疑似服务端未返回游标行", maxSincePages)
+			}
 			resp, err := p.fetchUsagePage(ctx, page, size, "desc", startDate, endDate)
 			if err != nil {
 				return nil, err
