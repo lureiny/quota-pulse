@@ -507,6 +507,11 @@ class _ShellState extends State<Shell> with WindowListener {
       controller: _controller!,
       layout: _settings.layout,
       resetMode: _settings.resetMode,
+      // 单击主页「重置时间」→ 翻转全局 resetMode(等同设置里的开关,持久化 + 托盘同步)。
+      onToggleResetMode: () => _onResetModeChanged(
+          _settings.resetMode == ResetMode.absolute
+              ? ResetMode.countdown
+              : ResetMode.absolute),
       instanceUrls: _settings.instanceUrls(),
       chartEnabled: _settings.chartEnabled,
       chartRange: _settings.chartRange,

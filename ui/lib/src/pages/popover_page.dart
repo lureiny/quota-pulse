@@ -18,6 +18,7 @@ class PopoverPage extends StatefulWidget {
     required this.onRefresh,
     required this.onSettings,
     this.resetMode = ResetMode.countdown,
+    this.onToggleResetMode,
     this.instanceUrls = const {},
     this.chartEnabled = false,
     this.chartRange = ChartRange.h24,
@@ -32,6 +33,7 @@ class PopoverPage extends StatefulWidget {
   final VoidCallback onRefresh;
   final VoidCallback onSettings;
   final ResetMode resetMode; // 重置显示:倒计时 / 绝对(随设置,透传到 MeterBar)
+  final VoidCallback? onToggleResetMode; // 单击重置时间:翻转全局 resetMode(透传到 MeterBar)
   final Map<String, String> instanceUrls; // 实例名 → 后台 URL(把实例名做成超链接)
   final bool chartEnabled; // 是否在每个站点分组下显示小时用量图
   final ChartRange chartRange; // 图表时间跨度(主面板视图控件,即时切换)
@@ -135,7 +137,8 @@ class _PopoverPageState extends State<PopoverPage> {
         children.addAll(list.map(
           (p) => AccountTile(p,
               onRefresh: () => widget.controller.refreshAccount(p.key),
-              resetMode: widget.resetMode),
+              resetMode: widget.resetMode,
+              onToggleResetMode: widget.onToggleResetMode),
         ));
         if (widget.chartEnabled) {
           children.add(HourlyChart(
@@ -184,7 +187,8 @@ class _PopoverPageState extends State<PopoverPage> {
                           showName: false, url: widget.instanceUrls[e.key]),
                       ...e.value.map((p) => AccountTile(p,
                           onRefresh: () => widget.controller.refreshAccount(p.key),
-                          resetMode: widget.resetMode)),
+                          resetMode: widget.resetMode,
+                          onToggleResetMode: widget.onToggleResetMode)),
                       if (widget.chartEnabled)
                         HourlyChart(
                           key: ValueKey('chart-${e.key}'),

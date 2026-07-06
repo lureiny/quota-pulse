@@ -10,11 +10,15 @@ import 'status_dot.dart';
 /// 桌面端 hover 高亮,并出现「刷新此账户」按钮。
 class AccountTile extends StatefulWidget {
   const AccountTile(this.pulse,
-      {super.key, this.onRefresh, this.resetMode = ResetMode.countdown});
+      {super.key,
+      this.onRefresh,
+      this.resetMode = ResetMode.countdown,
+      this.onToggleResetMode});
 
   final AccountPulse pulse;
   final VoidCallback? onRefresh; // 只刷新此账户
   final ResetMode resetMode; // 重置显示:倒计时 / 绝对(随设置)
+  final VoidCallback? onToggleResetMode; // 单击重置时间:翻转全局 resetMode
 
   @override
   State<AccountTile> createState() => _AccountTileState();
@@ -62,7 +66,9 @@ class _AccountTileState extends State<AccountTile> {
                   padding: const EdgeInsets.only(top: 4),
                   child: Text('无窗口数据', style: theme.textTheme.bodySmall),
                 ),
-              ...p.meters.map((m) => MeterBar(m, resetMode: widget.resetMode)),
+              ...p.meters.map((m) => MeterBar(m,
+                  resetMode: widget.resetMode,
+                  onToggleResetMode: widget.onToggleResetMode)),
               _detail(theme, scheme, p),
             ],
           ),
