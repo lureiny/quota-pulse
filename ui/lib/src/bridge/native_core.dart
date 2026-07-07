@@ -31,6 +31,10 @@ class NativeCore {
   late final _StrArgD _refresh = _lib.lookupFunction<_StrArgC, _StrArgD>('QP_Refresh');
   late final _StrToStrD _chartSeries =
       _lib.lookupFunction<_StrToStrC, _StrToStrD>('QP_ChartSeries');
+  late final _StrToStrD _chartDaily =
+      _lib.lookupFunction<_StrToStrC, _StrToStrD>('QP_ChartDailySeries');
+  late final _StrToStrD _coverage =
+      _lib.lookupFunction<_StrToStrC, _StrToStrD>('QP_Coverage');
   late final _StrArgD _ensureCoverage =
       _lib.lookupFunction<_StrArgC, _StrArgD>('QP_EnsureCoverage');
   late final _StrArgD _free = _lib.lookupFunction<_StrArgC, _StrArgD>('QP_Free');
@@ -121,6 +125,40 @@ class NativeCore {
     try {
       final ptr = _chartSeries(a);
       if (ptr == nullptr) return '';
+      try {
+        return ptr.toDartString();
+      } finally {
+        _free(ptr);
+      }
+    } finally {
+      malloc.free(a);
+    }
+  }
+
+  /// 按维度取**按天**图表数据(热力图)。argsJson: {"instance","dimension","days"}。
+  /// 返回同 chartSeries 的 {series,coverageFrom,requestedFrom} JSON;空指针返回 ''。
+  String chartDailySeries(String argsJson) {
+    final a = argsJson.toNativeUtf8();
+    try {
+      final ptr = _chartDaily(a);
+      if (ptr == nullptr) return '';
+      try {
+        return ptr.toDartString();
+      } finally {
+        _free(ptr);
+      }
+    } finally {
+      malloc.free(a);
+    }
+  }
+
+  /// 取覆盖水位/最早事件。argsJson: {"instance"}。返回 {coverageFrom,earliestEvent} JSON;
+  /// 空指针返回 '{"coverageFrom":0,"earliestEvent":0}'。
+  String coverage(String argsJson) {
+    final a = argsJson.toNativeUtf8();
+    try {
+      final ptr = _coverage(a);
+      if (ptr == nullptr) return '{"coverageFrom":0,"earliestEvent":0}';
       try {
         return ptr.toDartString();
       } finally {

@@ -552,14 +552,10 @@ class _ShellState extends State<Shell>
     _updateTicker(); // 同步桌面悬浮窗口
   }
 
-  // 主面板视图控件:时间跨度 + 分组维度 + 柱/线 + 度量。纯 UI,持久化 + 重渲染,不重启核心。
-  void _onChartViewChanged(ChartGroupBy groupBy, ChartType type,
-      ChartRange range, ChartMetric metric) {
-    final s = _settings.copyWith(
-        chartGroupBy: groupBy,
-        chartType: type,
-        chartRange: range,
-        chartMetric: metric);
+  // 主面板视图控件:维度 + 样式(柱/线/热力图)+ 跨度 + 度量 + 热力图年份/值。
+  // 纯 UI,持久化 + 重渲染,不重启核心(这些字段不进 toConfigJson)。
+  void _onChartViewChanged(ChartView v) {
+    final s = _settings.withChartView(v);
     SettingsStore.save(s);
     setState(() => _settings = s);
   }
@@ -639,6 +635,8 @@ class _ShellState extends State<Shell>
       chartType: _settings.chartType,
       chartGroupBy: _settings.chartGroupBy,
       chartMetric: _settings.chartMetric,
+      chartHeatmapYear: _settings.chartHeatmapYear,
+      chartHeatmapValue: _settings.chartHeatmapValue,
       onChartViewChanged: _onChartViewChanged,
       onRefresh: () => _controller?.refreshNow(),
       onSettings: () => setState(() => _view = _View.settings),

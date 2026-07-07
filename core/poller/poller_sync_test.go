@@ -250,6 +250,59 @@ func TestSyncGuardPreventsReentry(t *testing.T) {
 	}
 }
 
+func newKeepAllPoller(t *testing.T, fp *logProv) (*Poller, *usage.Store) {
+	t.Helper()
+	db, err := usage.Open(filepath.Join(t.TempDir(), "u.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	p := New(NewStore(), nil)
+	cfg := config.Config{Chart: config.ChartConfig{Enabled: true, KeepAll: true}}.Normalized().Chart
+	p.SetChart(cfg, db)
+	p.AddProvider(fp, NewScheduler(config.PollConfig{}), "inst")
+	p.ctx = context.Background()
+	return p, db
+}
+
+// KeepAll:反向补拉的 target 不再夹保留地板 → 可越过 RetentionHours(744h)一路补到最早。
+func TestKeepAllBackfillIgnoresRetentionFloor(t *testing.T) {
+	fp := &logProv{}
+	p, db := newKeepAllPoller(t, fp)
+	db.NoteCoverage("inst", time.Now().Add(-12*time.Hour).Unix()) // 已初始化:W=now-12h
+	if err := db.AddEvents("inst", []model.UsageEvent{evt(5, time.Now().Add(-1*time.Hour))}); err != nil {
+		t.Fatal(err)
+	}
+	var gotFrom time.Time
+	fp.window = func(from, to time.Time) ([]model.UsageEvent, bool) {
+		gotFrom = from
+		return nil, true
+	}
+	p.Backfill("inst", 10000) // 10000h ≫ 744h 保留地板
+	if fp.winN != 1 {
+		t.Fatalf("winN=%d want 1", fp.winN)
+	}
+	wantFrom := time.Now().Add(-10000 * time.Hour).Unix()
+	if abs(gotFrom.Unix()-wantFrom) > 120 {
+		t.Errorf("keep-all 下 target 被夹地板:from=%d want≈%d(now-10000h,未夹到 now-744h)", gotFrom.Unix(), wantFrom)
+	}
+}
+
+// KeepAll:sync 不淘汰,远早于保留地板的老事件仍保留。
+func TestKeepAllSyncDoesNotEvict(t *testing.T) {
+	fp := &logProv{}
+	p, db := newKeepAllPoller(t, fp)
+	old := time.Now().Add(-1000 * time.Hour) // 远早于 744h 地板
+	if err := db.AddEvents("inst", []model.UsageEvent{evt(10, old)}); err != nil {
+		t.Fatal(err)
+	}
+	fp.since = func(sinceID int64) []model.UsageEvent { return nil }
+	p.sync(context.Background(), p.bindings[0], fp)
+	if got := db.MinCreatedAt("inst"); got != old.Unix() {
+		t.Errorf("keep-all 不应淘汰老事件:MinCreatedAt=%d want %d(未删)", got, old.Unix())
+	}
+}
+
 func abs(x int64) int64 {
 	if x < 0 {
 		return -x

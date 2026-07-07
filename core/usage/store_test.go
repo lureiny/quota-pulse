@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -213,6 +214,103 @@ func TestQuerySeriesAggregatesCost(t *testing.T) {
 	// token 侧不受影响:账户 2 两条各 15 token → 合计 30。
 	if got := acc["2"].Points[0].Total; got != 30 {
 		t.Errorf("token total=%d want 30(cost 聚合不动 token)", got)
+	}
+}
+
+// QueryDailySeries 按**本地日**桶聚合:同一天不同小时合并、跨天分桶;token/cost/count 都聚合;
+// 桶时间为当天零点;sinceUnix 过滤生效。
+func TestQueryDailySeries(t *testing.T) {
+	st := openTmp(t)
+	loc := time.Local
+	d19a := time.Date(2026, 6, 19, 9, 5, 0, 0, loc)  // 6/19 日桶
+	d19b := time.Date(2026, 6, 19, 22, 40, 0, 0, loc) // 同 6/19 日桶(跨小时)
+	d20 := time.Date(2026, 6, 20, 1, 0, 0, 0, loc)    // 6/20 日桶
+	mk := func(id int64, ts time.Time, in, out int64, cost float64) model.UsageEvent {
+		return model.UsageEvent{ID: id, CreatedAt: ts, Input: in, Output: out, Cost: cost,
+			Dims: map[string]string{"account": "2", "account_name": "A"}}
+	}
+	if err := st.AddEvents("inst", []model.UsageEvent{
+		mk(1, d19a, 100, 50, 1.0),
+		mk(2, d19b, 20, 10, 0.5), // 与 id1 同日桶 → 合并
+		mk(3, d20, 7, 0, 0.25),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	acc := seriesByKey(st.QueryDailySeries("inst", "account", 0))
+	s, ok := acc["2"]
+	if !ok || len(s.Points) != 2 {
+		t.Fatalf("daily series account 2: %+v", acc)
+	}
+	day19 := time.Date(2026, 6, 19, 0, 0, 0, 0, loc)
+	if p := s.Points[0]; p.Input != 120 || p.Total != 180 || p.Count != 2 || p.Cost != 1.5 || !p.Hour.Equal(day19) {
+		t.Errorf("6/19 日桶: %+v want in=120 total=180 count=2 cost=1.5 hour=%v", p, day19)
+	}
+	if p := s.Points[1]; p.Input != 7 || p.Count != 1 {
+		t.Errorf("6/20 日桶: %+v want in=7 count=1", p)
+	}
+
+	// sinceUnix 过滤:只取 6/20 起。
+	cut := time.Date(2026, 6, 20, 0, 0, 0, 0, loc).Unix()
+	if p := seriesByKey(st.QueryDailySeries("inst", "account", cut))["2"].Points; len(p) != 1 || p[0].Input != 7 {
+		t.Errorf("since 6/20: %+v", p)
+	}
+}
+
+// v3→v4 迁移:老库无 day_local 列,Open 时就地补列 + 按 distinct 小时回填;
+// 用 QueryDailySeries 分出两个日桶来证明回填成功(它按 day_local 聚合)。
+func TestMigrateV3ToV4DayLocal(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v3.db")
+	loc := time.Local
+	d19 := time.Date(2026, 6, 19, 9, 5, 0, 0, loc)
+	d20 := time.Date(2026, 6, 20, 1, 0, 0, 0, loc)
+
+	// 手搓 v3 形态:usage_events 无 day_local,user_version=3。
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+CREATE TABLE usage_events(
+  instance TEXT NOT NULL, id INTEGER NOT NULL, created_at INTEGER NOT NULL, hour_local INTEGER NOT NULL,
+  input INTEGER NOT NULL DEFAULT 0, output INTEGER NOT NULL DEFAULT 0,
+  cache_create INTEGER NOT NULL DEFAULT 0, cache_read INTEGER NOT NULL DEFAULT 0,
+  cost REAL NOT NULL DEFAULT 0, dims TEXT NOT NULL DEFAULT '{}', PRIMARY KEY(instance,id));
+CREATE TABLE sync_state(instance TEXT PRIMARY KEY, last_id INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL DEFAULT 0, backfilled_from INTEGER NOT NULL DEFAULT 0);
+PRAGMA user_version=3;`); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range []struct {
+		id int64
+		ts time.Time
+	}{{1, d19}, {2, d20}} {
+		if _, err := db.Exec(`INSERT INTO usage_events(instance,id,created_at,hour_local,input,dims) VALUES(?,?,?,?,?,?)`,
+			"inst", e.id, e.ts.Unix(), hourBucket(e.ts), 10, `{"account":"2","account_name":"A"}`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+
+	// Open 触发 v3→v4 迁移。
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("open(migrate): %v", err)
+	}
+	defer st.Close()
+
+	acc := seriesByKey(st.QueryDailySeries("inst", "account", 0))
+	if p := acc["2"].Points; len(p) != 2 {
+		t.Fatalf("迁移后日桶数=%d want 2(day_local 未回填?): %+v", len(p), acc["2"])
+	}
+	// 新写入的事件也应有 day_local(走 AddEvents 路径)。
+	if err := st.AddEvents("inst", []model.UsageEvent{
+		{ID: 3, CreatedAt: d20.Add(2 * time.Hour), Input: 5, Dims: map[string]string{"account": "2", "account_name": "A"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if p := seriesByKey(st.QueryDailySeries("inst", "account", 0))["2"].Points; len(p) != 2 || p[1].Count != 2 {
+		t.Errorf("迁移后新写入未并入日桶: %+v", p)
 	}
 }
 

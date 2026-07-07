@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'models/pulse.dart';
+import 'state/settings_store.dart' show ChartMetric;
 
 // macOS 系统色
 const _green = Color(0xFF34C759);
@@ -59,6 +60,35 @@ const List<Color> _chartPalette = [
 
 /// 取第 i 个账户的稳定颜色(循环复用调色板)。
 Color accountColor(int i) => _chartPalette[i % _chartPalette.length];
+
+/// 某小时/日桶在所选度量下的取值(token 之和 / 花费 / 请求次数)。三者正交,
+/// 小时图与热力图共用此提取器,单一口径。
+double metricValue(HourPoint p, ChartMetric m) => switch (m) {
+      ChartMetric.tokens => p.sum.toDouble(),
+      ChartMetric.cost => p.cost,
+      ChartMetric.count => p.count.toDouble(),
+    };
+
+/// 热力图强度档不透明度(空格之上的 4 档;格子与图例共用同一阶梯)。
+const List<double> kHeatLevelAlphas = [0.30, 0.52, 0.74, 1.0];
+
+/// 空格(0 值)填充色:极淡中性色,明暗主题皆可辨。
+Color heatEmptyCell(ColorScheme cs) => cs.onSurface.withValues(alpha: 0.06);
+
+/// 热力图格子色:GitHub 式单色系强度阶梯(cs.primary 的 4 档不透明度)。
+/// value<=0 或 maxValue<=0 → 空格色。按 value/maxValue 分 4 档。
+Color heatCell(double value, double maxValue, ColorScheme cs) {
+  if (value <= 0 || maxValue <= 0) return heatEmptyCell(cs);
+  final r = (value / maxValue).clamp(0.0, 1.0);
+  final i = r <= 0.25
+      ? 0
+      : r <= 0.5
+          ? 1
+          : r <= 0.75
+              ? 2
+              : 3;
+  return cs.primary.withValues(alpha: kHeatLevelAlphas[i]);
+}
 
 /// 紧凑整数 → "1.2K" / "3.4M" / "1.2B"(千/百万/十亿;与 core mapper 的 humanInt 口径一致)。
 /// token 与请求次数同量级、共用此口径(见 fmtCount)。

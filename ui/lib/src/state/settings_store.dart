@@ -97,13 +97,14 @@ extension ChartRangeX on ChartRange {
 /// 这样改 chartRange 不改 toConfigJson → 不重启核心、不刷新全部用量(见 #4)。
 const int kChartFetchHours = 168;
 
-/// 图表样式:堆叠柱状图 / 多系列曲线图。
-enum ChartType { bar, line }
+/// 图表样式:堆叠柱状图 / 多系列曲线图 / GitHub 式热力图(按天)。
+enum ChartType { bar, line, heatmap }
 
 extension ChartTypeX on ChartType {
   String get label => switch (this) {
         ChartType.bar => '柱状图',
         ChartType.line => '曲线图',
+        ChartType.heatmap => '热力图',
       };
 }
 
@@ -310,6 +311,49 @@ List<String> _parsePinnedKeys(Map<String, dynamic> j) {
   return const [];
 }
 
+/// copyWith 的「不改」哨兵:区分调用方省略参数(保持原值)与显式传 null(置空)。
+const Object _kNoChange = Object();
+
+/// ChartView 打包主面板图表的全部视图控件(维度/样式/跨度/度量 + 热力图的年份/值),
+/// 一次性透传替代脆弱的多参位置回调。全为纯 UI(不进 toConfigJson、不重启核心)。
+class ChartView {
+  final ChartGroupBy groupBy;
+  final ChartType type;
+  final ChartRange range;
+  final ChartMetric metric;
+  final int? heatmapYear; // null=最近 12 个月
+  final String? heatmapValue; // null/''=全部(聚合)
+
+  const ChartView({
+    required this.groupBy,
+    required this.type,
+    required this.range,
+    required this.metric,
+    this.heatmapYear,
+    this.heatmapValue,
+  });
+
+  ChartView copyWith({
+    ChartGroupBy? groupBy,
+    ChartType? type,
+    ChartRange? range,
+    ChartMetric? metric,
+    Object? heatmapYear = _kNoChange,
+    Object? heatmapValue = _kNoChange,
+  }) =>
+      ChartView(
+        groupBy: groupBy ?? this.groupBy,
+        type: type ?? this.type,
+        range: range ?? this.range,
+        metric: metric ?? this.metric,
+        heatmapYear:
+            heatmapYear == _kNoChange ? this.heatmapYear : heatmapYear as int?,
+        heatmapValue: heatmapValue == _kNoChange
+            ? this.heatmapValue
+            : heatmapValue as String?,
+      );
+}
+
 /// 顶层设置:多实例 + 布局 + 托盘内容。
 class Settings {
   final List<Sub2apiInstance> instances;
@@ -331,6 +375,8 @@ class Settings {
   final ChartType chartType; // 样式:柱状图 / 曲线图(默认柱状图;纯 UI)
   final ChartGroupBy chartGroupBy; // 分组维度:账户/api_key/模型/用户/分组(默认账户;纯 UI)
   final ChartMetric chartMetric; // 度量:token 量 / 花费(默认 token;纯 UI)
+  final int? chartHeatmapYear; // 热力图年份:null=最近 12 个月;否则某一整年(纯 UI)
+  final String? chartHeatmapValue; // 热力图选中的维度值:null/''=全部(聚合);否则某维度值(纯 UI)
 
   // 调试:客户端读流量采样(运行时开关,通过 FFI 控制;这里仅持久化开关与上限)。
   final bool debugSampling; // 是否开启采样(默认关)
@@ -355,6 +401,8 @@ class Settings {
     this.chartType = ChartType.bar,
     this.chartGroupBy = ChartGroupBy.account,
     this.chartMetric = ChartMetric.tokens,
+    this.chartHeatmapYear,
+    this.chartHeatmapValue,
     this.debugSampling = false,
     this.debugMaxSamples = 200000,
     this.debugMaxMemMB = 32,
@@ -362,6 +410,26 @@ class Settings {
 
   // 至少有一个「已启用且已配置」的实例才算可用;全部禁用 → 视为未配置(壳回到设置页)。
   bool get configured => instances.any((i) => i.enabled && i.configured);
+
+  /// 当前图表视图控件打包(供主面板控件条读取)。
+  ChartView get chartView => ChartView(
+        groupBy: chartGroupBy,
+        type: chartType,
+        range: chartRange,
+        metric: chartMetric,
+        heatmapYear: chartHeatmapYear,
+        heatmapValue: chartHeatmapValue,
+      );
+
+  /// 把一个 ChartView 合并回 Settings(纯 UI 字段;年份/值可置 null)。
+  Settings withChartView(ChartView v) => copyWith(
+        chartGroupBy: v.groupBy,
+        chartType: v.type,
+        chartRange: v.range,
+        chartMetric: v.metric,
+        chartHeatmapYear: v.heatmapYear,
+        chartHeatmapValue: v.heatmapValue,
+      );
 
   Settings copyWith({
     List<Sub2apiInstance>? instances,
@@ -381,6 +449,9 @@ class Settings {
     ChartType? chartType,
     ChartGroupBy? chartGroupBy,
     ChartMetric? chartMetric,
+    // 可空热力图字段用哨兵区分「不改」与「显式置 null」(copyWith 的经典难点)。
+    Object? chartHeatmapYear = _kNoChange,
+    Object? chartHeatmapValue = _kNoChange,
     bool? debugSampling,
     int? debugMaxSamples,
     int? debugMaxMemMB,
@@ -403,6 +474,12 @@ class Settings {
         chartType: chartType ?? this.chartType,
         chartGroupBy: chartGroupBy ?? this.chartGroupBy,
         chartMetric: chartMetric ?? this.chartMetric,
+        chartHeatmapYear: chartHeatmapYear == _kNoChange
+            ? this.chartHeatmapYear
+            : chartHeatmapYear as int?,
+        chartHeatmapValue: chartHeatmapValue == _kNoChange
+            ? this.chartHeatmapValue
+            : chartHeatmapValue as String?,
         debugSampling: debugSampling ?? this.debugSampling,
         debugMaxSamples: debugMaxSamples ?? this.debugMaxSamples,
         debugMaxMemMB: debugMaxMemMB ?? this.debugMaxMemMB,
@@ -456,6 +533,9 @@ class Settings {
       'chart': {
         'enabled': chartEnabled,
         'range_hours': kChartFetchHours,
+        // keep_all:永不淘汰、保留全部历史(热力图需拉全量年份数据)。此项一开,
+        // core 反复补拉可把覆盖水位一路推到最早事件;本地库只增不删。
+        'keep_all': true,
       },
     });
   }
@@ -489,6 +569,9 @@ class Settings {
         'chart_type': chartType.name,
         'chart_group_by': chartGroupBy.name,
         'chart_metric': chartMetric.name,
+        if (chartHeatmapYear != null) 'chart_heatmap_year': chartHeatmapYear,
+        if (chartHeatmapValue != null && chartHeatmapValue!.isNotEmpty)
+          'chart_heatmap_value': chartHeatmapValue,
         'debug_sampling': debugSampling,
         'debug_max_samples': debugMaxSamples,
         'debug_max_mem_mb': debugMaxMemMB,
@@ -539,6 +622,8 @@ class Settings {
           (m) => m.name == j['chart_metric'],
           orElse: () => ChartMetric.tokens,
         ),
+        chartHeatmapYear: (j['chart_heatmap_year'] as num?)?.toInt(),
+        chartHeatmapValue: j['chart_heatmap_value'] as String?,
         debugSampling: j['debug_sampling'] as bool? ?? false,
         debugMaxSamples: (j['debug_max_samples'] as num?)?.toInt() ?? 200000,
         debugMaxMemMB: (j['debug_max_mem_mb'] as num?)?.toInt() ?? 32,

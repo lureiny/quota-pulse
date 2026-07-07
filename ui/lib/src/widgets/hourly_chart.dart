@@ -116,11 +116,8 @@ class _HourlyChartState extends State<HourlyChart> {
   }
 
   // ---- 度量取值(token 量 / 花费 / 请求次数):柱高、曲线、占比分母统一走这里,fl_chart 用 double ----
-  double _val(HourPoint p) => switch (widget.metric) {
-        ChartMetric.cost => p.cost,
-        ChartMetric.count => p.count.toDouble(),
-        ChartMetric.tokens => p.sum.toDouble(),
-      };
+  // 与热力图共用 format.metricValue(单一口径)。
+  double _val(HourPoint p) => metricValue(p, widget.metric);
   double _valOrZero(HourPoint? p) => p == null ? 0 : _val(p);
   double _slotVal(_Slot s) => switch (widget.metric) {
         ChartMetric.cost => s.costTotal,

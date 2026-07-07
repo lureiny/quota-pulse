@@ -179,6 +179,35 @@ class ChartData {
   }
 }
 
+/// Coverage 是某实例的覆盖状态:本地完整覆盖的最早时刻 + 全历史最早事件。
+/// 供热力图算补齐进度(covered / (now - earliest))与年份下拉列表(earliest..now)。
+/// 对应 core/app.coverageResp({coverageFrom,earliestEvent});时间为 unix 秒。
+class Coverage {
+  final DateTime? coverageFrom; // 本地完整覆盖的最早时刻(null=尚未覆盖)
+  final DateTime? earliestEvent; // 全历史最早事件(null=未知/无数据)
+
+  const Coverage({this.coverageFrom, this.earliestEvent});
+
+  static const Coverage empty = Coverage();
+
+  static Coverage parse(String s) {
+    if (s.isEmpty) return empty;
+    Object? decoded;
+    try {
+      decoded = jsonDecode(s);
+    } catch (_) {
+      return empty;
+    }
+    if (decoded is Map) {
+      return Coverage(
+        coverageFrom: _unixSecToLocal(decoded['coverageFrom']),
+        earliestEvent: _unixSecToLocal(decoded['earliestEvent']),
+      );
+    }
+    return empty;
+  }
+}
+
 /// unix 秒 → 本地 DateTime(<=0 视为无,返回 null)。与 HourPoint.hour(本地)可比。
 DateTime? _unixSecToLocal(Object? v) {
   final n = (v as num?)?.toInt() ?? 0;

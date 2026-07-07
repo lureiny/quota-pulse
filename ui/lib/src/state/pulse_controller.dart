@@ -56,6 +56,14 @@ class PulseController extends ChangeNotifier {
   ChartData chartData(String instance, String dimension, int hours) =>
       ChartData.parse(_source.chartSeriesJson(instance, dimension, hours));
 
+  /// 按维度取某实例**按天**图表数据(热力图)。本地查询、便宜。
+  ChartData dailyChartData(String instance, String dimension, int days) =>
+      ChartData.parse(_source.chartDailySeriesJson(instance, dimension, days));
+
+  /// 取某实例覆盖状态(水位 + 最早事件),供热力图算补齐进度/年份列表。
+  Coverage coverageData(String instance) =>
+      Coverage.parse(_source.coverageJson(instance));
+
   /// 触发按需回填:确保本地覆盖延伸到 now-hours(异步、即时返回)。
   void ensureCoverage(String instance, int hours) =>
       _source.ensureCoverage(instance, hours);

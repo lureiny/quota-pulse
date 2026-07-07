@@ -111,6 +111,46 @@ func QP_ChartSeries(argsJSON *C.char) *C.char {
 	return C.CString(a.ChartSeriesJSON(args.Instance, args.Dimension, args.Hours))
 }
 
+// QP_ChartDailySeries 同 QP_ChartSeries,但按本地日聚合最近 days 天(供热力图)。
+// argsJSON: {"instance":"...","dimension":"account|api_key|model|user|group","days":366}
+// 返回 {series,coverageFrom,requestedFrom} 的 JSON;返回的 C 字符串由调用方用 QP_Free 释放。
+//
+//export QP_ChartDailySeries
+func QP_ChartDailySeries(argsJSON *C.char) *C.char {
+	mu.Lock()
+	a := engine
+	mu.Unlock()
+	if a == nil {
+		return C.CString(`{"series":[],"coverageFrom":0,"requestedFrom":0}`)
+	}
+	var args struct {
+		Instance  string `json:"instance"`
+		Dimension string `json:"dimension"`
+		Days      int    `json:"days"`
+	}
+	_ = json.Unmarshal([]byte(C.GoString(argsJSON)), &args)
+	return C.CString(a.ChartDailySeriesJSON(args.Instance, args.Dimension, args.Days))
+}
+
+// QP_Coverage 返回某实例的覆盖水位与全历史最早事件(供热力图判断补齐进度/年份列表)。
+// argsJSON: {"instance":"..."}
+// 返回 {coverageFrom,earliestEvent} 的 JSON;返回的 C 字符串由调用方用 QP_Free 释放。
+//
+//export QP_Coverage
+func QP_Coverage(argsJSON *C.char) *C.char {
+	mu.Lock()
+	a := engine
+	mu.Unlock()
+	if a == nil {
+		return C.CString(`{"coverageFrom":0,"earliestEvent":0}`)
+	}
+	var args struct {
+		Instance string `json:"instance"`
+	}
+	_ = json.Unmarshal([]byte(C.GoString(argsJSON)), &args)
+	return C.CString(a.CoverageJSON(args.Instance))
+}
+
 // QP_EnsureCoverage 触发按需回填:确保某实例本地覆盖延伸到 now-hours(异步、立即返回)。
 // argsJSON: {"instance":"...","hours":168}
 //

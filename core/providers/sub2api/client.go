@@ -257,6 +257,21 @@ func (p *Provider) FetchUsageWindow(ctx context.Context, from, to time.Time, pag
 	return out, complete, nil
 }
 
+// FetchEarliest 实现 provider.EarliestFetcher:一次请求(id 升序、page_size=1)取该实例
+// 全历史最早的一条事件——「拉全量历史」的硬地板/进度基准。用宽日期范围当全时段;asc 首行
+// = 全局最老(id 全序,不受日历天粒度模糊影响)。无数据时 ok=false。
+func (p *Provider) FetchEarliest(ctx context.Context) (model.UsageEvent, bool, error) {
+	endDate := time.Now().AddDate(0, 0, 1).Format("2006-01-02") // 多给一天,吸收时区边界
+	resp, err := p.fetchUsagePage(ctx, 1, 1, "asc", "2000-01-01", endDate)
+	if err != nil {
+		return model.UsageEvent{}, false, err
+	}
+	if len(resp.Items) == 0 {
+		return model.UsageEvent{}, false, nil
+	}
+	return toEvent(resp.Items[0]), true, nil
+}
+
 func idAllowSet(ids []string) map[string]struct{} {
 	if len(ids) == 0 {
 		return nil

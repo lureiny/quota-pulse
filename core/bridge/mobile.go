@@ -64,6 +64,14 @@ func (e *Engine) ChartSeries(instance, dimension string, hours int) string {
 	return e.app.ChartSeriesJSON(instance, dimension, hours)
 }
 
+// ChartDailySeries 同 ChartSeries,但按本地日聚合最近 days 天(供热力图)。
+func (e *Engine) ChartDailySeries(instance, dimension string, days int) string {
+	return e.app.ChartDailySeriesJSON(instance, dimension, days)
+}
+
+// Coverage 返回 {coverageFrom,earliestEvent} 的 JSON(供热力图判断补齐进度)。
+func (e *Engine) Coverage(instance string) string { return e.app.CoverageJSON(instance) }
+
 // EnsureCoverage 触发按需回填,确保本地覆盖延伸到 now-hours(异步)。
 func (e *Engine) EnsureCoverage(instance string, hours int) { e.app.EnsureCoverage(instance, hours) }
 

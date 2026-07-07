@@ -22,6 +22,13 @@ abstract class PulseSource {
   /// ({series,coverageFrom,requestedFrom})。本地 SQLite 查询,便宜。空串=取数异常。
   String chartSeriesJson(String instance, String dimension, int hours);
 
+  /// 同 chartSeriesJson,但按**本地日**聚合最近 days 天(供热力图)。空串=取数异常。
+  String chartDailySeriesJson(String instance, String dimension, int days);
+
+  /// 取某实例的覆盖水位与全历史最早事件 JSON({coverageFrom,earliestEvent}),
+  /// 供热力图判断补齐进度/年份列表。
+  String coverageJson(String instance);
+
   /// 触发按需回填:确保某实例本地覆盖延伸到 now-hours(异步、即时返回)。
   /// UI 在拉大跨度时调用,补齐进度由后续 chartSeriesJson 的 coverageFrom 体现。
   void ensureCoverage(String instance, int hours);

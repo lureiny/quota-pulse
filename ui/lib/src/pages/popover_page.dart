@@ -6,6 +6,7 @@ import '../models/pulse.dart';
 import '../state/pulse_controller.dart';
 import '../state/settings_store.dart';
 import '../widgets/account_tile.dart';
+import '../widgets/heatmap_chart.dart';
 import '../widgets/hourly_chart.dart';
 
 /// PopoverPage:账户列表(按实例分组 / 标签页)+ 底部操作条。
@@ -25,6 +26,8 @@ class PopoverPage extends StatefulWidget {
     this.chartType = ChartType.bar,
     this.chartGroupBy = ChartGroupBy.account,
     this.chartMetric = ChartMetric.tokens,
+    this.chartHeatmapYear,
+    this.chartHeatmapValue,
     this.onChartViewChanged,
   });
 
@@ -40,9 +43,10 @@ class PopoverPage extends StatefulWidget {
   final ChartType chartType; // 图表样式:柱状 / 曲线(主面板视图控件,即时切换)
   final ChartGroupBy chartGroupBy; // 分组维度(主面板视图控件,即时切换)
   final ChartMetric chartMetric; // 度量:token 量 / 花费($)(主面板视图控件,即时切换)
-  // 主面板「视图控件」变更(跨度/维度/样式/度量):壳持久化 + 重渲染,不重启核心。
-  final void Function(ChartGroupBy groupBy, ChartType type, ChartRange range,
-      ChartMetric metric)? onChartViewChanged;
+  final int? chartHeatmapYear; // 热力图年份(null=最近 12 个月;仅热力图样式生效)
+  final String? chartHeatmapValue; // 热力图选中维度值(null/''=全部聚合;仅热力图样式生效)
+  // 主面板「视图控件」变更(维度/样式/跨度/度量 + 热力图年份/值):壳持久化 + 重渲染,不重启核心。
+  final void Function(ChartView view)? onChartViewChanged;
 
   @override
   State<PopoverPage> createState() => _PopoverPageState();
@@ -55,6 +59,49 @@ class _PopoverPageState extends State<PopoverPage> {
   void _toggle(String instance) => setState(() {
         if (!_collapsed.remove(instance)) _collapsed.add(instance);
       });
+
+  /// 当前图表视图控件打包(改一项即 copyWith 后回调,替代多参位置调用)。
+  ChartView get _view => ChartView(
+        groupBy: widget.chartGroupBy,
+        type: widget.chartType,
+        range: widget.chartRange,
+        metric: widget.chartMetric,
+        heatmapYear: widget.chartHeatmapYear,
+        heatmapValue: widget.chartHeatmapValue,
+      );
+
+  /// 按图表样式选组件:热力图 → HeatmapChart(按天);柱/线 → HourlyChart(按小时)。
+  Widget _chartFor(String instance) {
+    if (widget.chartType == ChartType.heatmap) {
+      return HeatmapChart(
+        key: ValueKey('heatmap-$instance'),
+        instance: instance,
+        dimension: widget.chartGroupBy.dimension,
+        metric: widget.chartMetric,
+        onMetricChanged: (m) =>
+            widget.onChartViewChanged?.call(_view.copyWith(metric: m)),
+        heatmapYear: widget.chartHeatmapYear,
+        heatmapValue: widget.chartHeatmapValue,
+        onHeatmapViewChanged: (year, value) => widget.onChartViewChanged
+            ?.call(_view.copyWith(heatmapYear: year, heatmapValue: value)),
+        fetchDailyChart: widget.controller.dailyChartData,
+        ensureCoverage: widget.controller.ensureCoverage,
+        fetchCoverage: widget.controller.coverageData,
+      );
+    }
+    return HourlyChart(
+      key: ValueKey('chart-$instance'),
+      instance: instance,
+      dimension: widget.chartGroupBy.dimension,
+      rangeHours: widget.chartRange.hours,
+      chartType: widget.chartType,
+      metric: widget.chartMetric,
+      onMetricChanged: (m) =>
+          widget.onChartViewChanged?.call(_view.copyWith(metric: m)),
+      fetchChart: widget.controller.chartData,
+      ensureCoverage: widget.controller.ensureCoverage,
+    );
+  }
 
   // 系统默认浏览器打开实例后台(macOS=NSWorkspace / Windows=ShellExecute,共用 url_launcher)。
   // 收 String?:调用点的 url 经 hasUrl 守卫但 Dart 不据此提升为非空,这里统一判空。
@@ -141,18 +188,7 @@ class _PopoverPageState extends State<PopoverPage> {
               onToggleResetMode: widget.onToggleResetMode),
         ));
         if (widget.chartEnabled) {
-          children.add(HourlyChart(
-            key: ValueKey('chart-$instance'),
-            instance: instance,
-            dimension: widget.chartGroupBy.dimension,
-            rangeHours: widget.chartRange.hours,
-            chartType: widget.chartType,
-            metric: widget.chartMetric,
-            onMetricChanged: (m) => widget.onChartViewChanged
-                ?.call(widget.chartGroupBy, widget.chartType, widget.chartRange, m),
-            fetchChart: widget.controller.chartData,
-            ensureCoverage: widget.controller.ensureCoverage,
-          ));
+          children.add(_chartFor(instance));
         }
       }
     });
@@ -189,22 +225,7 @@ class _PopoverPageState extends State<PopoverPage> {
                           onRefresh: () => widget.controller.refreshAccount(p.key),
                           resetMode: widget.resetMode,
                           onToggleResetMode: widget.onToggleResetMode)),
-                      if (widget.chartEnabled)
-                        HourlyChart(
-                          key: ValueKey('chart-${e.key}'),
-                          instance: e.key,
-                          dimension: widget.chartGroupBy.dimension,
-                          rangeHours: widget.chartRange.hours,
-                          chartType: widget.chartType,
-                          metric: widget.chartMetric,
-                          onMetricChanged: (m) => widget.onChartViewChanged?.call(
-                              widget.chartGroupBy,
-                              widget.chartType,
-                              widget.chartRange,
-                              m),
-                          fetchChart: widget.controller.chartData,
-                          ensureCoverage: widget.controller.ensureCoverage,
-                        ),
+                      if (widget.chartEnabled) _chartFor(e.key),
                     ],
                   ),
               ],
@@ -314,33 +335,32 @@ class _PopoverPageState extends State<PopoverPage> {
             ],
             onChanged: (v) {
               if (v != null) {
-                widget.onChartViewChanged?.call(
-                    v, widget.chartType, widget.chartRange, widget.chartMetric);
+                widget.onChartViewChanged?.call(_view.copyWith(groupBy: v));
               }
             },
           ),
           const SizedBox(width: 10),
-          // 时间跨度(紧凑短标签,省横向空间)。
-          DropdownButton<ChartRange>(
-            value: widget.chartRange,
-            isDense: true,
-            underline: const SizedBox.shrink(),
-            items: [
-              for (final r in ChartRange.values)
-                DropdownMenuItem(
-                    value: r,
-                    child: Text(r.shortLabel,
-                        style: const TextStyle(fontSize: 12))),
-            ],
-            onChanged: (v) {
-              if (v != null) {
-                widget.onChartViewChanged?.call(
-                    widget.chartGroupBy, widget.chartType, v, widget.chartMetric);
-              }
-            },
-          ),
+          // 时间跨度(紧凑短标签,省横向空间)。热力图有自己的年份下拉,这里隐藏。
+          if (widget.chartType != ChartType.heatmap)
+            DropdownButton<ChartRange>(
+              value: widget.chartRange,
+              isDense: true,
+              underline: const SizedBox.shrink(),
+              items: [
+                for (final r in ChartRange.values)
+                  DropdownMenuItem(
+                      value: r,
+                      child: Text(r.shortLabel,
+                          style: const TextStyle(fontSize: 12))),
+              ],
+              onChanged: (v) {
+                if (v != null) {
+                  widget.onChartViewChanged?.call(_view.copyWith(range: v));
+                }
+              },
+            ),
           const Spacer(),
-          // 度量(Token / 花费)切换已挪到每张图的右上角小开关,这里只留柱/线样式。
+          // 度量切换在每张图的右上角小开关;这里留样式:柱/线/热力图。
           SegmentedButton<ChartType>(
             showSelectedIcon: false,
             style: const ButtonStyle(
@@ -352,11 +372,13 @@ class _PopoverPageState extends State<PopoverPage> {
                   value: ChartType.bar, icon: Icon(Icons.bar_chart, size: 15)),
               ButtonSegment(
                   value: ChartType.line, icon: Icon(Icons.show_chart, size: 15)),
+              ButtonSegment(
+                  value: ChartType.heatmap,
+                  icon: Icon(Icons.calendar_view_month, size: 15)),
             ],
             selected: {widget.chartType},
-            onSelectionChanged: (s) => widget.onChartViewChanged
-                ?.call(widget.chartGroupBy, s.first, widget.chartRange,
-                    widget.chartMetric),
+            onSelectionChanged: (s) =>
+                widget.onChartViewChanged?.call(_view.copyWith(type: s.first)),
           ),
         ],
       ),

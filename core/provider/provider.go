@@ -72,3 +72,10 @@ type UsageLogFetcher interface {
 	// 翻到末页、窗口抓全;false 表示被截断(只抓到较新一段,调用方把覆盖水位只推到最老抓到的事件)。
 	FetchUsageWindow(ctx context.Context, from, to time.Time, pageCap int) (events []model.UsageEvent, complete bool, err error)
 }
+
+// EarliestFetcher 是一个可选能力:一次请求(id 升序、page_size=1)取该来源全历史最早的一条
+// 事件,作为「拉全量历史」的进度基准/硬地板(热力图)。独立于 UsageLogFetcher,由 app/poller
+// 类型断言探测,不支持的 provider 不受影响。
+type EarliestFetcher interface {
+	FetchEarliest(ctx context.Context) (event model.UsageEvent, ok bool, err error)
+}

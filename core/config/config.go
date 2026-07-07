@@ -20,10 +20,15 @@ type ChartConfig struct {
 	Enabled    bool `json:"enabled"`     // 是否拉取并展示小时序列(关闭则零额外请求、不开库)
 	RangeHours int  `json:"range_hours"` // UI 读取/展示的小时窗口(UI 再按 chartRange 裁剪)
 
+	// KeepAll=true:永不淘汰,保留全部历史(热力图需要拉全量,不删)。默认 false=按
+	// RetentionHours 淘汰。为它,Backfill 的 target 不再夹保留地板、Evict 全程跳过、
+	// facade 覆盖水位不夹地板;RetentionHours 退化为「仅增量扫描下界」(见 poller.sync)。
+	KeepAll bool `json:"keep_all,omitempty"`
+
 	// 以下为采集/存储调参(一般留空走默认):
 	DBPath         string  `json:"db_path,omitempty"`          // 空=os.UserConfigDir()/quota-pulse/usage.db
 	BackfillHours  int     `json:"backfill_hours,omitempty"`   // 首拍(首次运行、本地零进度)初始化窗口(按时间抓最近这段起步数据,默认 12h);更早历史按需补齐
-	RetentionHours int     `json:"retention_hours,omitempty"`  // 本地保留窗口(默认 744=31d,给 30d 视图留边)
+	RetentionHours int     `json:"retention_hours,omitempty"`  // 保留窗口(默认 744=31d);KeepAll=true 时不淘汰,此值仅作增量扫描下界
 	SyncMinSecs    int     `json:"sync_min_secs,omitempty"`    // 每实例同步最小间隔(默认 60s)
 	PageCap        int     `json:"page_cap,omitempty"`         // 反向回填翻页上限(默认 20 页×1000 行)
 	RowBudget      int     `json:"row_budget,omitempty"`       // deprecated:三流合并后不再使用(原前向单块行预算)

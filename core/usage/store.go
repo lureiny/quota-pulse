@@ -23,7 +23,9 @@ import (
 
 // schemaVersion 升版即触发迁移。v1→v2:旧小时聚合表不兼容,重建 + 重新回填原始事件。
 // v2→v3:sync_state 增 backfilled_from(覆盖水位 W),保留既有事件、就地补列 + 播种。
-const schemaVersion = 3
+// v3→v4:usage_events 增 day_local(本地日桶,供热力图按天聚合),保留既有事件、
+// 就地补列 + 按 distinct 小时回填(镜像 hour_local 的写入侧定死)。
+const schemaVersion = 4
 
 // dimPaths 是可分组维度的白名单:维度名 → (取键的 JSON path, 取展示名的 JSON path)。
 // 既约束允许的维度,也避免把外部字符串拼进 SQL。加维度:这里加一行 + 采集侧往 dims 塞键。
@@ -84,6 +86,7 @@ CREATE TABLE IF NOT EXISTS usage_events(
   id           INTEGER NOT NULL,            -- sub2api 日志 id(增量游标 & 去重)
   created_at   INTEGER NOT NULL,            -- 精确事件时间(unix 秒)
   hour_local   INTEGER NOT NULL,            -- 本地小时桶 unix(入库按 time.Local 预算)
+  day_local    INTEGER NOT NULL DEFAULT 0,  -- 本地日桶 unix(入库按 time.Local 预算,供热力图按天聚合)
   input        INTEGER NOT NULL DEFAULT 0,
   output       INTEGER NOT NULL DEFAULT 0,
   cache_create INTEGER NOT NULL DEFAULT 0,
@@ -113,12 +116,65 @@ WHERE backfilled_from = 0`); err != nil {
 			return err
 		}
 	}
+	// v3→v4:老 usage_events 无 day_local 列 → 就地补列,并按 distinct 小时桶回填(而非逐行,
+	// 行数远大于小时数)。dayBucket 与 hourBucket 同用 time.Local,与写入侧一致、DST 正确。
+	if !s.hasColumn("usage_events", "day_local") {
+		if _, err := s.db.Exec(`ALTER TABLE usage_events ADD COLUMN day_local INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+		if err := s.backfillDayLocal(); err != nil {
+			return err
+		}
+	}
+	// day_local 此时必存在(新库建表即含;老库刚 ALTER 补上)→ 建索引(放迁移之后,避免
+	// 对存量 v3 表在补列前引用该列)。
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_events_day ON usage_events(instance, day_local)`); err != nil {
+		return err
+	}
 	if ver < schemaVersion {
-		if _, err := s.db.Exec(`PRAGMA user_version=3`); err != nil {
+		if _, err := s.db.Exec(`PRAGMA user_version=4`); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// backfillDayLocal 为存量事件补 day_local:按 distinct hour_local 计算日桶(小时数 ≪ 行数),
+// 一个事务批量 UPDATE。仅在 v3→v4 就地补列后调用一次。
+func (s *Store) backfillDayLocal() error {
+	rows, err := s.db.Query(`SELECT DISTINCT hour_local FROM usage_events WHERE day_local=0`)
+	if err != nil {
+		return err
+	}
+	var hours []int64
+	for rows.Next() {
+		var h int64
+		if err := rows.Scan(&h); err != nil {
+			rows.Close()
+			return err
+		}
+		hours = append(hours, h)
+	}
+	rows.Close()
+	if len(hours) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.Prepare(`UPDATE usage_events SET day_local=? WHERE hour_local=? AND day_local=0`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, h := range hours {
+		if _, err := stmt.Exec(dayBucket(time.Unix(h, 0)), h); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // hasColumn 报告 table 是否含某列(用于幂等迁移)。table 仅来自内部字面量,拼接安全。
@@ -186,6 +242,17 @@ func (s *Store) MaxCreatedAt(instance string) int64 {
 	return 0
 }
 
+// MinCreatedAt 返回该实例本地最早事件的 created_at(unix 秒;空实例 0)。
+// 供热力图进度/年份列表的本地兜底(无服务端最老锚点时用它)。
+func (s *Store) MinCreatedAt(instance string) int64 {
+	var t sql.NullInt64
+	_ = s.db.QueryRow(`SELECT MIN(created_at) FROM usage_events WHERE instance=?`, instance).Scan(&t)
+	if t.Valid {
+		return t.Int64
+	}
+	return 0
+}
+
 // NoteCoverage 记录覆盖水位 W:只向更早推进(取 min),稳态的近窗同步不会抬高它。
 // fromUnix<=0 视为无效(no-op)。
 func (s *Store) NoteCoverage(instance string, fromUnix int64) {
@@ -205,6 +272,12 @@ func hourBucket(t time.Time) int64 {
 	return time.Date(l.Year(), l.Month(), l.Day(), l.Hour(), 0, 0, 0, time.Local).Unix()
 }
 
+// dayBucket 把事件时间截断到本地日起点(当天 00:00)的 unix 秒。DST 安全(用 time.Local)。
+func dayBucket(t time.Time) int64 {
+	l := t.In(time.Local)
+	return time.Date(l.Year(), l.Month(), l.Day(), 0, 0, 0, 0, time.Local).Unix()
+}
+
 // AddEvents 把一批原始事件写入(INSERT OR IGNORE 以 (instance,id) 去重,故重复传入无害),
 // 并把 last_id 推进到本批最大 id。空批是 no-op。
 func (s *Store) AddEvents(instance string, evs []model.UsageEvent) error {
@@ -218,8 +291,8 @@ func (s *Store) AddEvents(instance string, evs []model.UsageEvent) error {
 	defer tx.Rollback()
 
 	stmt, err := tx.Prepare(`
-INSERT OR IGNORE INTO usage_events(instance,id,created_at,hour_local,input,output,cache_create,cache_read,cost,dims)
-VALUES(?,?,?,?,?,?,?,?,?,?)`)
+INSERT OR IGNORE INTO usage_events(instance,id,created_at,hour_local,day_local,input,output,cache_create,cache_read,cost,dims)
+VALUES(?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		return err
 	}
@@ -231,7 +304,7 @@ VALUES(?,?,?,?,?,?,?,?,?,?)`)
 			maxID = e.ID
 		}
 		dims, _ := json.Marshal(e.Dims)
-		if _, err := stmt.Exec(instance, e.ID, e.CreatedAt.Unix(), hourBucket(e.CreatedAt),
+		if _, err := stmt.Exec(instance, e.ID, e.CreatedAt.Unix(), hourBucket(e.CreatedAt), dayBucket(e.CreatedAt),
 			e.Input, e.Output, e.CacheCreate, e.CacheRead, e.Cost, string(dims)); err != nil {
 			return err
 		}
@@ -247,8 +320,20 @@ ON CONFLICT(instance) DO UPDATE SET last_id=max(last_id, excluded.last_id), upda
 }
 
 // QuerySeries 按 dimension 维度把自 sinceUnix 起的事件聚合成「每维度值一条序列」,
-// 每条序列按小时升序。dimension 不在白名单时回退 account。
+// 每条序列按**本地小时**升序。dimension 不在白名单时回退 account。
 func (s *Store) QuerySeries(instance, dimension string, sinceUnix int64) []model.Series {
+	return s.querySeriesBucket(instance, dimension, "hour_local", sinceUnix)
+}
+
+// QueryDailySeries 同 QuerySeries,但按**本地日**桶聚合(供热力图)。每条序列按天升序,
+// Point.Hour 为当天零点。
+func (s *Store) QueryDailySeries(instance, dimension string, sinceUnix int64) []model.Series {
+	return s.querySeriesBucket(instance, dimension, "day_local", sinceUnix)
+}
+
+// querySeriesBucket 是 QuerySeries/QueryDailySeries 的共同实现:按 bucketCol(hour_local /
+// day_local)分桶聚合。bucketCol 仅来自内部字面量,拼接安全;维度 JSON path 走 dimPaths 白名单。
+func (s *Store) querySeriesBucket(instance, dimension, bucketCol string, sinceUnix int64) []model.Series {
 	p, ok := dimPaths[dimension]
 	if !ok {
 		p = dimPaths["account"]
@@ -256,10 +341,10 @@ func (s *Store) QuerySeries(instance, dimension string, sinceUnix int64) []model
 	keyPath, namePath := p[0], p[1]
 
 	rows, err := s.db.Query(`
-SELECT json_extract(dims, ?) AS k, json_extract(dims, ?) AS nm, hour_local AS h,
+SELECT json_extract(dims, ?) AS k, json_extract(dims, ?) AS nm, `+bucketCol+` AS h,
        SUM(input), SUM(output), SUM(cache_create), SUM(cache_read), SUM(cost), COUNT(*)
 FROM usage_events
-WHERE instance=? AND hour_local>=?
+WHERE instance=? AND `+bucketCol+`>=?
 GROUP BY k, h
 ORDER BY k, h`, keyPath, namePath, instance, sinceUnix)
 	if err != nil {

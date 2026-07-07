@@ -13,6 +13,11 @@ import (
 	"github.com/lureiny/quota-pulse/core/usage"
 )
 
+// incrementalScanMaxHours 是增量流 FetchUsageSince 的 start_date 下界上限(有界近窗)。
+// 与保留/淘汰无关:终止靠 id-straddle,from 只收窄服务端扫描;取 744h(=31d)兜底,
+// 使 KeepAll(不淘汰)下增量扫描仍是廉价近窗、不随历史增长而拉宽。
+const incrementalScanMaxHours = 744
+
 // binding 把一个 provider 实例与它的调度器绑定。
 type binding struct {
 	prov     provider.Provider
@@ -43,6 +48,9 @@ type Poller struct {
 	guard    map[string]*instGuard // instance → 三条流的在途标记(见 instGuard)
 	lastNew  map[string]int        // instance → 上周期稳态新增行数(环比,动态定 page_size)
 
+	earliest         map[string]int64 // instance → 全历史最早事件 unix(异步填;缺键=未查过)
+	earliestFetching map[string]bool  // instance → 最早锚点查询在途(去重,防每拍重发)
+
 	mu      sync.Mutex
 	ctx     context.Context // 运行期 ctx,供手动刷新使用
 	cancel  context.CancelFunc
@@ -51,12 +59,14 @@ type Poller struct {
 
 func New(store *Store, onUpdate func([]model.AccountPulse)) *Poller {
 	return &Poller{
-		store:    store,
-		onUpdate: onUpdate,
-		maxConc:  6,
-		lastSync: make(map[string]time.Time),
-		guard:    make(map[string]*instGuard),
-		lastNew:  make(map[string]int),
+		store:            store,
+		onUpdate:         onUpdate,
+		maxConc:          6,
+		lastSync:         make(map[string]time.Time),
+		guard:            make(map[string]*instGuard),
+		lastNew:          make(map[string]int),
+		earliest:         make(map[string]int64),
+		earliestFetching: make(map[string]bool),
 	}
 }
 
@@ -159,13 +169,22 @@ func (p *Poller) sync(ctx context.Context, b binding, lf provider.UsageLogFetche
 		}
 		p.usageDB.NoteCoverage(b.instance, w)
 		p.noteSteadyCount(b.instance, len(evs))
-		p.usageDB.Evict(b.instance, evictFloor)
+		if !p.chart.KeepAll {
+			p.usageDB.Evict(b.instance, evictFloor)
+		}
 		return
 	}
 
 	// 已初始化:id 游标增量。from 仅作扫描下限,终止靠 straddle。
 	sinceID := p.usageDB.LastID(b.instance)
-	from := time.Now().Add(-time.Duration(p.chart.RetentionHours) * time.Hour)
+	// from 仅作 FetchUsageSince 的 start_date 收窄(终止靠 id-straddle,不受 from 影响),
+	// 与保留/淘汰解耦:新事件总是近期,故固定用有界近窗,不让 KeepAll(或手配大 retention)
+	// 把它拉到 epoch-old 而无谓拉宽日期过滤。更早历史归反向流B。
+	scanHours := p.chart.RetentionHours
+	if scanHours <= 0 || scanHours > incrementalScanMaxHours {
+		scanHours = incrementalScanMaxHours
+	}
+	from := time.Now().Add(-time.Duration(scanHours) * time.Hour)
 	// sinceID==0(已初始化但初始化窗口内无事件)时,若用 30d 下限 + sinceID=0 会拉全 30d 历史
 	// (越过覆盖窗口 [W,now])。收窄到 W:新事件 created_at≥now≥W 必在 [W,now] 内,不漏;
 	// 更早历史归反向流B。W>0 由初始化门槛保证。
@@ -186,7 +205,9 @@ func (p *Poller) sync(ctx context.Context, b binding, lf provider.UsageLogFetche
 		return
 	}
 	p.noteSteadyCount(b.instance, len(evs)) // 环比:本周期新增量喂给下周期的 page_size
-	p.usageDB.Evict(b.instance, evictFloor)
+	if !p.chart.KeepAll {
+		p.usageDB.Evict(b.instance, evictFloor)
+	}
 	// 增量流不动 W:W 由首拍写一次、之后仅反向流B 维护。
 }
 
@@ -247,9 +268,12 @@ func (p *Poller) Backfill(instance string, hours int) {
 
 	now := time.Now()
 	target := now.Add(-time.Duration(hours) * time.Hour)
-	// 不补保留窗口之外:再早也会被 Evict,补了白补。
-	if floor := now.Add(-time.Duration(p.chart.RetentionHours) * time.Hour); target.Before(floor) {
-		target = floor
+	// 不补保留窗口之外:再早也会被 Evict,补了白补。KeepAll(不淘汰)时不夹地板 →
+	// 反复补拉可把覆盖水位一路推到最早事件(热力图拉全量历史)。
+	if !p.chart.KeepAll {
+		if floor := now.Add(-time.Duration(p.chart.RetentionHours) * time.Hour); target.Before(floor) {
+			target = floor
+		}
 	}
 	// 已覆盖到 target 则无需补。
 	to := now
@@ -294,6 +318,61 @@ func (p *Poller) Backfill(instance string, hours int) {
 		newW = oldest.Unix() // 没抓到 target:覆盖只到最老抓到的事件
 	}
 	p.usageDB.NoteCoverage(instance, newW)
+}
+
+// EarliestAt 返回该实例全历史最早事件的 unix 秒(供热力图进度基准/年份列表)。
+// 非阻塞:命中缓存即返回;未查过则异步查一次(本次先返回 0),结果(含 0=确无数据)缓存后
+// 由后续调用读到。earliest 基本不变,缓存后不再刷新;失败不缓存、下拍重试。
+func (p *Poller) EarliestAt(instance string) int64 {
+	p.syncMu.Lock()
+	if v, ok := p.earliest[instance]; ok {
+		p.syncMu.Unlock()
+		return v
+	}
+	if p.earliestFetching[instance] {
+		p.syncMu.Unlock()
+		return 0
+	}
+	p.earliestFetching[instance] = true
+	p.syncMu.Unlock()
+	go p.fetchEarliestAsync(instance)
+	return 0
+}
+
+func (p *Poller) fetchEarliestAsync(instance string) {
+	defer func() {
+		p.syncMu.Lock()
+		p.earliestFetching[instance] = false
+		p.syncMu.Unlock()
+	}()
+
+	p.mu.Lock()
+	ctx := p.ctx
+	var ef provider.EarliestFetcher
+	for i := range p.bindings {
+		if p.bindings[i].instance == instance {
+			ef, _ = p.bindings[i].prov.(provider.EarliestFetcher)
+			break
+		}
+	}
+	p.mu.Unlock()
+	if ctx == nil || ef == nil {
+		return // 未启动或不支持:保持未查态,下次再试
+	}
+
+	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	ev, ok, err := ef.FetchEarliest(cctx)
+	cancel()
+	if err != nil {
+		return // 失败不缓存,下拍重试(earliestFetching 已复位)
+	}
+	var t int64
+	if ok {
+		t = ev.CreatedAt.Unix()
+	}
+	p.syncMu.Lock()
+	p.earliest[instance] = t // 记住结果(含 0=确无数据),不再重复查
+	p.syncMu.Unlock()
 }
 
 // AddProvider 注册一个 provider 与其调度器(须在 Start 前调用)。

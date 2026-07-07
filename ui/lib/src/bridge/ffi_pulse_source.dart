@@ -36,6 +36,19 @@ class FfiPulseSource implements PulseSource {
   }
 
   @override
+  String chartDailySeriesJson(String instance, String dimension, int days) {
+    final args = jsonEncode(
+        {'instance': instance, 'dimension': dimension, 'days': days});
+    return _core?.chartDailySeries(args) ?? '';
+  }
+
+  @override
+  String coverageJson(String instance) {
+    final args = jsonEncode({'instance': instance});
+    return _core?.coverage(args) ?? '{"coverageFrom":0,"earliestEvent":0}';
+  }
+
+  @override
   void ensureCoverage(String instance, int hours) {
     final args = jsonEncode({'instance': instance, 'hours': hours});
     _core?.ensureCoverage(args);

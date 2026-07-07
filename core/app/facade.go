@@ -164,18 +164,85 @@ func (a *App) ChartSeriesJSON(instance, dimension string, hours int) string {
 	now := time.Now()
 	reqFrom := now.Add(-time.Duration(hours) * time.Hour).Unix()
 
-	// 覆盖水位:clamp 到保留窗口下限(更早的迟早被 Evict,不算覆盖);从未同步则记 now。
+	// 覆盖水位:非 KeepAll 时 clamp 到保留窗口下限(更早的迟早被 Evict,不算覆盖);
+	// KeepAll(不淘汰)时如实上报,否则 >31d 的历史会被误标未覆盖。从未同步则记 now。
 	cov := a.usageDB.CoverageFrom(instance)
 	if cov == 0 {
 		cov = now.Unix()
-	} else if floor := now.Add(-time.Duration(a.cfg.Chart.RetentionHours) * time.Hour).Unix(); cov < floor {
-		cov = floor
+	} else if !a.cfg.Chart.KeepAll {
+		if floor := now.Add(-time.Duration(a.cfg.Chart.RetentionHours) * time.Hour).Unix(); cov < floor {
+			cov = floor
+		}
 	}
 
 	b, err := json.Marshal(chartResp{
 		Series:        a.usageDB.QuerySeries(instance, dimension, reqFrom),
 		CoverageFrom:  cov,
 		RequestedFrom: reqFrom,
+	})
+	if err != nil {
+		return empty
+	}
+	return string(b)
+}
+
+// ChartDailySeriesJSON 同 ChartSeriesJSON,但按**本地日**桶聚合最近 days 天(供 GitHub 式
+// 热力图)。reqFrom 用日对齐左界且必须是具体 days —— 绝不用 0/全时段,否则 coverageFrom<=reqFrom
+// 的「补齐完成」判据永不成立、UI 永远显示补齐中。
+func (a *App) ChartDailySeriesJSON(instance, dimension string, days int) string {
+	empty := `{"series":[],"coverageFrom":0,"requestedFrom":0}`
+	if a.usageDB == nil {
+		return empty
+	}
+	if days <= 0 {
+		days = 366
+	}
+	now := time.Now()
+	// 日对齐左界:今天零点往前 (days-1) 天(本地时区,与 store.dayBucket 一致)。
+	l := now.In(time.Local)
+	dayStart := time.Date(l.Year(), l.Month(), l.Day(), 0, 0, 0, 0, time.Local).Unix()
+	reqFrom := dayStart - int64(days-1)*86400
+
+	cov := a.usageDB.CoverageFrom(instance)
+	if cov == 0 {
+		cov = now.Unix()
+	} else if !a.cfg.Chart.KeepAll {
+		if floor := now.Add(-time.Duration(a.cfg.Chart.RetentionHours) * time.Hour).Unix(); cov < floor {
+			cov = floor
+		}
+	}
+
+	b, err := json.Marshal(chartResp{
+		Series:        a.usageDB.QueryDailySeries(instance, dimension, reqFrom),
+		CoverageFrom:  cov,
+		RequestedFrom: reqFrom,
+	})
+	if err != nil {
+		return empty
+	}
+	return string(b)
+}
+
+// coverageResp 是 CoverageJSON 的返回体:覆盖水位 + 全历史最早事件,供热力图画诚实进度与年份列表。
+type coverageResp struct {
+	CoverageFrom  int64 `json:"coverageFrom"`  // 本地完整覆盖的最早时刻(unix 秒;0=尚未覆盖)
+	EarliestEvent int64 `json:"earliestEvent"` // 全历史最早事件(unix 秒;0=未知/无数据)
+}
+
+// CoverageJSON 返回该实例的覆盖水位与全历史最早事件,供热力图判断「已补齐到哪/还差多少」。
+// earliestEvent 优先服务端最老锚点(异步缓存,未知先 0),兜底本地最早(随补拉渐早)。
+func (a *App) CoverageJSON(instance string) string {
+	empty := `{"coverageFrom":0,"earliestEvent":0}`
+	if a.usageDB == nil {
+		return empty
+	}
+	earliest := a.poll.EarliestAt(instance)
+	if earliest == 0 {
+		earliest = a.usageDB.MinCreatedAt(instance)
+	}
+	b, err := json.Marshal(coverageResp{
+		CoverageFrom:  a.usageDB.CoverageFrom(instance),
+		EarliestEvent: earliest,
 	})
 	if err != nil {
 		return empty
