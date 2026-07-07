@@ -20,7 +20,6 @@ class HeatmapChart extends StatefulWidget {
     required this.instance,
     required this.dimension,
     required this.metric,
-    required this.onMetricChanged,
     required this.heatmapYear,
     required this.heatmapValue,
     required this.onHeatmapViewChanged,
@@ -31,8 +30,7 @@ class HeatmapChart extends StatefulWidget {
 
   final String instance;
   final String dimension; // account / api_key / model / user / group
-  final ChartMetric metric;
-  final ValueChanged<ChartMetric> onMetricChanged;
+  final ChartMetric metric; // 全局配置,度量开关在全局控件条
   final int? heatmapYear; // null=最近 6 个月;否则某一整年
   final String? heatmapValue; // null/''=全部(聚合);否则某维度值(series.key)
   final void Function(int? year, String? value) onHeatmapViewChanged;
@@ -418,57 +416,14 @@ class _HeatmapChartState extends State<HeatmapChart> {
 
   // ---- 控件行:度量切换 + 年份下拉 + 值下拉 ----
 
+  // 热力图专属控件行:年份 ▾ + 值 ▾(度量是全局配置,开关在全局控件条)。
   Widget _controls(ColorScheme cs, String? effectiveValue) {
     return Row(
       children: [
-        _metricToggle(cs),
-        const SizedBox(width: 10),
         _yearDropdown(cs),
         const SizedBox(width: 8),
         Flexible(child: _valueDropdown(cs, effectiveValue)),
       ],
-    );
-  }
-
-  Widget _metricToggle(ColorScheme cs) {
-    Widget cell(String label, ChartMetric m) {
-      final on = widget.metric == m;
-      return InkWell(
-        borderRadius: BorderRadius.circular(4),
-        onTap: on ? null : () => widget.onMetricChanged(m),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-          decoration: BoxDecoration(
-            color: on ? cs.primary.withValues(alpha: 0.9) : Colors.transparent,
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Text(label,
-              style: TextStyle(
-                fontSize: 9,
-                height: 1.3,
-                color: on ? cs.onPrimary : cs.onSurfaceVariant,
-                fontWeight: on ? FontWeight.w700 : FontWeight.w400,
-              )),
-        ),
-      );
-    }
-
-    return Container(
-      decoration: BoxDecoration(
-        color: cs.surfaceContainerHighest.withValues(alpha: 0.6),
-        borderRadius: BorderRadius.circular(5),
-        border: Border.all(
-            color: cs.outlineVariant.withValues(alpha: 0.5), width: 0.6),
-      ),
-      padding: const EdgeInsets.all(1),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          cell('Tk', ChartMetric.tokens),
-          cell('\$', ChartMetric.cost),
-          cell('次', ChartMetric.count),
-        ],
-      ),
     );
   }
 

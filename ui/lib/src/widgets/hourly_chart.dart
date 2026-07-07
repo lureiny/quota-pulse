@@ -25,7 +25,6 @@ class HourlyChart extends StatefulWidget {
     required this.range,
     required this.chartType,
     required this.metric,
-    required this.onMetricChanged,
     required this.onRangeChanged,
     required this.onTypeChanged,
     required this.fetchChart,
@@ -36,8 +35,7 @@ class HourlyChart extends StatefulWidget {
   final String dimension; // account / api_key / model / user / group
   final ChartRange range; // 时间跨度(小时图专属;控件在本图块内)
   final ChartType chartType; // 柱 / 线(小时图专属;控件在本图块内)
-  final ChartMetric metric; // 度量:token 量 / 花费($)
-  final ValueChanged<ChartMetric> onMetricChanged; // 切度量(全局持久化)
+  final ChartMetric metric; // 度量:token 量 / 花费($)(全局配置,开关在全局控件条)
   final ValueChanged<ChartRange> onRangeChanged; // 切跨度
   final ValueChanged<ChartType> onTypeChanged; // 切柱/线
 
@@ -277,12 +275,10 @@ class _HourlyChartState extends State<HourlyChart> {
     );
   }
 
-  // ---- 小时图专属控件行:跨度 ▾ + 度量小开关 + 柱/线(都在本图块内,不进全局共享条)----
+  // ---- 小时图专属控件行:跨度 ▾ + 柱/线(度量是全局配置,在共享控件条)----
   Widget _controlsRow(ColorScheme cs) => Row(
         children: [
           _rangeDropdown(cs),
-          const SizedBox(width: 8),
-          _metricToggle(cs),
           const Spacer(),
           _typeToggle(cs),
         ],
@@ -319,49 +315,6 @@ class _HourlyChartState extends State<HourlyChart> {
         selected: {widget.chartType},
         onSelectionChanged: (s) => widget.onTypeChanged(s.first),
       );
-
-  // ---- 度量小开关:Tk / $ / 次 三格,点未选中的一格即切换(全局持久化)----
-  Widget _metricToggle(ColorScheme cs) {
-    Widget cell(String label, ChartMetric m) {
-      final on = widget.metric == m;
-      return InkWell(
-        borderRadius: BorderRadius.circular(4),
-        onTap: on ? null : () => widget.onMetricChanged(m),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-          decoration: BoxDecoration(
-            color: on ? cs.primary.withValues(alpha: 0.9) : Colors.transparent,
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Text(label,
-              style: TextStyle(
-                fontSize: 9,
-                height: 1.3,
-                color: on ? cs.onPrimary : cs.onSurfaceVariant,
-                fontWeight: on ? FontWeight.w700 : FontWeight.w400,
-              )),
-        ),
-      );
-    }
-
-    return Container(
-      decoration: BoxDecoration(
-        color: cs.surfaceContainerHighest.withValues(alpha: 0.6),
-        borderRadius: BorderRadius.circular(5),
-        border: Border.all(
-            color: cs.outlineVariant.withValues(alpha: 0.5), width: 0.6),
-      ),
-      padding: const EdgeInsets.all(1),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          cell('Tk', ChartMetric.tokens),
-          cell('\$', ChartMetric.cost),
-          cell('次', ChartMetric.count),
-        ],
-      ),
-    );
-  }
 
   // ---- 外壳:控件行 + 内容体(占位/图区共用,保证占位时跨度/柱线控件也在)----
   Widget _shell(ColorScheme cs, Widget body) => Padding(

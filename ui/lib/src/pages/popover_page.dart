@@ -9,6 +9,7 @@ import '../widgets/account_tile.dart';
 import '../widgets/heatmap_chart.dart';
 import '../widgets/hourly_chart.dart';
 import '../widgets/measure_size.dart';
+import '../widgets/metric_toggle.dart';
 
 /// PopoverPage:账户列表(按实例分组 / 标签页)+ 底部操作条。
 /// 分组模式下每个分组可点击折叠/展开。
@@ -82,8 +83,6 @@ class _PopoverPageState extends State<PopoverPage> {
         range: widget.chartRange,
         chartType: widget.chartType,
         metric: widget.chartMetric,
-        onMetricChanged: (m) =>
-            widget.onChartViewChanged?.call(_view.copyWith(metric: m)),
         onRangeChanged: (r) =>
             widget.onChartViewChanged?.call(_view.copyWith(range: r)),
         onTypeChanged: (t) =>
@@ -98,8 +97,6 @@ class _PopoverPageState extends State<PopoverPage> {
         instance: instance,
         dimension: widget.chartGroupBy.dimension,
         metric: widget.chartMetric,
-        onMetricChanged: (m) =>
-            widget.onChartViewChanged?.call(_view.copyWith(metric: m)),
         heatmapYear: widget.chartHeatmapYear,
         heatmapValue: widget.chartHeatmapValue,
         onHeatmapViewChanged: (year, value) => widget.onChartViewChanged
@@ -401,9 +398,16 @@ class _PopoverPageState extends State<PopoverPage> {
               }
             },
           ),
+          const SizedBox(width: 10),
+          // 度量(token/花费/次数)也是两图共享的全局配置 → 放这里,不在每张图上各放一个。
+          MetricToggle(
+            metric: widget.chartMetric,
+            onChanged: (m) =>
+                widget.onChartViewChanged?.call(_view.copyWith(metric: m)),
+          ),
           const Spacer(),
           // 跨度/样式(小时图)、年份/值(热力图)等各图专属控件都在各自图块内 —— 这里
-          // 只放两图共享的「聚合维度」,不同层级配置不混在一处。
+          // 只放两图共享的「聚合维度 + 度量」,不同层级配置不混在一处。
         ],
       ),
     );
