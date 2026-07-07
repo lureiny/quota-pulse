@@ -8,6 +8,7 @@ import '../state/settings_store.dart';
 import '../widgets/account_tile.dart';
 import '../widgets/heatmap_chart.dart';
 import '../widgets/hourly_chart.dart';
+import '../widgets/measure_size.dart';
 
 /// PopoverPage:账户列表(按实例分组 / 标签页)+ 底部操作条。
 /// 分组模式下每个分组可点击折叠/展开。
@@ -29,6 +30,7 @@ class PopoverPage extends StatefulWidget {
     this.chartHeatmapYear,
     this.chartHeatmapValue,
     this.onChartViewChanged,
+    this.onContentHeight,
   });
 
   final PulseController controller;
@@ -43,10 +45,12 @@ class PopoverPage extends StatefulWidget {
   final ChartType chartType; // 图表样式:柱状 / 曲线(主面板视图控件,即时切换)
   final ChartGroupBy chartGroupBy; // 分组维度(主面板视图控件,即时切换)
   final ChartMetric chartMetric; // 度量:token 量 / 花费($)(主面板视图控件,即时切换)
-  final int? chartHeatmapYear; // 热力图年份(null=最近 12 个月;仅热力图样式生效)
+  final int? chartHeatmapYear; // 热力图年份(null=最近 6 个月;仅热力图样式生效)
   final String? chartHeatmapValue; // 热力图选中维度值(null/''=全部聚合;仅热力图样式生效)
   // 主面板「视图控件」变更(维度/样式/跨度/度量 + 热力图年份/值):壳持久化 + 重渲染,不重启核心。
   final void Function(ChartView view)? onChartViewChanged;
+  // 内容固有高度上报(测得 body 高 + chrome);壳据此把窗口高度调到刚好容纳,超屏才滚。
+  final void Function(double contentHeight)? onContentHeight;
 
   @override
   State<PopoverPage> createState() => _PopoverPageState();
@@ -125,7 +129,18 @@ class _PopoverPageState extends State<PopoverPage> {
             widget.chartEnabled && widget.controller.pulses.isNotEmpty;
         return Column(
           children: [
-            Expanded(child: _body(context, groups)),
+            // 内容按固有高度渲染 + 测量:Flexible(loose)+滚动 → 内容 ≤ 可用高就不滚
+            // (窗口长到刚好),超过才滚。测得高经 onContentHeight 上报壳调整窗口高。
+            Flexible(
+              fit: FlexFit.loose,
+              child: SingleChildScrollView(
+                child: MeasureSize(
+                  onChange: (s) => widget.onContentHeight
+                      ?.call(s.height + _chromeHeight(showChartBar)),
+                  child: _body(context, groups),
+                ),
+              ),
+            ),
             const Divider(height: 1),
             if (showChartBar) ...[
               _chartViewBar(context),
@@ -137,6 +152,13 @@ class _PopoverPageState extends State<PopoverPage> {
       },
     );
   }
+
+  // 弹层底部固定部分(footer + 可选图表控件条 + 分隔线)高度,加到测得的 body 高上得
+  // 总内容高。常量需与 _footer / _chartViewBar 的实际行高保持一致。
+  static const double _kFooterH = 44;
+  static const double _kChartBarH = 37;
+  double _chromeHeight(bool showChartBar) =>
+      _kFooterH + 1 + (showChartBar ? _kChartBarH + 1 : 0);
 
   // ---- 分组 + 组内按使用率降序 ----
   Map<String, List<AccountPulse>> _groupByInstance(List<AccountPulse> pulses) {
@@ -192,7 +214,13 @@ class _PopoverPageState extends State<PopoverPage> {
         }
       }
     });
-    return ListView(padding: const EdgeInsets.only(top: 6, bottom: 8), children: children);
+    // 固有高度 Column(不再 ListView 内滚):滚动交给外层 SingleChildScrollView,
+    // 让窗口可按内容高自适应。
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, bottom: 8),
+      child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start, children: children),
+    );
   }
 
   Widget _tabbed(BuildContext context, Map<String, List<AccountPulse>> groups) {
@@ -200,6 +228,7 @@ class _PopoverPageState extends State<PopoverPage> {
     return DefaultTabController(
       length: entries.length,
       child: Column(
+        mainAxisSize: MainAxisSize.min, // 固有高度,供外层测量
         children: [
           Align(
             alignment: Alignment.centerLeft,
@@ -210,27 +239,39 @@ class _PopoverPageState extends State<PopoverPage> {
               tabs: [for (final e in entries) Tab(height: 36, text: e.key)],
             ),
           ),
-          Expanded(
-            child: TabBarView(
-              children: [
-                for (final e in entries)
-                  ListView(
-                    padding: const EdgeInsets.only(top: 4, bottom: 8),
-                    children: [
-                      // 标签页里 Tab 已显示名字,这里不再重复;也不提供折叠。
-                      _groupHeader(context, e.key,
-                          () => widget.controller.refreshInstance(e.key),
-                          showName: false, url: widget.instanceUrls[e.key]),
-                      ...e.value.map((p) => AccountTile(p,
-                          onRefresh: () => widget.controller.refreshAccount(p.key),
-                          resetMode: widget.resetMode,
-                          onToggleResetMode: widget.onToggleResetMode)),
-                      if (widget.chartEnabled) _chartFor(e.key),
-                    ],
-                  ),
-              ],
-            ),
-          ),
+          // IndexedStack 布局全部 tab、按**最大** tab 定高(切换不跳),只显示当前 index。
+          // 代价:失去 TabBarView 的滑动切换动画(可接受)。
+          Builder(builder: (ctx) {
+            final controller = DefaultTabController.of(ctx);
+            return AnimatedBuilder(
+              animation: controller,
+              builder: (ctx, _) => IndexedStack(
+                index: controller.index.clamp(0, entries.length - 1),
+                alignment: Alignment.topLeft,
+                children: [for (final e in entries) _tabBody(context, e)],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  // 单个 tab 的内容(固有高度 Column):组头(不重复名字/不折叠)+ 账户 + 可选图表。
+  Widget _tabBody(BuildContext context, MapEntry<String, List<AccountPulse>> e) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _groupHeader(context, e.key,
+              () => widget.controller.refreshInstance(e.key),
+              showName: false, url: widget.instanceUrls[e.key]),
+          ...e.value.map((p) => AccountTile(p,
+              onRefresh: () => widget.controller.refreshAccount(p.key),
+              resetMode: widget.resetMode,
+              onToggleResetMode: widget.onToggleResetMode)),
+          if (widget.chartEnabled) _chartFor(e.key),
         ],
       ),
     );

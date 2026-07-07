@@ -12,13 +12,16 @@ import 'package:quota_pulse_ui/quota_pulse_ui.dart';
 import 'autostart.dart'; // 开机自启动(macOS:LaunchAgent)
 import 'menu_bar.dart'; // 自定义菜单栏状态项(替代 tray_manager,支持丝滑滚动)
 
+/// 弹层固定宽(WindowOptions 与居中定位共用同一常量)。高度由内容动态自适应(见 _onContentHeight)。
+const double kPanelWidth = 460.0;
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await windowManager.ensureInitialized();
   await Window.initialize(); // flutter_acrylic
 
   final windowOptions = WindowOptions(
-    size: const Size(340, 460),
+    size: const Size(kPanelWidth, 600),
     backgroundColor: Colors.transparent, // 透出毛玻璃
     skipTaskbar: true,
     titleBarStyle: TitleBarStyle.hidden,
@@ -209,7 +212,7 @@ class _ShellState extends State<Shell> with WindowListener {
         await windowManager.setAlignment(Alignment.topRight);
         return;
       }
-      const w = 340.0; // = WindowOptions.size.width
+      const w = kPanelWidth; // = WindowOptions.size.width
       var x = icon.center.dx - w / 2;
       final y = icon.bottom + 6;
       final sw = await _screenWidth();
@@ -230,6 +233,34 @@ class _ShellState extends State<Shell> with WindowListener {
       _cachedScreenW = (await screenRetriever.getPrimaryDisplay()).size.width;
     } catch (_) {}
     return _cachedScreenW;
+  }
+
+  // ---- 弹层高度随内容自适应(顶锚向下生长,超工作区高才封顶滚动) ----
+
+  double? _cachedVisibleH;
+  double _lastPanelH = 0; // 上次 setSize 的高(防抖)
+
+  /// 工作区可用高上限(留边)。取不到时回退一个保守值。
+  Future<double> _capHeight() async {
+    if (_cachedVisibleH == null) {
+      try {
+        final d = await screenRetriever.getPrimaryDisplay();
+        _cachedVisibleH = d.visibleSize?.height ?? d.size.height;
+      } catch (_) {}
+    }
+    final vh = _cachedVisibleH ?? 900.0;
+    return (vh - 60).clamp(300.0, vh);
+  }
+
+  /// PopoverPage 上报内容固有高 → 把窗口高调到 clamp(h, 260, cap),仅列表视图生效、防抖。
+  Future<void> _onContentHeight(double h) async {
+    if (_view != _View.list) return;
+    final cap = await _capHeight();
+    final target = h.clamp(260.0, cap);
+    if ((target - _lastPanelH).abs() < 2) return;
+    _lastPanelH = target;
+    await windowManager.setSize(Size(kPanelWidth, target));
+    await _positionUnderTray();
   }
 
   Future<void> _hidePopover() async {
@@ -437,7 +468,8 @@ class _ShellState extends State<Shell> with WindowListener {
       _debugOpen = false;
       _view = _View.settings;
     });
-    await windowManager.setSize(const Size(340, 460));
+    _lastPanelH = 0; // 让回到列表后重新按内容量高
+    await windowManager.setSize(const Size(kPanelWidth, 600));
     await _positionUnderTray();
   }
 
@@ -517,6 +549,7 @@ class _ShellState extends State<Shell> with WindowListener {
       chartHeatmapYear: _settings.chartHeatmapYear,
       chartHeatmapValue: _settings.chartHeatmapValue,
       onChartViewChanged: _onChartViewChanged,
+      onContentHeight: _onContentHeight,
       onRefresh: () => _controller?.refreshNow(),
       onSettings: () => setState(() => _view = _View.settings),
     );

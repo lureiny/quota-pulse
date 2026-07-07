@@ -18,13 +18,16 @@ import 'win_ticker.dart'; // 桌面悬浮跑马灯(原生 Win32 浮层 + D2D 像
 //   · 托盘在右下角 → 弹层贴 bottomRight(macOS 是 topRight);
 //   · 无 LSUIElement/Dock 概念 → 用 skipTaskbar 隐藏任务栏按钮。
 
+/// 弹层固定宽(WindowOptions 与定位共用)。高度由内容动态自适应(见 _onContentHeight)。
+const double kPanelWidth = 460.0;
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await windowManager.ensureInitialized();
   await Window.initialize(); // flutter_acrylic
 
   final windowOptions = WindowOptions(
-    size: const Size(340, 460),
+    size: const Size(kPanelWidth, 600),
     backgroundColor: Colors.transparent, // 透出毛玻璃
     skipTaskbar: true,
     titleBarStyle: TitleBarStyle.hidden,
@@ -144,6 +147,32 @@ class _ShellState extends State<Shell>
 
   double? _screenWidth; // 主屏逻辑宽(异步查询回填);供设置页宽度滑块上限=整屏宽
 
+  // ---- 弹层高度随内容自适应(底锚向上生长,超工作区高才封顶滚动) ----
+  double? _cachedVisibleH;
+  double _lastPanelH = 0; // 上次 setSize 的高(防抖)
+
+  Future<double> _capHeight() async {
+    if (_cachedVisibleH == null) {
+      try {
+        final d = await screenRetriever.getPrimaryDisplay();
+        _cachedVisibleH = d.visibleSize?.height ?? d.size.height;
+      } catch (_) {}
+    }
+    final vh = _cachedVisibleH ?? 900.0;
+    return (vh - 60).clamp(300.0, vh);
+  }
+
+  /// PopoverPage 上报内容固有高 → 窗口高 = clamp(h, 260, cap),仅列表视图生效、防抖。
+  Future<void> _onContentHeight(double h) async {
+    if (_view != _View.list) return;
+    final cap = await _capHeight();
+    final target = h.clamp(260.0, cap);
+    if ((target - _lastPanelH).abs() < 2) return;
+    _lastPanelH = target;
+    await windowManager.setSize(Size(kPanelWidth, target));
+    await _positionNearTray();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -256,12 +285,14 @@ class _ShellState extends State<Shell>
       final size = await windowManager.getSize();
       var x = icon.center.dx - size.width / 2;
       var y = icon.top - size.height - 6; // 托盘上方留一点缝
+      var top = 6.0;
       try {
         final d = await screenRetriever.getPrimaryDisplay();
         final maxX = d.size.width - size.width - 6;
         x = x.clamp(6.0, maxX > 6 ? maxX : 6.0).toDouble();
+        top = (d.visiblePosition?.dy ?? 0) + 6; // 工作区顶(窗口变高时避免被顶出屏)
       } catch (_) {}
-      if (y < 6) y = 6.0;
+      if (y < top) y = top;
       await windowManager.setPosition(Offset(x, y));
     } catch (_) {
       await windowManager.setAlignment(Alignment.bottomRight);
@@ -344,7 +375,8 @@ class _ShellState extends State<Shell>
       _debugOpen = false;
       _view = _View.settings;
     });
-    await windowManager.setSize(const Size(340, 460));
+    _lastPanelH = 0; // 回列表后重新按内容量高
+    await windowManager.setSize(const Size(kPanelWidth, 600));
     await _positionNearTray();
   }
 
@@ -638,6 +670,7 @@ class _ShellState extends State<Shell>
       chartHeatmapYear: _settings.chartHeatmapYear,
       chartHeatmapValue: _settings.chartHeatmapValue,
       onChartViewChanged: _onChartViewChanged,
+      onContentHeight: _onContentHeight,
       onRefresh: () => _controller?.refreshNow(),
       onSettings: () => setState(() => _view = _View.settings),
     );

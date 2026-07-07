@@ -12,7 +12,7 @@ import '../state/settings_store.dart' show ChartMetric;
 /// - 数据按 `dimension` 从 core 即时聚合(本地 SQLite 原始事件 GROUP BY day_local)。
 ///   `heatmapValue` 为空=聚合(跨所有维度值求和),否则只看该维度值一条序列。
 /// - 强度随度量(token/花费/次数)着色;单色系 4 档(见 format.heatCell)。
-/// - 默认「最近 12 个月」;可下拉选某一整年。悬停格子 → 浮层显示日期 + 值。
+/// - 默认「最近 6 个月」;可下拉选某一整年。悬停格子 → 浮层显示日期 + 值。
 /// - 历史需拉全量:core 已 keep-all(不淘汰),这里按需触发补拉并显示「补齐中 %」。
 class HeatmapChart extends StatefulWidget {
   const HeatmapChart({
@@ -33,7 +33,7 @@ class HeatmapChart extends StatefulWidget {
   final String dimension; // account / api_key / model / user / group
   final ChartMetric metric;
   final ValueChanged<ChartMetric> onMetricChanged;
-  final int? heatmapYear; // null=最近 12 个月;否则某一整年
+  final int? heatmapYear; // null=最近 6 个月;否则某一整年
   final String? heatmapValue; // null/''=全部(聚合);否则某维度值(series.key)
   final void Function(int? year, String? value) onHeatmapViewChanged;
 
@@ -57,6 +57,7 @@ class _HeatmapChartState extends State<HeatmapChart> {
   static const double _cellMax = 13;
   static const double _labelW = 16; // 左侧星期标签列宽
   static const double _monthRowH = 13; // 顶部月份标签行高
+  static const int _defaultRollingMonths = 6; // 默认滚动窗口:最近 N 个月(锚定当天)
 
   ChartData _data = const ChartData();
   Coverage _coverage = Coverage.empty;
@@ -135,7 +136,7 @@ class _HeatmapChartState extends State<HeatmapChart> {
   DateTime _weekStartSunday(DateTime d) =>
       _dayOnly(d).subtract(Duration(days: d.weekday % 7));
 
-  /// 有效年份:落在 [earliest, now] 内才用,否则回退最近 12 个月(null)。
+  /// 有效年份:落在 [earliest, now] 内才用,否则回退最近 6 个月(null)。
   int? _effectiveYear() {
     final y = widget.heatmapYear;
     if (y == null) return null;
@@ -144,17 +145,19 @@ class _HeatmapChartState extends State<HeatmapChart> {
     return (y >= earliestY && y <= curY) ? y : null;
   }
 
-  /// 网格左界(周日):最近 12 个月=当前周往前 52 周;某年=该年 1/1 所在周。
+  /// 网格左界(周日):滚动默认=「N 个月前的当天」所在周(锚定当天,含当前月);
+  /// 某年=该年 1/1 所在周。
   DateTime _gridStartWeek() {
     final y = _effectiveYear();
     if (y == null) {
-      return _weekStartSunday(DateTime.now())
-          .subtract(const Duration(days: 52 * 7));
+      final t = _dayOnly(DateTime.now());
+      // month - N 由 DateTime 规范化(跨年安全);再对齐到所在周的周日。
+      return _weekStartSunday(DateTime(t.year, t.month - _defaultRollingMonths, t.day));
     }
     return _weekStartSunday(DateTime(y, 1, 1));
   }
 
-  /// 窗口右界(含):最近 12 个月=今天;某年=min(该年 12/31, 今天)。
+  /// 窗口右界(含):滚动默认=今天(精确到当天);某年=min(该年 12/31, 今天)。
   DateTime _displayEnd() {
     final y = _effectiveYear();
     final today = _dayOnly(DateTime.now());
@@ -163,7 +166,7 @@ class _HeatmapChartState extends State<HeatmapChart> {
     return yEnd.isAfter(today) ? today : yEnd;
   }
 
-  /// 窗口左界(含):最近 12 个月=网格左界;某年=该年 1/1。
+  /// 窗口左界(含):滚动默认=网格左界;某年=该年 1/1。
   DateTime _displayStart() {
     final y = _effectiveYear();
     return y == null ? _gridStartWeek() : DateTime(y, 1, 1);
@@ -482,7 +485,7 @@ class _HeatmapChartState extends State<HeatmapChart> {
         for (final y in years)
           DropdownMenuItem<int?>(
             value: y,
-            child: Text(y == null ? '最近 12 个月' : '$y 年', style: style),
+            child: Text(y == null ? '最近 6 个月' : '$y 年', style: style),
           ),
       ],
       onChanged: (y) => widget.onHeatmapViewChanged(y, widget.heatmapValue),
@@ -552,7 +555,7 @@ class _HeatmapChartState extends State<HeatmapChart> {
         Text('少', style: TextStyle(fontSize: 9, color: cs.onSurfaceVariant)),
         const SizedBox(width: 3),
         sw(heatEmptyCell(cs)),
-        for (final a in kHeatLevelAlphas) sw(cs.primary.withValues(alpha: a)),
+        for (final c in heatRamp(cs)) sw(c),
         const SizedBox(width: 3),
         Text('多', style: TextStyle(fontSize: 9, color: cs.onSurfaceVariant)),
       ],

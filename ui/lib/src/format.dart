@@ -69,14 +69,31 @@ double metricValue(HourPoint p, ChartMetric m) => switch (m) {
       ChartMetric.count => p.count.toDouble(),
     };
 
-/// 热力图强度档不透明度(空格之上的 4 档;格子与图例共用同一阶梯)。
-const List<double> kHeatLevelAlphas = [0.30, 0.52, 0.74, 1.0];
+/// 热力图 GitHub 式绿色强度阶梯(4 档,由浅到深),按明暗主题各一套 —— 固定绿色
+/// 保证浅色模式也清晰可辨(不再用浅底上的淡色 alpha)。
+const List<Color> _heatGreenLight = [
+  Color(0xFF9BE9A8),
+  Color(0xFF40C463),
+  Color(0xFF30A14E),
+  Color(0xFF216E39),
+];
+const List<Color> _heatGreenDark = [
+  Color(0xFF0E4429),
+  Color(0xFF006D32),
+  Color(0xFF26A641),
+  Color(0xFF39D353),
+];
+
+/// 当前主题的热力图 4 档绿色(格子与图例共用同一阶梯)。
+List<Color> heatRamp(ColorScheme cs) =>
+    cs.brightness == Brightness.dark ? _heatGreenDark : _heatGreenLight;
 
 /// 空格(0 值)填充色:极淡中性色,明暗主题皆可辨。
-Color heatEmptyCell(ColorScheme cs) => cs.onSurface.withValues(alpha: 0.06);
+Color heatEmptyCell(ColorScheme cs) => cs.onSurface
+    .withValues(alpha: cs.brightness == Brightness.dark ? 0.10 : 0.08);
 
-/// 热力图格子色:GitHub 式单色系强度阶梯(cs.primary 的 4 档不透明度)。
-/// value<=0 或 maxValue<=0 → 空格色。按 value/maxValue 分 4 档。
+/// 热力图格子色:GitHub 式绿色强度阶梯。value<=0 或 maxValue<=0 → 空格色;
+/// 否则按 value/maxValue 分 4 档取绿。
 Color heatCell(double value, double maxValue, ColorScheme cs) {
   if (value <= 0 || maxValue <= 0) return heatEmptyCell(cs);
   final r = (value / maxValue).clamp(0.0, 1.0);
@@ -87,7 +104,7 @@ Color heatCell(double value, double maxValue, ColorScheme cs) {
           : r <= 0.75
               ? 2
               : 3;
-  return cs.primary.withValues(alpha: kHeatLevelAlphas[i]);
+  return heatRamp(cs)[i];
 }
 
 /// 紧凑整数 → "1.2K" / "3.4M" / "1.2B"(千/百万/十亿;与 core mapper 的 humanInt 口径一致)。

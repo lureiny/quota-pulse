@@ -321,7 +321,7 @@ class ChartView {
   final ChartType type;
   final ChartRange range;
   final ChartMetric metric;
-  final int? heatmapYear; // null=最近 12 个月
+  final int? heatmapYear; // null=最近 6 个月
   final String? heatmapValue; // null/''=全部(聚合)
 
   const ChartView({
@@ -375,7 +375,7 @@ class Settings {
   final ChartType chartType; // 样式:柱状图 / 曲线图(默认柱状图;纯 UI)
   final ChartGroupBy chartGroupBy; // 分组维度:账户/api_key/模型/用户/分组(默认账户;纯 UI)
   final ChartMetric chartMetric; // 度量:token 量 / 花费(默认 token;纯 UI)
-  final int? chartHeatmapYear; // 热力图年份:null=最近 12 个月;否则某一整年(纯 UI)
+  final int? chartHeatmapYear; // 热力图年份:null=最近 6 个月;否则某一整年(纯 UI)
   final String? chartHeatmapValue; // 热力图选中的维度值:null/''=全部(聚合);否则某维度值(纯 UI)
 
   // 调试:客户端读流量采样(运行时开关,通过 FFI 控制;这里仅持久化开关与上限)。
