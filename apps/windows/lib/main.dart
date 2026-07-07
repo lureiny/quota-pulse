@@ -166,7 +166,7 @@ class _ShellState extends State<Shell>
   Future<void> _onContentHeight(double h) async {
     if (_view != _View.list) return;
     final cap = await _capHeight();
-    final target = h.clamp(260.0, cap);
+    final target = (h + 2).clamp(260.0, cap); // +2 余量防亚像素溢出误出滚动条
     if ((target - _lastPanelH).abs() < 2) return;
     _lastPanelH = target;
     await windowManager.setSize(Size(kPanelWidth, target));
@@ -667,6 +667,7 @@ class _ShellState extends State<Shell>
       chartType: _settings.chartType,
       chartGroupBy: _settings.chartGroupBy,
       chartMetric: _settings.chartMetric,
+      chartHeatmapEnabled: _settings.chartHeatmapEnabled,
       chartHeatmapYear: _settings.chartHeatmapYear,
       chartHeatmapValue: _settings.chartHeatmapValue,
       onChartViewChanged: _onChartViewChanged,

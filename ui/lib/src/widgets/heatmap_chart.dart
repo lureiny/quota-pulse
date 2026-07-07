@@ -294,7 +294,9 @@ class _HeatmapChartState extends State<HeatmapChart> {
         if (earliestDay != null && date.isBefore(earliestDay)) {
           return heatEmptyCell(cs);
         }
-        return cs.onSurface.withValues(alpha: 0.16); // 未采集/补齐中
+        // 未采集/补齐中:比空格明显更深,区分开(明暗各一档)。
+        return cs.onSurface
+            .withValues(alpha: cs.brightness == Brightness.dark ? 0.22 : 0.30);
       }
       return heatCell(byDay[date] ?? 0.0, maxV, cs);
     }

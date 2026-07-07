@@ -27,6 +27,7 @@ class PopoverPage extends StatefulWidget {
     this.chartType = ChartType.bar,
     this.chartGroupBy = ChartGroupBy.account,
     this.chartMetric = ChartMetric.tokens,
+    this.chartHeatmapEnabled = true,
     this.chartHeatmapYear,
     this.chartHeatmapValue,
     this.onChartViewChanged,
@@ -45,8 +46,9 @@ class PopoverPage extends StatefulWidget {
   final ChartType chartType; // 图表样式:柱状 / 曲线(主面板视图控件,即时切换)
   final ChartGroupBy chartGroupBy; // 分组维度(主面板视图控件,即时切换)
   final ChartMetric chartMetric; // 度量:token 量 / 花费($)(主面板视图控件,即时切换)
-  final int? chartHeatmapYear; // 热力图年份(null=最近 6 个月;仅热力图样式生效)
-  final String? chartHeatmapValue; // 热力图选中维度值(null/''=全部聚合;仅热力图样式生效)
+  final bool chartHeatmapEnabled; // 是否在小时图下方显示独立热力图块
+  final int? chartHeatmapYear; // 热力图年份(null=最近 6 个月)
+  final String? chartHeatmapValue; // 热力图选中维度值(null/''=全部聚合)
   // 主面板「视图控件」变更(维度/样式/跨度/度量 + 热力图年份/值):壳持久化 + 重渲染,不重启核心。
   final void Function(ChartView view)? onChartViewChanged;
   // 内容固有高度上报(测得 body 高 + chrome);壳据此把窗口高度调到刚好容纳,超屏才滚。
@@ -70,14 +72,27 @@ class _PopoverPageState extends State<PopoverPage> {
         type: widget.chartType,
         range: widget.chartRange,
         metric: widget.chartMetric,
+        heatmapEnabled: widget.chartHeatmapEnabled,
         heatmapYear: widget.chartHeatmapYear,
         heatmapValue: widget.chartHeatmapValue,
       );
 
-  /// 按图表样式选组件:热力图 → HeatmapChart(按天);柱/线 → HourlyChart(按小时)。
-  Widget _chartFor(String instance) {
-    if (widget.chartType == ChartType.heatmap) {
-      return HeatmapChart(
+  /// 小时图(柱/线,按 chartType)。每个实例总显示(chartEnabled 时)。
+  Widget _hourlyChartFor(String instance) => HourlyChart(
+        key: ValueKey('chart-$instance'),
+        instance: instance,
+        dimension: widget.chartGroupBy.dimension,
+        rangeHours: widget.chartRange.hours,
+        chartType: widget.chartType,
+        metric: widget.chartMetric,
+        onMetricChanged: (m) =>
+            widget.onChartViewChanged?.call(_view.copyWith(metric: m)),
+        fetchChart: widget.controller.chartData,
+        ensureCoverage: widget.controller.ensureCoverage,
+      );
+
+  /// 热力图(独立一块,按天)。仅 chartHeatmapEnabled 时在小时图下方追加。
+  Widget _heatmapChartFor(String instance) => HeatmapChart(
         key: ValueKey('heatmap-$instance'),
         instance: instance,
         dimension: widget.chartGroupBy.dimension,
@@ -92,20 +107,13 @@ class _PopoverPageState extends State<PopoverPage> {
         ensureCoverage: widget.controller.ensureCoverage,
         fetchCoverage: widget.controller.coverageData,
       );
-    }
-    return HourlyChart(
-      key: ValueKey('chart-$instance'),
-      instance: instance,
-      dimension: widget.chartGroupBy.dimension,
-      rangeHours: widget.chartRange.hours,
-      chartType: widget.chartType,
-      metric: widget.chartMetric,
-      onMetricChanged: (m) =>
-          widget.onChartViewChanged?.call(_view.copyWith(metric: m)),
-      fetchChart: widget.controller.chartData,
-      ensureCoverage: widget.controller.ensureCoverage,
-    );
-  }
+
+  /// 某实例的图表区块:小时图(总显示)+ 可选热力图(独立块)。
+  List<Widget> _chartsFor(String instance) => [
+        if (widget.chartEnabled) _hourlyChartFor(instance),
+        if (widget.chartEnabled && widget.chartHeatmapEnabled)
+          _heatmapChartFor(instance),
+      ];
 
   // 系统默认浏览器打开实例后台(macOS=NSWorkspace / Windows=ShellExecute,共用 url_launcher)。
   // 收 String?:调用点的 url 经 hasUrl 守卫但 Dart 不据此提升为非空,这里统一判空。
@@ -129,36 +137,48 @@ class _PopoverPageState extends State<PopoverPage> {
             widget.chartEnabled && widget.controller.pulses.isNotEmpty;
         return Column(
           children: [
-            // 内容按固有高度渲染 + 测量:Flexible(loose)+滚动 → 内容 ≤ 可用高就不滚
-            // (窗口长到刚好),超过才滚。测得高经 onContentHeight 上报壳调整窗口高。
+            // 内容按固有高度渲染:Flexible(loose)+滚动 → 内容 ≤ 可用高就不滚(窗口长到刚好),
+            // 超过才滚(仅 body 滚,底栏钉住)。body 与 chrome 各**实测**高度求和上报壳,
+            // 不再硬编码 chrome 高(否则窗口偏短会误出滚动条)。
             Flexible(
               fit: FlexFit.loose,
               child: SingleChildScrollView(
                 child: MeasureSize(
-                  onChange: (s) => widget.onContentHeight
-                      ?.call(s.height + _chromeHeight(showChartBar)),
+                  onChange: (s) {
+                    _bodyH = s.height;
+                    _reportHeight();
+                  },
                   child: _body(context, groups),
                 ),
               ),
             ),
-            const Divider(height: 1),
-            if (showChartBar) ...[
-              _chartViewBar(context),
-              const Divider(height: 1),
-            ],
-            _footer(context),
+            MeasureSize(
+              onChange: (s) {
+                _chromeH = s.height;
+                _reportHeight();
+              },
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Divider(height: 1),
+                  if (showChartBar) ...[
+                    _chartViewBar(context),
+                    const Divider(height: 1),
+                  ],
+                  _footer(context),
+                ],
+              ),
+            ),
           ],
         );
       },
     );
   }
 
-  // 弹层底部固定部分(footer + 可选图表控件条 + 分隔线)高度,加到测得的 body 高上得
-  // 总内容高。常量需与 _footer / _chartViewBar 的实际行高保持一致。
-  static const double _kFooterH = 44;
-  static const double _kChartBarH = 37;
-  double _chromeHeight(bool showChartBar) =>
-      _kFooterH + 1 + (showChartBar ? _kChartBarH + 1 : 0);
+  // body 与底栏(chrome)各自实测的高度;任一变化即把二者之和上报壳。
+  double _bodyH = 0;
+  double _chromeH = 0;
+  void _reportHeight() => widget.onContentHeight?.call(_bodyH + _chromeH);
 
   // ---- 分组 + 组内按使用率降序 ----
   Map<String, List<AccountPulse>> _groupByInstance(List<AccountPulse> pulses) {
@@ -209,9 +229,7 @@ class _PopoverPageState extends State<PopoverPage> {
               resetMode: widget.resetMode,
               onToggleResetMode: widget.onToggleResetMode),
         ));
-        if (widget.chartEnabled) {
-          children.add(_chartFor(instance));
-        }
+        children.addAll(_chartsFor(instance));
       }
     });
     // 固有高度 Column(不再 ListView 内滚):滚动交给外层 SingleChildScrollView,
@@ -271,7 +289,7 @@ class _PopoverPageState extends State<PopoverPage> {
               onRefresh: () => widget.controller.refreshAccount(p.key),
               resetMode: widget.resetMode,
               onToggleResetMode: widget.onToggleResetMode)),
-          if (widget.chartEnabled) _chartFor(e.key),
+          ..._chartsFor(e.key),
         ],
       ),
     );
@@ -381,27 +399,41 @@ class _PopoverPageState extends State<PopoverPage> {
             },
           ),
           const SizedBox(width: 10),
-          // 时间跨度(紧凑短标签,省横向空间)。热力图有自己的年份下拉,这里隐藏。
-          if (widget.chartType != ChartType.heatmap)
-            DropdownButton<ChartRange>(
-              value: widget.chartRange,
-              isDense: true,
-              underline: const SizedBox.shrink(),
-              items: [
-                for (final r in ChartRange.values)
-                  DropdownMenuItem(
-                      value: r,
-                      child: Text(r.shortLabel,
-                          style: const TextStyle(fontSize: 12))),
-              ],
-              onChanged: (v) {
-                if (v != null) {
-                  widget.onChartViewChanged?.call(_view.copyWith(range: v));
-                }
-              },
-            ),
+          // 时间跨度(紧凑短标签,省横向空间)。控制小时图。
+          DropdownButton<ChartRange>(
+            value: widget.chartRange,
+            isDense: true,
+            underline: const SizedBox.shrink(),
+            items: [
+              for (final r in ChartRange.values)
+                DropdownMenuItem(
+                    value: r,
+                    child: Text(r.shortLabel,
+                        style: const TextStyle(fontSize: 12))),
+            ],
+            onChanged: (v) {
+              if (v != null) {
+                widget.onChartViewChanged?.call(_view.copyWith(range: v));
+              }
+            },
+          ),
           const Spacer(),
-          // 度量切换在每张图的右上角小开关;这里留样式:柱/线/热力图。
+          // 热力图独立开关:开了在小时图下方多显示一块 GitHub 式热力图。
+          IconButton(
+            tooltip: widget.chartHeatmapEnabled ? '隐藏热力图' : '显示热力图',
+            isSelected: widget.chartHeatmapEnabled,
+            icon: Icon(Icons.calendar_view_month,
+                size: 15, color: theme.colorScheme.onSurfaceVariant),
+            selectedIcon: Icon(Icons.calendar_view_month,
+                size: 15, color: theme.colorScheme.primary),
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+            onPressed: () => widget.onChartViewChanged?.call(
+                _view.copyWith(heatmapEnabled: !widget.chartHeatmapEnabled)),
+          ),
+          const SizedBox(width: 4),
+          // 小时图样式:柱 / 线。
           SegmentedButton<ChartType>(
             showSelectedIcon: false,
             style: const ButtonStyle(
@@ -413,9 +445,6 @@ class _PopoverPageState extends State<PopoverPage> {
                   value: ChartType.bar, icon: Icon(Icons.bar_chart, size: 15)),
               ButtonSegment(
                   value: ChartType.line, icon: Icon(Icons.show_chart, size: 15)),
-              ButtonSegment(
-                  value: ChartType.heatmap,
-                  icon: Icon(Icons.calendar_view_month, size: 15)),
             ],
             selected: {widget.chartType},
             onSelectionChanged: (s) =>

@@ -88,9 +88,9 @@ const List<Color> _heatGreenDark = [
 List<Color> heatRamp(ColorScheme cs) =>
     cs.brightness == Brightness.dark ? _heatGreenDark : _heatGreenLight;
 
-/// 空格(0 值)填充色:极淡中性色,明暗主题皆可辨。
+/// 空格(0 值)填充色:中性灰,浅色模式下也要清晰可辨(别太淡看不清格子)。
 Color heatEmptyCell(ColorScheme cs) => cs.onSurface
-    .withValues(alpha: cs.brightness == Brightness.dark ? 0.10 : 0.08);
+    .withValues(alpha: cs.brightness == Brightness.dark ? 0.11 : 0.16);
 
 /// 热力图格子色:GitHub 式绿色强度阶梯。value<=0 或 maxValue<=0 → 空格色;
 /// 否则按 value/maxValue 分 4 档取绿。
