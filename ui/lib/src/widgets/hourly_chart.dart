@@ -5,7 +5,8 @@ import 'package:flutter/material.dart';
 
 import '../format.dart';
 import '../models/pulse.dart';
-import '../state/settings_store.dart' show ChartType, ChartMetric, ChartRange;
+import '../state/settings_store.dart'
+    show ChartType, ChartMetric, ChartRange, ChartRangeX;
 
 /// HourlyChart:某站点(实例)的小时级 token 用量图(柱状 / 曲线可切换)。
 ///
