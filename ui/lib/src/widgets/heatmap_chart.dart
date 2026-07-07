@@ -328,6 +328,7 @@ class _HeatmapChartState extends State<HeatmapChart> {
             decoration: BoxDecoration(
               color: colorFor(date),
               borderRadius: BorderRadius.circular(2),
+              border: Border.all(color: heatCellBorder(cs), width: 0.5),
             ),
           ),
         ),
@@ -503,8 +504,10 @@ class _HeatmapChartState extends State<HeatmapChart> {
           width: 9,
           height: 9,
           margin: const EdgeInsets.symmetric(horizontal: 1),
-          decoration:
-              BoxDecoration(color: c, borderRadius: BorderRadius.circular(2)),
+          decoration: BoxDecoration(
+              color: c,
+              borderRadius: BorderRadius.circular(2),
+              border: Border.all(color: heatCellBorder(cs), width: 0.5)),
         );
     return Row(
       mainAxisSize: MainAxisSize.min,

@@ -88,9 +88,18 @@ const List<Color> _heatGreenDark = [
 List<Color> heatRamp(ColorScheme cs) =>
     cs.brightness == Brightness.dark ? _heatGreenDark : _heatGreenLight;
 
-/// 空格(0 值)填充色:中性灰,浅色模式下也要清晰可辨(别太淡看不清格子)。
-Color heatEmptyCell(ColorScheme cs) => cs.onSurface
-    .withValues(alpha: cs.brightness == Brightness.dark ? 0.11 : 0.16);
+/// 空格(0 值)填充色:GitHub 的「无贡献」底色。**必须比最低档绿(heatRamp[0])
+/// 更不显眼** —— 浅色比 level1 更浅、深色比 level1 更深 —— 否则 0→低 这一段的强度
+/// 递进会反向(空格看着比低值格更「满」)。可见性交给格子描边(见 heatCellBorder),
+/// 不靠把空格调深来实现。
+Color heatEmptyCell(ColorScheme cs) => cs.brightness == Brightness.dark
+    ? const Color(0xFF161B22)
+    : const Color(0xFFEBEDF0);
+
+/// 每个格子的极淡描边:让最浅的空格也能看清轮廓(GitHub 同款做法),从而无需把
+/// 空格底色调深就能可见,保持 0→低→高 的单调递进。
+Color heatCellBorder(ColorScheme cs) => cs.onSurface
+    .withValues(alpha: cs.brightness == Brightness.dark ? 0.10 : 0.06);
 
 /// 热力图格子色:GitHub 式绿色强度阶梯。value<=0 或 maxValue<=0 → 空格色;
 /// 否则按 value/maxValue 分 4 档取绿。
