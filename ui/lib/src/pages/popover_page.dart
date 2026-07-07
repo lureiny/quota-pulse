@@ -27,7 +27,6 @@ class PopoverPage extends StatefulWidget {
     this.chartType = ChartType.bar,
     this.chartGroupBy = ChartGroupBy.account,
     this.chartMetric = ChartMetric.tokens,
-    this.chartHeatmapEnabled = true,
     this.chartHeatmapYear,
     this.chartHeatmapValue,
     this.onChartViewChanged,
@@ -46,7 +45,6 @@ class PopoverPage extends StatefulWidget {
   final ChartType chartType; // 图表样式:柱状 / 曲线(主面板视图控件,即时切换)
   final ChartGroupBy chartGroupBy; // 分组维度(主面板视图控件,即时切换)
   final ChartMetric chartMetric; // 度量:token 量 / 花费($)(主面板视图控件,即时切换)
-  final bool chartHeatmapEnabled; // 是否在小时图下方显示独立热力图块
   final int? chartHeatmapYear; // 热力图年份(null=最近 6 个月)
   final String? chartHeatmapValue; // 热力图选中维度值(null/''=全部聚合)
   // 主面板「视图控件」变更(维度/样式/跨度/度量 + 热力图年份/值):壳持久化 + 重渲染,不重启核心。
@@ -72,7 +70,6 @@ class _PopoverPageState extends State<PopoverPage> {
         type: widget.chartType,
         range: widget.chartRange,
         metric: widget.chartMetric,
-        heatmapEnabled: widget.chartHeatmapEnabled,
         heatmapYear: widget.chartHeatmapYear,
         heatmapValue: widget.chartHeatmapValue,
       );
@@ -82,16 +79,20 @@ class _PopoverPageState extends State<PopoverPage> {
         key: ValueKey('chart-$instance'),
         instance: instance,
         dimension: widget.chartGroupBy.dimension,
-        rangeHours: widget.chartRange.hours,
+        range: widget.chartRange,
         chartType: widget.chartType,
         metric: widget.chartMetric,
         onMetricChanged: (m) =>
             widget.onChartViewChanged?.call(_view.copyWith(metric: m)),
+        onRangeChanged: (r) =>
+            widget.onChartViewChanged?.call(_view.copyWith(range: r)),
+        onTypeChanged: (t) =>
+            widget.onChartViewChanged?.call(_view.copyWith(type: t)),
         fetchChart: widget.controller.chartData,
         ensureCoverage: widget.controller.ensureCoverage,
       );
 
-  /// 热力图(独立一块,按天)。仅 chartHeatmapEnabled 时在小时图下方追加。
+  /// 热力图(独立一块,按天)。在小时图下方追加(与小时图同时显示)。
   Widget _heatmapChartFor(String instance) => HeatmapChart(
         key: ValueKey('heatmap-$instance'),
         instance: instance,
@@ -108,11 +109,12 @@ class _PopoverPageState extends State<PopoverPage> {
         fetchCoverage: widget.controller.coverageData,
       );
 
-  /// 某实例的图表区块:小时图(总显示)+ 可选热力图(独立块)。
+  /// 某实例的图表区块:小时图 + 热力图(两块都显示,各带各的控件)。
   List<Widget> _chartsFor(String instance) => [
-        if (widget.chartEnabled) _hourlyChartFor(instance),
-        if (widget.chartEnabled && widget.chartHeatmapEnabled)
+        if (widget.chartEnabled) ...[
+          _hourlyChartFor(instance),
           _heatmapChartFor(instance),
+        ],
       ];
 
   // 系统默认浏览器打开实例后台(macOS=NSWorkspace / Windows=ShellExecute,共用 url_launcher)。
@@ -370,8 +372,9 @@ class _PopoverPageState extends State<PopoverPage> {
     return InkWell(onTap: onToggle, child: row);
   }
 
-  // 主面板「用量图表」视图控件:全局一处(底栏上方独立细条),控制所有实例的
-  // 时间跨度 + 分组维度 + 柱/线样式。即时切换、持久化(由壳保存),不重启核心、不刷新用量。
+  // 主面板「用量图表」共享控件:全局一处(底栏上方独立细条),只放两图**共享**的
+  // 聚合维度(控制小时图 + 热力图的归类)。各图专属控件(小时图的跨度/柱线、热力图的
+  // 年份/值)在各自图块内。即时切换、持久化,不重启核心、不刷新用量。
   Widget _chartViewBar(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
@@ -398,58 +401,9 @@ class _PopoverPageState extends State<PopoverPage> {
               }
             },
           ),
-          const SizedBox(width: 10),
-          // 时间跨度(紧凑短标签,省横向空间)。控制小时图。
-          DropdownButton<ChartRange>(
-            value: widget.chartRange,
-            isDense: true,
-            underline: const SizedBox.shrink(),
-            items: [
-              for (final r in ChartRange.values)
-                DropdownMenuItem(
-                    value: r,
-                    child: Text(r.shortLabel,
-                        style: const TextStyle(fontSize: 12))),
-            ],
-            onChanged: (v) {
-              if (v != null) {
-                widget.onChartViewChanged?.call(_view.copyWith(range: v));
-              }
-            },
-          ),
           const Spacer(),
-          // 热力图独立开关:开了在小时图下方多显示一块 GitHub 式热力图。
-          IconButton(
-            tooltip: widget.chartHeatmapEnabled ? '隐藏热力图' : '显示热力图',
-            isSelected: widget.chartHeatmapEnabled,
-            icon: Icon(Icons.calendar_view_month,
-                size: 15, color: theme.colorScheme.onSurfaceVariant),
-            selectedIcon: Icon(Icons.calendar_view_month,
-                size: 15, color: theme.colorScheme.primary),
-            visualDensity: VisualDensity.compact,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
-            onPressed: () => widget.onChartViewChanged?.call(
-                _view.copyWith(heatmapEnabled: !widget.chartHeatmapEnabled)),
-          ),
-          const SizedBox(width: 4),
-          // 小时图样式:柱 / 线。
-          SegmentedButton<ChartType>(
-            showSelectedIcon: false,
-            style: const ButtonStyle(
-              visualDensity: VisualDensity.compact,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-            segments: const [
-              ButtonSegment(
-                  value: ChartType.bar, icon: Icon(Icons.bar_chart, size: 15)),
-              ButtonSegment(
-                  value: ChartType.line, icon: Icon(Icons.show_chart, size: 15)),
-            ],
-            selected: {widget.chartType},
-            onSelectionChanged: (s) =>
-                widget.onChartViewChanged?.call(_view.copyWith(type: s.first)),
-          ),
+          // 跨度/样式(小时图)、年份/值(热力图)等各图专属控件都在各自图块内 —— 这里
+          // 只放两图共享的「聚合维度」,不同层级配置不混在一处。
         ],
       ),
     );

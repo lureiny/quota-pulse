@@ -667,7 +667,6 @@ class _ShellState extends State<Shell>
       chartType: _settings.chartType,
       chartGroupBy: _settings.chartGroupBy,
       chartMetric: _settings.chartMetric,
-      chartHeatmapEnabled: _settings.chartHeatmapEnabled,
       chartHeatmapYear: _settings.chartHeatmapYear,
       chartHeatmapValue: _settings.chartHeatmapValue,
       onChartViewChanged: _onChartViewChanged,

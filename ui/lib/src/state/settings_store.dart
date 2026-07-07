@@ -97,8 +97,7 @@ extension ChartRangeX on ChartRange {
 /// 这样改 chartRange 不改 toConfigJson → 不重启核心、不刷新全部用量(见 #4)。
 const int kChartFetchHours = 168;
 
-/// 图表样式:堆叠柱状图 / 多系列曲线图。(热力图是独立一块,由 chartHeatmapEnabled 单独控制,
-/// 不再是样式之一。)
+/// 图表样式:堆叠柱状图 / 多系列曲线图。(热力图是独立一块、总显示,不是样式之一。)
 enum ChartType { bar, line }
 
 extension ChartTypeX on ChartType {
@@ -321,7 +320,6 @@ class ChartView {
   final ChartType type;
   final ChartRange range;
   final ChartMetric metric;
-  final bool heatmapEnabled; // 是否显示独立的热力图块
   final int? heatmapYear; // null=最近 6 个月
   final String? heatmapValue; // null/''=全部(聚合)
 
@@ -330,7 +328,6 @@ class ChartView {
     required this.type,
     required this.range,
     required this.metric,
-    required this.heatmapEnabled,
     this.heatmapYear,
     this.heatmapValue,
   });
@@ -340,7 +337,6 @@ class ChartView {
     ChartType? type,
     ChartRange? range,
     ChartMetric? metric,
-    bool? heatmapEnabled,
     Object? heatmapYear = _kNoChange,
     Object? heatmapValue = _kNoChange,
   }) =>
@@ -349,7 +345,6 @@ class ChartView {
         type: type ?? this.type,
         range: range ?? this.range,
         metric: metric ?? this.metric,
-        heatmapEnabled: heatmapEnabled ?? this.heatmapEnabled,
         heatmapYear:
             heatmapYear == _kNoChange ? this.heatmapYear : heatmapYear as int?,
         heatmapValue: heatmapValue == _kNoChange
@@ -379,7 +374,6 @@ class Settings {
   final ChartType chartType; // 样式:柱状图 / 曲线图(默认柱状图;纯 UI)
   final ChartGroupBy chartGroupBy; // 分组维度:账户/api_key/模型/用户/分组(默认账户;纯 UI)
   final ChartMetric chartMetric; // 度量:token 量 / 花费(默认 token;纯 UI)
-  final bool chartHeatmapEnabled; // 是否在小时图下方显示独立热力图块(默认显示;纯 UI)
   final int? chartHeatmapYear; // 热力图年份:null=最近 6 个月;否则某一整年(纯 UI)
   final String? chartHeatmapValue; // 热力图选中的维度值:null/''=全部(聚合);否则某维度值(纯 UI)
 
@@ -406,7 +400,6 @@ class Settings {
     this.chartType = ChartType.bar,
     this.chartGroupBy = ChartGroupBy.account,
     this.chartMetric = ChartMetric.tokens,
-    this.chartHeatmapEnabled = true,
     this.chartHeatmapYear,
     this.chartHeatmapValue,
     this.debugSampling = false,
@@ -423,7 +416,6 @@ class Settings {
         type: chartType,
         range: chartRange,
         metric: chartMetric,
-        heatmapEnabled: chartHeatmapEnabled,
         heatmapYear: chartHeatmapYear,
         heatmapValue: chartHeatmapValue,
       );
@@ -434,7 +426,6 @@ class Settings {
         chartType: v.type,
         chartRange: v.range,
         chartMetric: v.metric,
-        chartHeatmapEnabled: v.heatmapEnabled,
         chartHeatmapYear: v.heatmapYear,
         chartHeatmapValue: v.heatmapValue,
       );
@@ -457,7 +448,6 @@ class Settings {
     ChartType? chartType,
     ChartGroupBy? chartGroupBy,
     ChartMetric? chartMetric,
-    bool? chartHeatmapEnabled,
     // 可空热力图字段用哨兵区分「不改」与「显式置 null」(copyWith 的经典难点)。
     Object? chartHeatmapYear = _kNoChange,
     Object? chartHeatmapValue = _kNoChange,
@@ -483,7 +473,6 @@ class Settings {
         chartType: chartType ?? this.chartType,
         chartGroupBy: chartGroupBy ?? this.chartGroupBy,
         chartMetric: chartMetric ?? this.chartMetric,
-        chartHeatmapEnabled: chartHeatmapEnabled ?? this.chartHeatmapEnabled,
         chartHeatmapYear: chartHeatmapYear == _kNoChange
             ? this.chartHeatmapYear
             : chartHeatmapYear as int?,
@@ -579,7 +568,6 @@ class Settings {
         'chart_type': chartType.name,
         'chart_group_by': chartGroupBy.name,
         'chart_metric': chartMetric.name,
-        'chart_heatmap_enabled': chartHeatmapEnabled,
         if (chartHeatmapYear != null) 'chart_heatmap_year': chartHeatmapYear,
         if (chartHeatmapValue != null && chartHeatmapValue!.isNotEmpty)
           'chart_heatmap_value': chartHeatmapValue,
@@ -633,7 +621,6 @@ class Settings {
           (m) => m.name == j['chart_metric'],
           orElse: () => ChartMetric.tokens,
         ),
-        chartHeatmapEnabled: j['chart_heatmap_enabled'] as bool? ?? true,
         chartHeatmapYear: (j['chart_heatmap_year'] as num?)?.toInt(),
         chartHeatmapValue: j['chart_heatmap_value'] as String?,
         debugSampling: j['debug_sampling'] as bool? ?? false,

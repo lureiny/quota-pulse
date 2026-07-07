@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../format.dart';
 import '../models/pulse.dart';
-import '../state/settings_store.dart' show ChartType, ChartMetric;
+import '../state/settings_store.dart' show ChartType, ChartMetric, ChartRange;
 
 /// HourlyChart:某站点(实例)的小时级 token 用量图(柱状 / 曲线可切换)。
 ///
@@ -21,20 +21,24 @@ class HourlyChart extends StatefulWidget {
     super.key,
     required this.instance,
     required this.dimension,
-    required this.rangeHours,
+    required this.range,
     required this.chartType,
     required this.metric,
     required this.onMetricChanged,
+    required this.onRangeChanged,
+    required this.onTypeChanged,
     required this.fetchChart,
     required this.ensureCoverage,
   });
 
   final String instance;
   final String dimension; // account / api_key / model / user / group
-  final int rangeHours;
-  final ChartType chartType;
+  final ChartRange range; // 时间跨度(小时图专属;控件在本图块内)
+  final ChartType chartType; // 柱 / 线(小时图专属;控件在本图块内)
   final ChartMetric metric; // 度量:token 量 / 花费($)
-  final ValueChanged<ChartMetric> onMetricChanged; // 图右上角小开关切度量(全局持久化)
+  final ValueChanged<ChartMetric> onMetricChanged; // 切度量(全局持久化)
+  final ValueChanged<ChartRange> onRangeChanged; // 切跨度
+  final ValueChanged<ChartType> onTypeChanged; // 切柱/线
 
   /// (instance, dimension, hours) → ChartData(本地查询,便宜)。
   final ChartData Function(String instance, String dimension, int hours)
@@ -77,7 +81,7 @@ class _HourlyChartState extends State<HourlyChart> {
     if (dimOrInst) {
       _hidden.clear(); // 维度/实例变 → 系列键变,清隐藏集
     }
-    if (dimOrInst || old.rangeHours != widget.rangeHours) {
+    if (dimOrInst || old.range != widget.range) {
       _backfillStarted = null; // 新跨度 → 重置「补齐中」短时态
       _refresh();
     }
@@ -92,7 +96,7 @@ class _HourlyChartState extends State<HourlyChart> {
   ChartData _load() {
     try {
       return widget.fetchChart(
-          widget.instance, widget.dimension, widget.rangeHours);
+          widget.instance, widget.dimension, widget.range.hours);
     } catch (_) {
       return ChartData.failed;
     }
@@ -109,7 +113,7 @@ class _HourlyChartState extends State<HourlyChart> {
   void _maybeBackfill() {
     if (_data.ok && !_data.fullyCovered) {
       _backfillStarted ??= DateTime.now();
-      widget.ensureCoverage(widget.instance, widget.rangeHours);
+      widget.ensureCoverage(widget.instance, widget.range.hours);
     } else {
       _backfillStarted = null;
     }
@@ -164,20 +168,25 @@ class _HourlyChartState extends State<HourlyChart> {
 
     // 取数/解析异常:明确区别于「真无数据」,可点按重试。
     if (!_data.ok) {
-      return _placeholder(cs,
-          icon: Icons.error_outline,
-          text: '数据获取异常,点按重试',
-          onTap: _refresh);
+      return _shell(
+          cs,
+          _placeholder(cs,
+              icon: Icons.error_outline,
+              text: '数据获取异常,点按重试',
+              onTap: _refresh));
     }
 
     final allSeries = _data.series;
     if (allSeries.isEmpty) {
       // 空:已覆盖整段 = 真没有请求;未覆盖 = 本地还没采到这么早,正在补齐。
       if (_data.fullyCovered) {
-        return _placeholder(cs,
-            icon: Icons.inbox_outlined, text: '该维度在所选区间暂无请求');
+        return _shell(
+            cs,
+            _placeholder(cs,
+                icon: Icons.inbox_outlined, text: '该维度在所选区间暂无请求'));
       }
-      return _placeholder(cs, text: '本地尚未采集到该区间,正在补齐…', spinner: true);
+      return _shell(cs,
+          _placeholder(cs, text: '本地尚未采集到该区间,正在补齐…', spinner: true));
     }
 
     // 稳定着色:按系列 key 排序 → 索引 → 颜色(对全部系列固定,隐藏不改色)。
@@ -194,7 +203,7 @@ class _HourlyChartState extends State<HourlyChart> {
 
     final now = DateTime.now();
     final nowHour = DateTime(now.year, now.month, now.day, now.hour);
-    final windowStart = nowHour.subtract(Duration(hours: widget.rangeHours - 1));
+    final windowStart = nowHour.subtract(Duration(hours: widget.range.hours - 1));
 
     // 图例汇总:各系列在所选区间内的当前度量合计(随度量 token/花费/次 切换)。
     final totalOf = <String, double>{
@@ -211,6 +220,8 @@ class _HourlyChartState extends State<HourlyChart> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          _controlsRow(cs), // 小时图专属:跨度 + 度量 + 柱/线(都在本图块内)
+          const SizedBox(height: 4),
           SizedBox(
             height: _areaHeight,
             child: LayoutBuilder(
@@ -218,8 +229,8 @@ class _HourlyChartState extends State<HourlyChart> {
                 // 按可用宽度定桶:容纳不下逐小时就按整数小时合并(降精度不丢准确度)。
                 final maxBars = (c.maxWidth / _minSlot)
                     .floor()
-                    .clamp(1, widget.rangeHours);
-                final bucketHours = (widget.rangeHours / maxBars).ceil();
+                    .clamp(1, widget.range.hours);
+                final bucketHours = (widget.range.hours / maxBars).ceil();
                 final slots =
                     _buildSlots(visible, windowStart, nowHour, bucketHours);
 
@@ -253,8 +264,6 @@ class _HourlyChartState extends State<HourlyChart> {
                     chart,
                     if (uncoveredFrac > 0)
                       _uncoveredBand(c.maxWidth, uncoveredFrac, fresh, cs),
-                    // 度量切换:小开关叠在图右上角(不占控件条),点选 token / 花费 / 请求次数。
-                    Positioned(top: 0, right: 0, child: _metricToggle(cs)),
                   ],
                 );
               },
@@ -267,7 +276,50 @@ class _HourlyChartState extends State<HourlyChart> {
     );
   }
 
-  // ---- 度量小开关(图右上角):Tk / $ / 次 三格,点未选中的一格即切换(全局持久化)----
+  // ---- 小时图专属控件行:跨度 ▾ + 度量小开关 + 柱/线(都在本图块内,不进全局共享条)----
+  Widget _controlsRow(ColorScheme cs) => Row(
+        children: [
+          _rangeDropdown(cs),
+          const SizedBox(width: 8),
+          _metricToggle(cs),
+          const Spacer(),
+          _typeToggle(cs),
+        ],
+      );
+
+  Widget _rangeDropdown(ColorScheme cs) => DropdownButton<ChartRange>(
+        value: widget.range,
+        isDense: true,
+        underline: const SizedBox.shrink(),
+        items: [
+          for (final r in ChartRange.values)
+            DropdownMenuItem(
+                value: r,
+                child:
+                    Text(r.shortLabel, style: const TextStyle(fontSize: 11))),
+        ],
+        onChanged: (v) {
+          if (v != null) widget.onRangeChanged(v);
+        },
+      );
+
+  Widget _typeToggle(ColorScheme cs) => SegmentedButton<ChartType>(
+        showSelectedIcon: false,
+        style: const ButtonStyle(
+          visualDensity: VisualDensity.compact,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        segments: const [
+          ButtonSegment(
+              value: ChartType.bar, icon: Icon(Icons.bar_chart, size: 14)),
+          ButtonSegment(
+              value: ChartType.line, icon: Icon(Icons.show_chart, size: 14)),
+        ],
+        selected: {widget.chartType},
+        onSelectionChanged: (s) => widget.onTypeChanged(s.first),
+      );
+
+  // ---- 度量小开关:Tk / $ / 次 三格,点未选中的一格即切换(全局持久化)----
   Widget _metricToggle(ColorScheme cs) {
     Widget cell(String label, ChartMetric m) {
       final on = widget.metric == m;
@@ -310,7 +362,16 @@ class _HourlyChartState extends State<HourlyChart> {
     );
   }
 
-  // ---- 占位(异常 / 空 / 补齐中) ----
+  // ---- 外壳:控件行 + 内容体(占位/图区共用,保证占位时跨度/柱线控件也在)----
+  Widget _shell(ColorScheme cs, Widget body) => Padding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [_controlsRow(cs), const SizedBox(height: 4), body],
+        ),
+      );
+
+  // ---- 占位体(异常 / 空 / 补齐中);外层由 _shell 套控件行 ----
   Widget _placeholder(ColorScheme cs,
       {IconData? icon, required String text, VoidCallback? onTap, bool spinner = false}) {
     final row = Row(
@@ -325,15 +386,12 @@ class _HourlyChartState extends State<HourlyChart> {
         Text(text, style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant)),
       ],
     );
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
-      child: SizedBox(
-        height: _areaHeight,
-        child: Center(
-          child: onTap == null
-              ? row
-              : InkWell(borderRadius: BorderRadius.circular(6), onTap: onTap, child: Padding(padding: const EdgeInsets.all(6), child: row)),
-        ),
+    return SizedBox(
+      height: _areaHeight,
+      child: Center(
+        child: onTap == null
+            ? row
+            : InkWell(borderRadius: BorderRadius.circular(6), onTap: onTap, child: Padding(padding: const EdgeInsets.all(6), child: row)),
       ),
     );
   }
