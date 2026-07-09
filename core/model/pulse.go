@@ -29,4 +29,8 @@ type AccountPulse struct {
 	UpdatedAt time.Time `json:"updated_at"`           //
 	Error     string    `json:"error,omitempty"`      //
 	ActionURL string    `json:"action_url,omitempty"` // 如验证/申诉链接(仅展示,不执行)
+
+	// State 是账户的「管理状态」(429 限流 / 529 过载 / 暂停 / 停用 …),镜像上游后台的状态列。
+	// 与 Status 正交:Status 讲窗口用量,State 讲调度状态。provider 不支持则为 nil。
+	State *AccountState `json:"state,omitempty"`
 }

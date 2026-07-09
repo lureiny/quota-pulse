@@ -14,6 +14,66 @@ PulseStatus parseStatus(String? s) => switch (s) {
       _ => PulseStatus.unknown,
     };
 
+/// 状态严重度(与 core/model.Severity 对应),UI 据此上色。
+enum StateSeverity { ok, warning, danger, neutral }
+
+StateSeverity parseSeverity(String? s) => switch (s) {
+      'ok' => StateSeverity.ok,
+      'warning' => StateSeverity.warning,
+      'danger' => StateSeverity.danger,
+      _ => StateSeverity.neutral,
+    };
+
+/// ModelState 是单个模型/scope 的限流态(与 core/model.ModelState 对应)。
+class ModelState {
+  final String model; // 模型/scope 键(展示时做短名别名)
+  final String kind; // rate_limit / credits_exhausted / credits_active
+  final DateTime? resetsAt;
+
+  ModelState({required this.model, required this.kind, this.resetsAt});
+
+  factory ModelState.fromJson(Map<String, dynamic> j) => ModelState(
+        model: j['model'] as String? ?? '',
+        kind: j['kind'] as String? ?? '',
+        resetsAt: j['resets_at'] != null
+            ? DateTime.tryParse(j['resets_at'] as String)
+            : null,
+      );
+}
+
+/// AccountState 是账户「管理状态」(与 core/model.AccountState 对应),
+/// 镜像 sub2api 网页「账户管理→状态」列。code 取值见 core/model 的 State* 常量。
+class AccountState {
+  final String code; // ok/rate_limited/overloaded/temp_unschedulable/error/quota_exceeded/paused/inactive/unknown
+  final StateSeverity severity;
+  final DateTime? resetsAt; // 429/529/临时不可调度的解除时刻 → 倒计时
+  final String reason; // tooltip:error_message / temp_unschedulable_reason
+  final List<ModelState> models; // 模型级限流徽章
+
+  AccountState({
+    required this.code,
+    required this.severity,
+    this.resetsAt,
+    this.reason = '',
+    this.models = const [],
+  });
+
+  /// 主状态是否「正常」(此时 UI 可只保留状态点、不额外画徽章,避免每行都挂「正常」)。
+  bool get isOk => code.isEmpty || code == 'ok';
+
+  factory AccountState.fromJson(Map<String, dynamic> j) => AccountState(
+        code: j['code'] as String? ?? '',
+        severity: parseSeverity(j['severity'] as String?),
+        resetsAt: j['resets_at'] != null
+            ? DateTime.tryParse(j['resets_at'] as String)
+            : null,
+        reason: j['reason'] as String? ?? '',
+        models: ((j['models'] as List?) ?? const [])
+            .map((e) => ModelState.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
+}
+
 /// Meter 是一个"表盘"(与 core/model.Meter 对应)。
 class Meter {
   final String id;
@@ -228,6 +288,7 @@ class AccountPulse {
   final DateTime? updatedAt;
   final String error;
   final String actionUrl;
+  final AccountState? state; // 「管理状态」(429/529/暂停/停用…);provider 不支持则为 null
 
   AccountPulse({
     required this.accountId,
@@ -241,6 +302,7 @@ class AccountPulse {
     required this.updatedAt,
     required this.error,
     required this.actionUrl,
+    this.state,
   });
 
   factory AccountPulse.fromJson(Map<String, dynamic> j) => AccountPulse(
@@ -257,6 +319,9 @@ class AccountPulse {
         updatedAt: j['updated_at'] != null ? DateTime.tryParse(j['updated_at'] as String) : null,
         error: j['error'] as String? ?? '',
         actionUrl: j['action_url'] as String? ?? '',
+        state: j['state'] != null
+            ? AccountState.fromJson(j['state'] as Map<String, dynamic>)
+            : null,
       );
 
   /// 跨实例唯一键(分组 / 钉住托盘用)。

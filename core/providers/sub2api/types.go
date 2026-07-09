@@ -4,13 +4,48 @@ import "time"
 
 // 以下 DTO 贴合 sub2api 后端源码,只取展示所需字段。
 
-// accountDTO 是 GET /api/v1/admin/accounts 的列表项(精简)。
+// accountDTO 是 GET /api/v1/admin/accounts 的列表项。
+// 除基本标识外,带上后端「账户管理→状态」列所需的调度 / 限流 / 配额字段
+// (这些字段本就在同一响应里,deriveState 据此镜像网页状态列)。
 type accountDTO struct {
 	ID       int64  `json:"id"`
 	Name     string `json:"name"`
 	Platform string `json:"platform"`
 	Type     string `json:"type"`
-	Status   string `json:"status"`
+	Status   string `json:"status"` // active / inactive / error
+
+	ErrorMessage string `json:"error_message"`
+	Schedulable  bool   `json:"schedulable"`
+
+	// 429 限流 / 529 过载 / 临时不可调度:各带「解除时间」,前端据此判是否生效 + 倒计时。
+	RateLimitedAt    *time.Time `json:"rate_limited_at"`
+	RateLimitResetAt *time.Time `json:"rate_limit_reset_at"`
+	OverloadUntil    *time.Time `json:"overload_until"`
+
+	TempUnschedulableUntil  *time.Time `json:"temp_unschedulable_until"`
+	TempUnschedulableReason string     `json:"temp_unschedulable_reason"`
+
+	// API Key 账号配额(总 / 日 / 周);used>=limit>0 即「配额超限」。
+	QuotaLimit       *float64 `json:"quota_limit"`
+	QuotaUsed        *float64 `json:"quota_used"`
+	QuotaDailyLimit  *float64 `json:"quota_daily_limit"`
+	QuotaDailyUsed   *float64 `json:"quota_daily_used"`
+	QuotaWeeklyLimit *float64 `json:"quota_weekly_limit"`
+	QuotaWeeklyUsed  *float64 `json:"quota_weekly_used"`
+
+	Extra accountExtraDTO `json:"extra"`
+}
+
+// accountExtraDTO 只取 extra 里状态列用得到的两项(其余键忽略)。
+type accountExtraDTO struct {
+	AllowOverages   bool                         `json:"allow_overages"`
+	ModelRateLimits map[string]modelRateLimitDTO `json:"model_rate_limits"`
+}
+
+// modelRateLimitDTO 是 extra.model_rate_limits 的一项(单模型 / scope 的限流窗口)。
+type modelRateLimitDTO struct {
+	RateLimitedAt    *time.Time `json:"rate_limited_at"`
+	RateLimitResetAt *time.Time `json:"rate_limit_reset_at"`
 }
 
 // accountListDTO 是分页信封里的 data。

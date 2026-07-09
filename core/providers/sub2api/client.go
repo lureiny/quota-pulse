@@ -91,6 +91,7 @@ func (p *Provider) ListAccounts(ctx context.Context) ([]model.Account, error) {
 	}
 
 	allow := idAllowSet(p.selector.IDs)
+	now := time.Now()
 	out := make([]model.Account, 0, len(list.Items))
 	for _, a := range list.Items {
 		id := strconv.FormatInt(a.ID, 10)
@@ -106,6 +107,8 @@ func (p *Provider) ListAccounts(ctx context.Context) ([]model.Account, error) {
 			Type:     a.Type,
 			Status:   a.Status,
 			Provider: providerType,
+			// 从同一份列表响应派生「管理状态」(429/529/暂停/停用/配额…),随 acc 带进 toPulse。
+			State: deriveAccountState(a, now),
 		})
 	}
 	return out, nil

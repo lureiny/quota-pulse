@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../format.dart';
 import '../models/pulse.dart';
 import '../state/settings_store.dart';
+import 'account_status_badges.dart';
 import 'meter_bar.dart';
 import 'status_dot.dart';
 
@@ -50,6 +51,7 @@ class _AccountTileState extends State<AccountTile> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _headerRow(theme, scheme, p),
+              if (p.state != null) AccountStatusBadges(p.state!),
               if (p.error.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
@@ -80,7 +82,9 @@ class _AccountTileState extends State<AccountTile> {
   Widget _headerRow(ThemeData theme, ColorScheme scheme, AccountPulse p) {
     return Row(
       children: [
-        StatusDot(p.status),
+        // 有「管理状态」时,状态点改用其严重度色,与下方状态徽章一致。
+        StatusDot(p.status,
+            color: p.state != null ? severityColor(p.state!.severity) : null),
         const SizedBox(width: 6),
         Expanded(
           child: Text(

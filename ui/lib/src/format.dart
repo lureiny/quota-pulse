@@ -22,6 +22,14 @@ Color statusColor(PulseStatus s) => switch (s) {
       PulseStatus.unknown => _grey,
     };
 
+/// 「管理状态」严重度 → 颜色(状态徽章 + 状态点共用一套色档)。
+Color severityColor(StateSeverity s) => switch (s) {
+      StateSeverity.ok => _green,
+      StateSeverity.warning => _amber,
+      StateSeverity.danger => _red,
+      StateSeverity.neutral => _grey,
+    };
+
 String statusLabel(PulseStatus s) => switch (s) {
       PulseStatus.ok => '正常',
       PulseStatus.warning => '接近上限',

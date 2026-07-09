@@ -94,6 +94,7 @@ func toPulse(acc model.Account, u usageInfo) model.AccountPulse {
 		Meters:    meters,
 		Error:     u.Error,
 		ActionURL: u.ValidationURL,
+		State:     acc.State, // 「管理状态」在 ListAccounts 阶段派生,这里随账户带过来
 	}
 	if u.UpdatedAt != nil {
 		pulse.UpdatedAt = *u.UpdatedAt
