@@ -93,7 +93,7 @@ QP_BASE_URL=x QP_API_KEY=x QP_ACCOUNT_ID=1 \
 {
   "statusLine": {
     "type": "command",
-    "command": "/Users/<you>/.claude/quota-pulse/statusline.sh",
+    "command": "/home/user/.claude/quota-pulse/statusline.sh",
     "padding": 0
   }
 }

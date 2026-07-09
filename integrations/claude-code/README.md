@@ -41,7 +41,7 @@
    ```
 4. 接进 `~/.claude/settings.json`(`command` 用绝对路径):
    ```json
-   { "statusLine": { "type": "command", "command": "/ABS/PATH/.claude/quota-pulse/statusline.sh", "padding": 0 } }
+   { "statusLine": { "type": "command", "command": "/home/user/.claude/quota-pulse/statusline.sh", "padding": 0 } }
    ```
 
 ## 配置项
