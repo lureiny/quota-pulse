@@ -133,6 +133,9 @@ type usageInfo struct {
 	FiveHour       *usageProgress `json:"five_hour"`
 	SevenDay       *usageProgress `json:"seven_day"`
 	SevenDaySonnet *usageProgress `json:"seven_day_sonnet"`
+	// 7d Fable(= Anthropic 7d_oi / overage-included 周窗口,Opus/premium 级家族)。
+	// 与 seven_day/sonnet 同级、同为 UsageProgress;passive 可采(extra.passive_usage_7d_oi_*)。
+	SevenDayFable *usageProgress `json:"seven_day_fable"`
 
 	// Gemini 窗口
 	GeminiSharedDaily  *usageProgress `json:"gemini_shared_daily"`

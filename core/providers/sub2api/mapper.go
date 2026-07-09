@@ -77,6 +77,7 @@ func toPulse(acc model.Account, u usageInfo) model.AccountPulse {
 	add("five_hour", "5h", u.FiveHour)
 	add("seven_day", "7d", u.SevenDay)
 	add("seven_day_sonnet", "7d Sonnet", u.SevenDaySonnet)
+	add("seven_day_fable", "7d Fable", u.SevenDayFable) // 网页标签 "7d F";与网页同源(7d_oi)
 	// Gemini(按需展示)
 	add("gemini_shared_daily", "Shared/日", u.GeminiSharedDaily)
 	add("gemini_pro_daily", "Pro/日", u.GeminiProDaily)

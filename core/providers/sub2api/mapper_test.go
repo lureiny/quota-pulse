@@ -51,6 +51,53 @@ func TestToPulseRollingWindows(t *testing.T) {
 	}
 }
 
+// TestToPulseFableWindow 锁住 7d Fable(7d_oi)窗口:与 sonnet 同级映射成一个 meter,
+// id=seven_day_fable、label="7d Fable",utilization/resets 正确透传;不带 window_stats 时无 detail。
+func TestToPulseFableWindow(t *testing.T) {
+	raw := `{
+	  "source": "passive",
+	  "five_hour":        {"utilization": 10.0},
+	  "seven_day":        {"utilization": 20.0},
+	  "seven_day_sonnet": {"utilization": 30.0},
+	  "seven_day_fable":  {"utilization": 88.0, "remaining_seconds": 7200,
+	                       "resets_at": "2026-07-10T00:00:00Z"}
+	}`
+	var u usageInfo
+	if err := json.Unmarshal([]byte(raw), &u); err != nil {
+		t.Fatal(err)
+	}
+	p := toPulse(model.Account{ID: "1", Platform: "claude"}, u)
+
+	var fable *model.Meter
+	for i := range p.Meters {
+		if p.Meters[i].ID == "seven_day_fable" {
+			fable = &p.Meters[i]
+			break
+		}
+	}
+	if fable == nil {
+		t.Fatalf("no seven_day_fable meter; got %d meters", len(p.Meters))
+	}
+	if fable.Label != "7d Fable" {
+		t.Errorf("label = %q, want %q", fable.Label, "7d Fable")
+	}
+	if fable.Kind != model.KindRollingWindow {
+		t.Errorf("kind = %q, want rolling_window", fable.Kind)
+	}
+	if fable.Utilization == nil || *fable.Utilization < 0.87 || *fable.Utilization > 0.89 {
+		t.Errorf("utilization = %v, want ~0.88", fable.Utilization)
+	}
+	if fable.RemainingSecs == nil || *fable.RemainingSecs != 7200 {
+		t.Errorf("remaining = %v, want 7200", fable.RemainingSecs)
+	}
+	if fable.ResetsAt == nil {
+		t.Error("resets_at not carried through")
+	}
+	if fable.Detail != "" {
+		t.Errorf("detail = %q, want empty (no window_stats)", fable.Detail)
+	}
+}
+
 func TestMapStatus(t *testing.T) {
 	if s := mapStatus(usageInfo{IsForbidden: true}, nil); s != model.StatusForbidden {
 		t.Errorf("forbidden -> %q", s)
