@@ -124,7 +124,7 @@ DESIGN.md      总体设计:选型 · 架构 · Provider 抽象 · 里程碑
 
 ## 从源码构建
 
-需要 **Flutter SDK**(≥ 3.4)与 **Go 1.24**。每个平台需在各自的 OS 上构建。
+需要 **Flutter SDK**(≥ 3.4)与 **Go 1.25**(`modernc.org/sqlite` 要求)。每个平台需在各自的 OS 上构建。
 
 **macOS** → `.dmg`
 ```bash

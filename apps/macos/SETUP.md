@@ -27,7 +27,7 @@ apps/macos/
 ```bash
 flutter --version                  # Flutter 3.24+ / Dart 3.4+
 flutter config --enable-macos-desktop
-go version                         # Go 1.24
+go version                         # Go 1.25(modernc.org/sqlite 要求)
 ```
 
 ### 1. 一次性脚手架

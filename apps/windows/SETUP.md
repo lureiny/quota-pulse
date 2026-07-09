@@ -8,9 +8,10 @@ apps/windows/
 ├── lib/main.dart          # 薄壳入口(共享 UI 在 ../../ui 的 quota_pulse_ui 包)
 ├── pubspec.yaml           # 依赖:quota_pulse_ui(path) / tray_manager / window_manager
 ├── assets/tray_icon.ico   # 系统托盘图标(32×32 彩色)
-├── setup_windows.ps1      # ① 一次性:生成 runner + pub get
+├── setup_windows.ps1      # ① 一次性:生成 runner + 套 win_ticker 补丁 + pub get
 ├── build_windows_dll.ps1  # (被 build_app 调用)编 Go → libqp.dll
 ├── build_app.ps1          # ② 一键:出 dist\quota_pulse-windows.zip
+├── runner_patches/        # win_ticker.{h,cpp}:悬浮跑马灯原生补丁(setup 时注入 runner)
 └── windows/               # 由 setup_windows.ps1 生成(此处暂无)
 ```
 
@@ -23,7 +24,7 @@ apps/windows/
 flutter --version            # Flutter 3.24+ / Dart 3.4+
 flutter config --enable-windows-desktop
 # Visual Studio 2022 + 勾选「使用 C++ 的桌面开发」工作负载(Flutter Windows 构建必需)
-go version                   # Go 1.24
+go version                   # Go 1.25(modernc.org/sqlite 要求)
 gcc --version                # mingw-w64(给 Go 的 cgo 用);没有就装 MSYS2 / TDM-GCC / WinLibs 并加 PATH
 ```
 
@@ -37,7 +38,7 @@ cd apps\windows
 .\setup_windows.ps1
 ```
 
-生成 `windows\` runner + `flutter pub get`。**Windows 不沙箱,无需任何 runner 补丁**(比 macOS 省事)。
+生成 `windows\` runner,套上 `win_ticker` 原生补丁(悬浮跑马灯:拷 `win_ticker.{h,cpp}`,并往 `flutter_window.cpp` 与 `runner\CMakeLists.txt` 注入锚点),再 `flutter pub get`。**Windows 不沙箱**——无需像 macOS 那样改 entitlements,但这处原生跑马灯补丁是必需的(注入是幂等的,模板锚点缺失会报错中止)。
 
 ## 2. 一键出包
 

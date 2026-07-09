@@ -124,7 +124,7 @@ Then open **Settings**, add a sub2api instance (its **Base URL** + an **admin AP
 
 ## Build from source
 
-You'll need the **Flutter SDK** (≥ 3.4) and **Go 1.24**. Each platform must be built on its own OS.
+You'll need the **Flutter SDK** (≥ 3.4) and **Go 1.25** (required by `modernc.org/sqlite`). Each platform must be built on its own OS.
 
 **macOS** → `.dmg`
 ```bash

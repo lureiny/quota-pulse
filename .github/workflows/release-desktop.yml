@@ -21,7 +21,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.25'   # 依赖 modernc.org/sqlite 要求 go >= 1.25.0(见 core/go.mod)
 
       - uses: subosito/flutter-action@v2
         with:
@@ -54,7 +54,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.25'   # 依赖 modernc.org/sqlite 要求 go >= 1.25.0(见 core/go.mod)
 
       - uses: subosito/flutter-action@v2
         with:
