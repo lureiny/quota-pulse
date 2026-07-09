@@ -30,6 +30,12 @@ TTL="${QP_TTL:-30}"                            # 缓存秒数:TTL 内直接复�
 SOURCE="${QP_SOURCE:-passive}"                 # passive(便宜,默认)| active(强制回源)
 PREFIX="${QP_PREFIX:-}"                         # 可选前缀,如账号昵称
 SEP="${QP_SEP:- · }"
+BAR_WIDTH="${QP_BAR_WIDTH:-10}"                 # 进度条格数
+BAR_FILL="${QP_BAR_FILL:-▰}"                    # 已用格字符(默认中高实心块)
+BAR_EMPTY="${QP_BAR_EMPTY:-▱}"                  # 剩余格字符
+BAR_LEFT="${QP_BAR_LEFT:-[}"                    # 进度条左括号
+BAR_RIGHT="${QP_BAR_RIGHT:-]}"                  # 进度条右括号
+SHOW_RESET="${QP_SHOW_RESET:-1}"                # 1=显示重置倒计时(3h20m),0=隐藏
 
 die() { echo "$1"; exit 0; }   # 状态栏永不该报错退出;有问题就打一行提示
 
@@ -115,20 +121,55 @@ use_color=1
 [ -n "${NO_COLOR:-}" ] && use_color=0
 [ "${QP_COLOR:-1}" = "0" ] && use_color=0
 
-colorize() { # $1=pct $2=text
-  [ "$use_color" -eq 1 ] || { printf '%s' "$2"; return; }
+color_for() {                      # $1=pct -> 阈值色码
   local c=32                       # <70 绿
   [ "$1" -ge 70 ] && c=33          # 70–89 黄
   [ "$1" -ge 90 ] && c=31          # ≥90 红
-  printf '\033[%sm%s\033[0m' "$c" "$2"
+  echo "$c"
+}
+
+bar_for() {                        # $1=pct $2=色码 -> 字符进度条(填充上色、剩余置暗)
+  local pct=$1 c=$2 w=$BAR_WIDTH n=0 i=0 fill="" empty=""
+  n=$(( (pct * w + 50) / 100 ))    # 四舍五入到格
+  [ "$n" -lt 0 ] && n=0
+  [ "$n" -gt "$w" ] && n=$w        # >100% 封顶为满格
+  while [ "$i" -lt "$n" ]; do fill="$fill$BAR_FILL";   i=$((i+1)); done
+  while [ "$i" -lt "$w" ]; do empty="$empty$BAR_EMPTY"; i=$((i+1)); done
+  if [ "$use_color" -eq 1 ]; then
+    printf '\033[%sm%s\033[0m\033[2m%s\033[0m' "$c" "$fill" "$empty"
+  else
+    printf '%s%s' "$fill" "$empty"
+  fi
+}
+
+fmt_remaining() {                  # $1=秒 -> 紧凑时长(2d5h / 3h20m / 45m / <1m);<=0 输出空
+  local s=$1
+  [ "$s" -gt 0 ] 2>/dev/null || { printf ''; return; }
+  local d=$((s/86400)) h=$(((s%86400)/3600)) m=$(((s%3600)/60))
+  if   [ "$d" -gt 0 ]; then printf '%dd%dh' "$d" "$h"
+  elif [ "$h" -gt 0 ]; then printf '%dh%dm' "$h" "$m"
+  elif [ "$m" -gt 0 ]; then printf '%dm' "$m"
+  else printf '<1m'; fi
 }
 
 out=""
-# jq 输出 "<id> <utilization>" 行,只保留 utilization 非空的窗口。
-while read -r id util; do
+# jq 输出 "<id> <utilization> <remaining_seconds>" 行,只保留 utilization 非空的窗口。
+while read -r id util rem; do
   [ -n "$id" ] || continue
   pct=$(printf '%.0f' "$util" 2>/dev/null) || continue
-  seg=$(colorize "$pct" "$(label_for "$id") ${pct}%")
+  c=$(color_for "$pct")
+  bar=$(bar_for "$pct" "$c")
+  lbl=$(label_for "$id")
+  rtxt=""
+  if [ "$SHOW_RESET" = "1" ]; then
+    r=$(fmt_remaining "$rem"); [ -n "$r" ] && rtxt=" $r"
+  fi
+  if [ "$use_color" -eq 1 ]; then
+    seg=$(printf '%s %s%s%s \033[%sm%d%%\033[0m\033[2m%s\033[0m' \
+      "$lbl" "$BAR_LEFT" "$bar" "$BAR_RIGHT" "$c" "$pct" "$rtxt")
+  else
+    seg=$(printf '%s %s%s%s %d%%%s' "$lbl" "$BAR_LEFT" "$bar" "$BAR_RIGHT" "$pct" "$rtxt")
+  fi
   if [ -z "$out" ]; then out="$seg"; else out="${out}${SEP}${seg}"; fi
 done <<EOF
 $(printf '%s' "$DATA" | jq -r --arg ws "$WINDOWS" '
@@ -137,7 +178,7 @@ $(printf '%s' "$DATA" | jq -r --arg ws "$WINDOWS" '
   | . as $id
   | ($d[$id] // empty) as $w
   | select(($w.utilization // null) != null)
-  | "\($id) \($w.utilization)"' 2>/dev/null)
+  | "\($id) \($w.utilization) \($w.remaining_seconds // 0)"' 2>/dev/null)
 EOF
 
 [ -n "$out" ] || die "qp: 无窗口"

@@ -4,7 +4,7 @@
 接进 [Claude Code](https://code.claude.com) 的 `statusLine`。直连 sub2api、只读、不启动任何常驻进程。
 
 ```
-5h 42% · 7d 68%
+5h [▰▰▰▰▱▱▱▱▱▱] 42% 3h20m · 7d [▰▰▰▰▰▰▰▰▰▱] 88% 5d5h
 ```
 
 - 只显示**一个 sub2api 实例的一个账号**的滚动窗口(默认 `five_hour` + `seven_day`)。
@@ -21,7 +21,8 @@
 帮我按 https://raw.githubusercontent.com/lureiny/quota-pulse/main/integrations/claude-code/install.md 安装 quota-pulse 状态栏
 ```
 
-它会检查依赖、下载脚本、引导你填 base_url / api_key、帮你列账号选 id、写好配置并接进 `settings.json`。
+它会检查依赖、下载脚本、问你要 base_url、引导你在**自己的终端**列账号选 id 并亲手填入 admin key
+(**key 全程不经过 agent**),最后接进 `settings.json`。
 
 ## 手动安装
 
@@ -34,10 +35,11 @@
    ```
 3. 配置:把 [`statusline.env.example`](./statusline.env.example) 复制到 `~/.config/quota-pulse/statusline.env`,
    填 `QP_BASE_URL` / `QP_API_KEY` / `QP_ACCOUNT_ID`,`chmod 600`。
-   不知道账号 id:
+   不知道账号 id(在你自己的终端里跑,key 用 `read -rs` 隐式输入、不留痕):
    ```bash
-   curl -fsS -H "x-api-key: $QP_API_KEY" "$QP_BASE_URL/api/v1/admin/accounts?page_size=200" \
-     | jq -r '.data.items[] | "\(.id)\t\(.name)\t\(.platform)"'
+   read -rs -p 'admin key: ' K && echo && \
+   curl -fsS -H "x-api-key: $K" "https://你的base_url/api/v1/admin/accounts?page_size=200" \
+     | jq -r '.data.items[] | "\(.id)\t\(.name)\t\(.platform)"'; unset K
    ```
 4. 接进 `~/.claude/settings.json`(`command` 用绝对路径):
    ```json
@@ -57,6 +59,10 @@
 | `QP_TTL` | `30` | 缓存秒数(状态栏高频触发,TTL 内不打接口) |
 | `QP_SOURCE` | `passive` | `passive`(便宜)/ `active`(强制回源) |
 | `QP_PREFIX` / `QP_SEP` | — / ` · ` | 行首前缀 / 窗口分隔符 |
+| `QP_BAR_WIDTH` | `10` | 进度条格数 |
+| `QP_BAR_FILL` / `QP_BAR_EMPTY` | `▰` / `▱` | 已用 / 剩余格字符 |
+| `QP_BAR_LEFT` / `QP_BAR_RIGHT` | `[` / `]` | 进度条左右括号 |
+| `QP_SHOW_RESET` | `1` | 每格百分比后显示重置倒计时(`0` 隐藏) |
 | `QP_COLOR` | `1` | `0` 或 `NO_COLOR=1` 关闭颜色 |
 
 ## 数据来源与安全
@@ -65,6 +71,9 @@
 - `passive` 读 sub2api 侧已缓存的窗口值(来自真实流量的响应头采样),不强制回源上游;
   想要更实时用 `QP_SOURCE=active`(更贵,会触发一次上游查询)。
 - api_key 只存在 600 权限的 `statusline.env`,**不进 `settings.json`、不进仓库**。
+- **admin key 绝不经过任何 AI agent**:安装 / 改配置时,key 只由你本人在**独立终端**写进 `statusline.env`;
+  别把 key 粘进对话、也别用 `!` 前缀运行需输入 key 的命令(都会进模型上下文 / 日志)。非密钥项
+  (窗口 / 颜色 / 进度条等)才可以让 agent 帮改。若 key 曾暴露给 agent,视为泄露、去 sub2api 后台轮换。
 
 ## Codex CLI?
 
