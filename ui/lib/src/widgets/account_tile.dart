@@ -98,7 +98,7 @@ class _AccountTileState extends State<AccountTile> {
           Opacity(
             opacity: _hover ? 1 : 0, // 预留位避免抖动;hover 才可点
             child: IconButton(
-              tooltip: '刷新此账户',
+              tooltip: p.autoRefresh ? '刷新此账户' : '此账户不会自动更新,点此手动回源',
               icon: const Icon(Icons.refresh, size: 15),
               padding: EdgeInsets.zero,
               visualDensity: VisualDensity.compact,
@@ -121,7 +121,14 @@ class _AccountTileState extends State<AccountTile> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(meta, style: theme.textTheme.bodySmall),
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 6,
+            children: [
+              Text(meta, style: theme.textTheme.bodySmall),
+              if (!p.autoRefresh) _manualOnlyHint(theme, scheme),
+            ],
+          ),
           if (p.actionUrl.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 2),
@@ -136,6 +143,24 @@ class _AccountTileState extends State<AccountTile> {
       ),
     );
   }
+
+  // 非 Anthropic OAuth/SetupToken 账户:sub2api 不支持被动读取,面板稳态轮询取不到它的用量,
+  // 只能手动刷新(或设置→高级开启「自动强制回源」)。给个带说明的角标,别让人以为卡住了。
+  Widget _manualOnlyHint(ThemeData theme, ColorScheme scheme) => Tooltip(
+        message: '此平台不支持被动(自动)刷新\n'
+            '用量需手动点刷新,或在设置→高级开启「自动强制回源」',
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.touch_app_outlined,
+                size: 11, color: scheme.onSurfaceVariant),
+            const SizedBox(width: 2),
+            Text('需手动刷新',
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: scheme.onSurfaceVariant)),
+          ],
+        ),
+      );
 
   Widget _chip(ColorScheme scheme, String text) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),

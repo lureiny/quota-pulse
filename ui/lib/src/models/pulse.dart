@@ -289,6 +289,9 @@ class AccountPulse {
   final String error;
   final String actionUrl;
   final AccountState? state; // 「管理状态」(429/529/暂停/停用…);provider 不支持则为 null
+  // 能否「被动」自动更新(sub2api source=passive)。false 的账户(非 Anthropic OAuth/SetupToken)
+  // 稳态轮询取不到,只能手动刷新或开启自动强制回源 → UI 标注「需手动刷新」。见 core mapper。
+  final bool autoRefresh;
 
   AccountPulse({
     required this.accountId,
@@ -303,6 +306,7 @@ class AccountPulse {
     required this.error,
     required this.actionUrl,
     this.state,
+    this.autoRefresh = true, // 缺省 true:字段缺失时不误报「需手动刷新」
   });
 
   factory AccountPulse.fromJson(Map<String, dynamic> j) => AccountPulse(
@@ -322,6 +326,7 @@ class AccountPulse {
         state: j['state'] != null
             ? AccountState.fromJson(j['state'] as Map<String, dynamic>)
             : null,
+        autoRefresh: j['auto_refresh'] as bool? ?? true,
       );
 
   /// 跨实例唯一键(分组 / 钉住托盘用)。

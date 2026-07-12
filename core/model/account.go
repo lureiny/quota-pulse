@@ -7,8 +7,8 @@ package model
 type Account struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
-	Platform string `json:"platform"` // 上游平台:claude / gemini / openai ...
-	Type     string `json:"type"`     // oauth / apikey / ...
+	Platform string `json:"platform"` // 上游平台(sub2api 值):anthropic / openai / gemini / antigravity / grok
+	Type     string `json:"type"`     // 账户类型(sub2api 值):oauth / setup-token / apikey / bedrock
 	Status   string `json:"status"`   // active / inactive / error
 	Provider string `json:"provider"` // 来源:sub2api / oneapi / newapi
 

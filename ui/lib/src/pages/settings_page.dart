@@ -1251,6 +1251,34 @@ class _SettingsPageState extends State<SettingsPage> {
             ],
           ),
 
+        const SizedBox(height: 8),
+        // 被动刷新的平台限制:sub2api 只对 Anthropic OAuth/SetupToken 支持 source=passive,
+        // 其它平台 passive 直接报错 → 稳态轮询取不到,只能手动刷新或开启上面的自动强制回源。
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest
+                .withValues(alpha: 0.4),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.info_outline,
+                  size: 14, color: theme.colorScheme.onSurfaceVariant),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  '被动刷新仅对 Anthropic 的 OAuth / SetupToken 账户有效。'
+                  'OpenAI、Gemini 等非 Anthropic 账户不会自动更新,'
+                  '需手动点刷新,或打开上面的「自动强制回源」。',
+                  style: theme.textTheme.bodySmall,
+                ),
+              ),
+            ],
+          ),
+        ),
+
         const SizedBox(height: 12),
         // 配置导入 / 导出(跨平台,YAML;方便迁移到不同机器)。
         const Divider(height: 1),

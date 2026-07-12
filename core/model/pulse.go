@@ -30,6 +30,12 @@ type AccountPulse struct {
 	Error     string    `json:"error,omitempty"`      //
 	ActionURL string    `json:"action_url,omitempty"` // 如验证/申诉链接(仅展示,不执行)
 
+	// AutoRefresh 表示该账户能否「被动」自动更新用量(sub2api source=passive)。
+	// false 的账户(非 Anthropic,或 Anthropic 非 OAuth/SetupToken)passive 会被服务端拒绝,
+	// 稳态轮询取不到,只能靠手动刷新或「自动强制回源」更新。仅供 UI 提示,不参与拉取逻辑。
+	// 见 docs/sub2api-usage-cache.md §2/§5。
+	AutoRefresh bool `json:"auto_refresh"`
+
 	// State 是账户的「管理状态」(429 限流 / 529 过载 / 暂停 / 停用 …),镜像上游后台的状态列。
 	// 与 Status 正交:Status 讲窗口用量,State 讲调度状态。provider 不支持则为 nil。
 	State *AccountState `json:"state,omitempty"`

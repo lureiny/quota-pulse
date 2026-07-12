@@ -47,6 +47,22 @@ func toEvent(it usageLogItem) model.UsageEvent {
 	}
 }
 
+// sub2api 账户平台 / 类型常量,对齐服务端 backend/internal/domain/constants.go。
+const (
+	platformAnthropic = "anthropic"
+	accTypeOAuth      = "oauth"
+	accTypeSetupToken = "setup-token"
+)
+
+// supportsPassiveUsage 复刻服务端 Account.IsAnthropicOAuthOrSetupToken:
+// 只有 Anthropic 平台的 OAuth / SetupToken 账户支持 source=passive 被动读取;
+// 其余平台 / 类型的 passive 请求会被服务端直接拒绝(见 docs/sub2api-usage-cache.md §2/§5)。
+// 用于给 UI 标注「此账户不会自动更新、需手动刷新」,不影响拉取逻辑。
+func supportsPassiveUsage(acc model.Account) bool {
+	return acc.Platform == platformAnthropic &&
+		(acc.Type == accTypeOAuth || acc.Type == accTypeSetupToken)
+}
+
 // toPulse 把 sub2api 的 usageInfo 映射成通用 model.AccountPulse。
 // 每个非空窗口 → 一个 KindRollingWindow 的 Meter。
 func toPulse(acc model.Account, u usageInfo) model.AccountPulse {
@@ -96,6 +112,8 @@ func toPulse(acc model.Account, u usageInfo) model.AccountPulse {
 		Error:     u.Error,
 		ActionURL: u.ValidationURL,
 		State:     acc.State, // 「管理状态」在 ListAccounts 阶段派生,这里随账户带过来
+		// 非 Anthropic OAuth/SetupToken → passive 不可用,UI 提示「需手动刷新」。
+		AutoRefresh: supportsPassiveUsage(acc),
 	}
 	if u.UpdatedAt != nil {
 		pulse.UpdatedAt = *u.UpdatedAt
