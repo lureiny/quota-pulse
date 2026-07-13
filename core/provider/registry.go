@@ -17,6 +17,9 @@ func Register(typ string, f Factory) {
 	if typ == "" || f == nil {
 		panic("provider.Register: empty type or nil factory")
 	}
+	if _, exists := registry[typ]; exists {
+		panic(fmt.Sprintf("provider.Register: duplicate type %q", typ))
+	}
 	registry[typ] = f
 }
 

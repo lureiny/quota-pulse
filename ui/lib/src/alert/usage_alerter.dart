@@ -31,9 +31,12 @@ class UsageAlerter {
     );
   }
 
-  bool _seeded = false;
+  // 首次静默必须按 meter key 记录,不能只用一个全局 bool:多个 provider 并发首轮时,
+  // 第一个局部快照会先到,后到实例若已超阈值不应被误当成运行期上穿而报警。
+  final Set<String> _seen = {};
   final Map<String, DateTime?> _overCycle = {}; // key -> 已发"超阈值"的该周期 resets_at
-  final Map<String, DateTime?> _recoverCycle = {}; // key -> 已发"恢复"的该周期 resets_at
+  final Map<String, DateTime?> _recoverCycle =
+      {}; // key -> 已发"恢复"的该周期 resets_at
   final Map<String, bool> _wasAbove = {}; // key -> 上次是否在阈值之上(判穿越沿)
 
   /// 每次拿到新快照时调用:按设置检测各窗口的超阈值/恢复,按周期去重后发通知。
@@ -42,11 +45,10 @@ class UsageAlerter {
     final recover = settings.alertRecoverWindows;
     // 总开关关、或两类都没选窗口 → 不发;并清"已就绪",下次启用时静默 seed 避免刷屏。
     if (!settings.alertEnabled || (over.isEmpty && recover.isEmpty)) {
-      _seeded = false;
+      _seen.clear();
       return;
     }
     final threshold = settings.alertThreshold / 100.0;
-    final firstTime = !_seeded;
     for (final p in pulses) {
       for (final m in p.meters) {
         if (m.kind != 'rolling_window') continue;
@@ -54,6 +56,7 @@ class UsageAlerter {
         final u = m.utilization;
         if (u == null) continue;
         final key = '${p.key}|${m.id}';
+        final firstTime = !_seen.contains(key);
         final reset = m.resetsAt;
         final above = u >= threshold;
         final wasAbove = _wasAbove[key];
@@ -79,9 +82,9 @@ class UsageAlerter {
         }
 
         _wasAbove[key] = above;
+        _seen.add(key);
       }
     }
-    _seeded = true;
   }
 
   /// 两个重置时刻是否属于同一周期:都非空且相差 ≤ [_kResetToleranceSecs] 秒。

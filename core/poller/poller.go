@@ -153,10 +153,11 @@ func (p *Poller) sync(ctx context.Context, b binding, lf provider.UsageLogFetche
 		if err != nil {
 			return
 		}
-		if err := p.usageDB.AddEvents(b.instance, evs); err != nil {
+		// 写覆盖水位 W:抓全 → W=initFrom;被 pageCap 截断 → W=最老抓到的事件(诚实,不谎报)。
+		// 截断且一行都没拿到时无法证明任何覆盖进度,保持零进度让下拍重试。
+		if !complete && len(evs) == 0 {
 			return
 		}
-		// 写覆盖水位 W:抓全 → W=initFrom;被 pageCap 截断 → W=最老抓到的事件(诚实,不谎报)。
 		w := initFrom.Unix()
 		if !complete && len(evs) > 0 {
 			oldest := evs[0].CreatedAt
@@ -167,7 +168,9 @@ func (p *Poller) sync(ctx context.Context, b binding, lf provider.UsageLogFetche
 			}
 			w = oldest.Unix()
 		}
-		p.usageDB.NoteCoverage(b.instance, w)
+		if err := p.usageDB.AddInitialEvents(b.instance, evs, w); err != nil {
+			return
+		}
 		p.noteSteadyCount(b.instance, len(evs))
 		if !p.chart.KeepAll {
 			p.usageDB.Evict(b.instance, evictFloor)
@@ -304,6 +307,9 @@ func (p *Poller) Backfill(instance string, hours int) {
 	if err != nil {
 		return
 	}
+	if !complete && len(evs) == 0 {
+		return // 没有可证明的进度,不能把 target 谎报成已覆盖
+	}
 	if err := p.usageDB.AddEvents(instance, evs); err != nil {
 		return
 	}
@@ -317,7 +323,9 @@ func (p *Poller) Backfill(instance string, hours int) {
 		}
 		newW = oldest.Unix() // 没抓到 target:覆盖只到最老抓到的事件
 	}
-	p.usageDB.NoteCoverage(instance, newW)
+	if err := p.usageDB.NoteCoverage(instance, newW); err != nil {
+		return
+	}
 }
 
 // EarliestAt 返回该实例全历史最早事件的 unix 秒(供热力图进度基准/年份列表)。
@@ -379,6 +387,24 @@ func (p *Poller) fetchEarliestAsync(instance string) {
 // instance 为该实例的唯一显示名,会盖到它产出的每个 pulse 上。
 func (p *Poller) AddProvider(prov provider.Provider, sched *Scheduler, instance string) {
 	p.bindings = append(p.bindings, binding{prov: prov, sched: sched, instance: instance})
+}
+
+// PollOnce 对所有 provider 并发执行一轮拉取并等待完成。它用于 qpctl 等需要
+// 「一轮后拿最终快照」的宿主,避免订阅到第一个 provider 的局部快照就过早退出。
+func (p *Poller) PollOnce(ctx context.Context, opt provider.FetchOptions) {
+	p.mu.Lock()
+	bindings := append([]binding(nil), p.bindings...)
+	p.mu.Unlock()
+
+	var wg sync.WaitGroup
+	for i := range bindings {
+		wg.Add(1)
+		go func(b binding) {
+			defer wg.Done()
+			p.pollOnce(ctx, b, opt)
+		}(bindings[i])
+	}
+	wg.Wait()
 }
 
 // Start 为每个 provider 起一个轮询 goroutine。
@@ -463,10 +489,14 @@ func (p *Poller) refreshOne(ctx context.Context, b binding, accountID string) {
 		if acc.ID != accountID {
 			continue
 		}
+		stateUpdated := p.store.UpdateState(b.instance, acc.ID, acc.State)
 		cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		pulse, err := b.prov.FetchUsage(cctx, acc, provider.FetchOptions{Fresh: true})
 		cancel()
 		if err != nil {
+			if stateUpdated && p.onUpdate != nil {
+				p.onUpdate(p.store.Snapshot())
+			}
 			return // 失败保留上次成功
 		}
 		pulse.Instance = b.instance
@@ -526,6 +556,9 @@ func (p *Poller) pollOnce(ctx context.Context, b binding, opt provider.FetchOpti
 	sem := make(chan struct{}, p.maxConc)
 	var wg sync.WaitGroup
 	for _, acc := range accounts {
+		// 列表态与用量态正交:先把支持 provider 的管理状态贴到已有 last-good 上。
+		// 后续 usage 成功会整条覆盖成同一份新 state;失败则至少状态列仍保持新鲜。
+		p.store.UpdateState(b.instance, acc.ID, acc.State)
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(acc model.Account) {

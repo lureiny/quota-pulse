@@ -11,6 +11,7 @@ package usage
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -102,6 +103,11 @@ CREATE TABLE IF NOT EXISTS sync_state(
   updated_at      INTEGER NOT NULL DEFAULT 0,
   backfilled_from INTEGER NOT NULL DEFAULT 0  -- 覆盖水位 W:已回填到的最早时刻(unix 秒)
 );`); err != nil {
+		return err
+	}
+	// Evict 按精确事件时间删除。原有 hour/day 索引服务聚合查询,这里单独补一个
+	// (instance,created_at) 索引,避免保留窗口清理退化成全实例扫描。
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_events_created ON usage_events(instance, created_at)`); err != nil {
 		return err
 	}
 	// v2→v3:老 sync_state 无 backfilled_from 列 → 就地补列,并用现有事件的最早时刻播种
@@ -255,15 +261,16 @@ func (s *Store) MinCreatedAt(instance string) int64 {
 
 // NoteCoverage 记录覆盖水位 W:只向更早推进(取 min),稳态的近窗同步不会抬高它。
 // fromUnix<=0 视为无效(no-op)。
-func (s *Store) NoteCoverage(instance string, fromUnix int64) {
+func (s *Store) NoteCoverage(instance string, fromUnix int64) error {
 	if fromUnix <= 0 {
-		return
+		return nil
 	}
-	_, _ = s.db.Exec(`
+	_, err := s.db.Exec(`
 INSERT INTO sync_state(instance,last_id,updated_at,backfilled_from) VALUES(?,0,0,?)
 ON CONFLICT(instance) DO UPDATE SET backfilled_from =
   CASE WHEN backfilled_from=0 OR excluded.backfilled_from < backfilled_from
        THEN excluded.backfilled_from ELSE backfilled_from END`, instance, fromUnix)
+	return err
 }
 
 // hourBucket 把事件时间截断到本地小时起点的 unix 秒。
@@ -284,19 +291,38 @@ func (s *Store) AddEvents(instance string, evs []model.UsageEvent) error {
 	if len(evs) == 0 {
 		return nil
 	}
+	return s.addEvents(instance, evs, 0, false)
+}
+
+// AddInitialEvents 原子写入首次同步的一批事件、last_id 与覆盖水位 W。
+//
+// 这个原子性是恢复语义的一部分:若事件/last_id 已提交而 W 尚未提交,重启后会被判作
+// 「已初始化」并永久跳过初始化窗口;反过来先写 W 也会把尚未落库的区间谎报成已覆盖。
+// 空事件批也必须写 W,用于标记「初始化窗口确实为空,不是还没初始化」。
+func (s *Store) AddInitialEvents(instance string, evs []model.UsageEvent, coverageFrom int64) error {
+	if coverageFrom <= 0 {
+		return fmt.Errorf("invalid initial coverage watermark %d", coverageFrom)
+	}
+	return s.addEvents(instance, evs, coverageFrom, true)
+}
+
+func (s *Store) addEvents(instance string, evs []model.UsageEvent, coverageFrom int64, initial bool) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.Prepare(`
+	var stmt *sql.Stmt
+	if len(evs) > 0 {
+		stmt, err = tx.Prepare(`
 INSERT OR IGNORE INTO usage_events(instance,id,created_at,hour_local,day_local,input,output,cache_create,cache_read,cost,dims)
 VALUES(?,?,?,?,?,?,?,?,?,?,?)`)
-	if err != nil {
-		return err
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
 	}
-	defer stmt.Close()
 
 	var maxID int64
 	for _, e := range evs {
@@ -310,10 +336,23 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?)`)
 		}
 	}
 
-	if _, err := tx.Exec(`
+	if initial {
+		_, err = tx.Exec(`
+INSERT INTO sync_state(instance,last_id,updated_at,backfilled_from) VALUES(?,?,?,?)
+ON CONFLICT(instance) DO UPDATE SET
+  last_id=max(last_id, excluded.last_id),
+  updated_at=excluded.updated_at,
+  backfilled_from=CASE
+    WHEN backfilled_from=0 OR excluded.backfilled_from < backfilled_from
+    THEN excluded.backfilled_from ELSE backfilled_from END`,
+			instance, maxID, time.Now().Unix(), coverageFrom)
+	} else {
+		_, err = tx.Exec(`
 INSERT INTO sync_state(instance,last_id,updated_at) VALUES(?,?,?)
 ON CONFLICT(instance) DO UPDATE SET last_id=max(last_id, excluded.last_id), updated_at=excluded.updated_at`,
-		instance, maxID, time.Now().Unix()); err != nil {
+			instance, maxID, time.Now().Unix())
+	}
+	if err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -321,19 +360,19 @@ ON CONFLICT(instance) DO UPDATE SET last_id=max(last_id, excluded.last_id), upda
 
 // QuerySeries 按 dimension 维度把自 sinceUnix 起的事件聚合成「每维度值一条序列」,
 // 每条序列按**本地小时**升序。dimension 不在白名单时回退 account。
-func (s *Store) QuerySeries(instance, dimension string, sinceUnix int64) []model.Series {
+func (s *Store) QuerySeries(instance, dimension string, sinceUnix int64) ([]model.Series, error) {
 	return s.querySeriesBucket(instance, dimension, "hour_local", sinceUnix)
 }
 
 // QueryDailySeries 同 QuerySeries,但按**本地日**桶聚合(供热力图)。每条序列按天升序,
 // Point.Hour 为当天零点。
-func (s *Store) QueryDailySeries(instance, dimension string, sinceUnix int64) []model.Series {
+func (s *Store) QueryDailySeries(instance, dimension string, sinceUnix int64) ([]model.Series, error) {
 	return s.querySeriesBucket(instance, dimension, "day_local", sinceUnix)
 }
 
 // querySeriesBucket 是 QuerySeries/QueryDailySeries 的共同实现:按 bucketCol(hour_local /
 // day_local)分桶聚合。bucketCol 仅来自内部字面量,拼接安全;维度 JSON path 走 dimPaths 白名单。
-func (s *Store) querySeriesBucket(instance, dimension, bucketCol string, sinceUnix int64) []model.Series {
+func (s *Store) querySeriesBucket(instance, dimension, bucketCol string, sinceUnix int64) ([]model.Series, error) {
 	p, ok := dimPaths[dimension]
 	if !ok {
 		p = dimPaths["account"]
@@ -348,7 +387,7 @@ WHERE instance=? AND `+bucketCol+`>=?
 GROUP BY k, h
 ORDER BY k, h`, keyPath, namePath, instance, sinceUnix)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer rows.Close()
 
@@ -359,7 +398,7 @@ ORDER BY k, h`, keyPath, namePath, instance, sinceUnix)
 		var hs, in, ou, cc, cr, cnt int64
 		var cost float64
 		if err := rows.Scan(&k, &nm, &hs, &in, &ou, &cc, &cr, &cost, &cnt); err != nil {
-			continue
+			return nil, err
 		}
 		key := k.String
 		ser := byKey[key]
@@ -388,14 +427,17 @@ ORDER BY k, h`, keyPath, namePath, instance, sinceUnix)
 	for _, key := range order {
 		out = append(out, *byKey[key])
 	}
-	return out
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // Evict 删除某实例早于 beforeUnix 的事件(保留窗口外清理),并把覆盖下界 W 向前夹到
 // beforeUnix:数据都删了就不能再声称覆盖到更早(否则 CoverageFrom 谎报、ensureBackfill 也据此
 // 误判已补齐)。夹取只在 W 早于 beforeUnix 时发生,幂等安全。
 func (s *Store) Evict(instance string, beforeUnix int64) {
-	_, _ = s.db.Exec(`DELETE FROM usage_events WHERE instance=? AND hour_local<?`, instance, beforeUnix)
+	_, _ = s.db.Exec(`DELETE FROM usage_events WHERE instance=? AND created_at<?`, instance, beforeUnix)
 	_, _ = s.db.Exec(`UPDATE sync_state SET backfilled_from=? WHERE instance=? AND backfilled_from>0 AND backfilled_from<?`,
 		beforeUnix, instance, beforeUnix)
 }

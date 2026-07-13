@@ -27,8 +27,10 @@ class NativeCore {
   late final _InitD _init = _lib.lookupFunction<_InitC, _InitD>('QP_Init');
   late final _VoidD _start = _lib.lookupFunction<_VoidC, _VoidD>('QP_Start');
   late final _VoidD _stop = _lib.lookupFunction<_VoidC, _VoidD>('QP_Stop');
-  late final _SnapD _snapshot = _lib.lookupFunction<_SnapC, _SnapD>('QP_SnapshotJSON');
-  late final _StrArgD _refresh = _lib.lookupFunction<_StrArgC, _StrArgD>('QP_Refresh');
+  late final _SnapD _snapshot =
+      _lib.lookupFunction<_SnapC, _SnapD>('QP_SnapshotJSON');
+  late final _StrArgD _refresh =
+      _lib.lookupFunction<_StrArgC, _StrArgD>('QP_Refresh');
   late final _StrToStrD _chartSeries =
       _lib.lookupFunction<_StrToStrC, _StrToStrD>('QP_ChartSeries');
   late final _StrToStrD _chartDaily =
@@ -37,7 +39,8 @@ class NativeCore {
       _lib.lookupFunction<_StrToStrC, _StrToStrD>('QP_Coverage');
   late final _StrArgD _ensureCoverage =
       _lib.lookupFunction<_StrArgC, _StrArgD>('QP_EnsureCoverage');
-  late final _StrArgD _free = _lib.lookupFunction<_StrArgC, _StrArgD>('QP_Free');
+  late final _StrArgD _free =
+      _lib.lookupFunction<_StrArgC, _StrArgD>('QP_Free');
   late final _IntArgD _setForeground =
       _lib.lookupFunction<_IntArgC, _IntArgD>('QP_SetForeground');
   late final _StrArgD _debugSet =
@@ -60,12 +63,16 @@ class NativeCore {
   factory NativeCore.open() {
     final file = _libFileName();
     final exeDir = File(Platform.resolvedExecutable).parent.path;
-    // 候选顺序:默认搜索路径 → 可执行文件同级(Windows/Linux 常见) →
-    // macOS 嵌入 .app 后的 @rpath(Contents/Frameworks)。
+    // 生产路径优先于默认搜索路径,避免 Windows/Linux 从当前工作目录误载同名库。
+    // macOS 包内库位于 Contents/Frameworks,由 @rpath 解析。
     final candidates = <String>[
-      file,
-      '$exeDir/$file',
-      if (Platform.isMacOS) '@rpath/$file',
+      if (Platform.isMacOS) ...[
+        '@rpath/$file',
+        '$exeDir/../Frameworks/$file',
+        '$exeDir/$file',
+      ] else
+        '$exeDir/$file',
+      file, // 本地开发兜底
     ];
 
     DynamicLibrary? lib;

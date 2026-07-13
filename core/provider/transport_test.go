@@ -71,3 +71,48 @@ func TestGetData_304_ServesCache(t *testing.T) {
 		t.Fatalf("expected 2 requests, got %d", got)
 	}
 }
+
+func TestResponseCacheIsBoundedAndEvictsOldest(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"code":0,"data":{"path":"` + r.URL.Path + `"}}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, AuthScheme{})
+	c.cacheMaxEntries = 2
+	c.cacheMaxBytes = 1 << 20
+	for _, path := range []string{"/one", "/two", "/three"} {
+		if _, err := c.GetData(context.Background(), path, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.cache) != 2 {
+		t.Fatalf("cache entries=%d want 2", len(c.cache))
+	}
+	if _, ok := c.cache["/one"]; ok {
+		t.Fatal("oldest cache entry was not evicted")
+	}
+	if c.cacheBytes > c.cacheMaxBytes {
+		t.Fatalf("cache bytes=%d exceeds max=%d", c.cacheBytes, c.cacheMaxBytes)
+	}
+}
+
+func TestResponseCacheDropsEntryLargerThanByteBudget(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"code":0,"data":{"payload":"larger-than-budget"}}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, AuthScheme{})
+	c.cacheMaxEntries = 10
+	c.cacheMaxBytes = 4
+	if _, err := c.GetData(context.Background(), "/large", false); err != nil {
+		t.Fatal(err)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.cache) != 0 || c.cacheBytes != 0 {
+		t.Fatalf("oversized response remained cached: entries=%d bytes=%d", len(c.cache), c.cacheBytes)
+	}
+}

@@ -56,6 +56,30 @@ func TestPollKeepsLastSuccessOnFetchError(t *testing.T) {
 	}
 }
 
+func TestPollRefreshesListStateWhenUsageFails(t *testing.T) {
+	store := NewStore()
+	store.Put(model.AccountPulse{
+		Instance: "inst", AccountID: "1", Name: "上次成功", Status: model.StatusOK,
+		Meters: []model.Meter{{ID: "five_hour"}},
+		State:  &model.AccountState{Code: model.StateOK},
+	})
+	fp := &fakeProvider{
+		accounts: []model.Account{{ID: "1", State: &model.AccountState{Code: model.StateRateLimited}}},
+		fetchErr: errors.New("passive unsupported"),
+	}
+	p := New(store, nil)
+	p.AddProvider(fp, NewScheduler(config.PollConfig{}), "inst")
+	p.pollOnce(context.Background(), p.bindings[0], provider.FetchOptions{})
+
+	got := store.Snapshot()[0]
+	if got.State == nil || got.State.Code != model.StateRateLimited {
+		t.Fatalf("list-derived state stayed stale: %+v", got.State)
+	}
+	if len(got.Meters) != 1 || got.Name != "上次成功" {
+		t.Fatalf("usage failure overwrote last-good pulse: %+v", got)
+	}
+}
+
 // 成功时正常写入并盖上实例名。
 func TestPollPutsOnSuccess(t *testing.T) {
 	store := NewStore()
@@ -71,6 +95,24 @@ func TestPollPutsOnSuccess(t *testing.T) {
 	snap := store.Snapshot()
 	if len(snap) != 1 || snap[0].Instance != "myinst" {
 		t.Fatalf("成功未正确写入/盖章:%+v", snap)
+	}
+}
+
+func TestPollOnceWaitsForAllProviders(t *testing.T) {
+	store := NewStore()
+	p := New(store, nil)
+	p.AddProvider(&fakeProvider{
+		accounts: []model.Account{{ID: "1"}},
+		pulse:    model.AccountPulse{AccountID: "1", Name: "one"},
+	}, NewScheduler(config.PollConfig{}), "A")
+	p.AddProvider(&fakeProvider{
+		accounts: []model.Account{{ID: "2"}},
+		pulse:    model.AccountPulse{AccountID: "2", Name: "two"},
+	}, NewScheduler(config.PollConfig{}), "B")
+
+	p.PollOnce(context.Background(), provider.FetchOptions{Fresh: true})
+	if got := len(store.Snapshot()); got != 2 {
+		t.Fatalf("final snapshot has %d accounts, want 2 providers completed", got)
 	}
 }
 

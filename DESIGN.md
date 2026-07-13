@@ -1,5 +1,8 @@
 # quota-pulse 设计方案
 
+> 状态说明:本文保留最初选型与演进 rationale；当前已实现 macOS + Windows、SQLite 图表/热力图和原生 ticker。
+> 现行维护结论与遗留风险见 [`docs/code-review-2026-07.md`](docs/code-review-2026-07.md)，具体代码不变量以 `AGENTS.md` 与测试为准。
+
 > 一个跨平台的"用量脉搏"预览栏:在 macOS 菜单栏 / Windows·Linux 托盘 / iOS·Android 上,
 > 快速查看 sub2api(以及未来 one-api / new-api 等)各账户的用量窗口。
 > **第一版只做 macOS,只读展示,不做任何操作。**

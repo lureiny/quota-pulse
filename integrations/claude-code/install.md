@@ -55,7 +55,8 @@ chmod +x ~/.claude/quota-pulse/statusline.sh
 
 ```bash
 read -rs -p 'admin key: ' K && echo && \
-curl -fsS -H "x-api-key: $K" "https://你的base_url/api/v1/admin/accounts?page_size=200" \
+printf 'x-api-key: %s\n' "$K" | \
+curl -fsS -H @- "https://你的base_url/api/v1/admin/accounts?page_size=200" \
   | jq -r '.data.items[] | "\(.id)\t\(.name)\t\(.platform)\t\(.status)"'; unset K
 ```
 
@@ -86,8 +87,8 @@ chmod 600 ~/.config/quota-pulse/statusline.env && unset K && echo "写好了"
 ```bash
 # a) 直连探测:只回 HTTP 状态码,不打印 key
 ( . ~/.config/quota-pulse/statusline.env
-  curl -s -o /dev/null -w 'HTTP %{http_code}\n' --max-time 8 \
-    -H "x-api-key: $QP_API_KEY" \
+  printf 'x-api-key: %s\n' "$QP_API_KEY" | \
+  curl -s -o /dev/null -w 'HTTP %{http_code}\n' --max-time 8 -H @- \
     "${QP_BASE_URL%/}/api/v1/admin/accounts/${QP_ACCOUNT_ID}/usage?source=passive" )
 
 # b) 实跑状态栏脚本

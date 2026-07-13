@@ -21,6 +21,8 @@ import (
 const (
 	providerType = "sub2api"
 	apiPrefix    = "/api/v1/admin"
+	// 账户列表的异常响应防护。正常每页 200,这个上限已远超实际规模。
+	maxAccountPages = 10000
 	// maxSincePages 是 FetchUsageSince 翻页的失控上限(纯防护,远高于任何真实数据量)。
 	maxSincePages = 100000
 )
@@ -73,7 +75,6 @@ func (p *Provider) Capabilities() provider.Capabilities {
 // ListAccounts 拉取账户列表(带 ETag 条件请求),并按 selector 过滤。
 func (p *Provider) ListAccounts(ctx context.Context) ([]model.Account, error) {
 	q := url.Values{}
-	q.Set("page", "1")
 	q.Set("page_size", "200")
 	for k, v := range p.selector.Filter {
 		if v != "" {
@@ -81,19 +82,31 @@ func (p *Provider) ListAccounts(ctx context.Context) ([]model.Account, error) {
 		}
 	}
 
-	data, err := p.client.GetData(ctx, apiPrefix+"/accounts?"+q.Encode(), true)
-	if err != nil {
-		return nil, err
-	}
-	var list accountListDTO
-	if err := json.Unmarshal(data, &list); err != nil {
-		return nil, fmt.Errorf("decode accounts: %w", err)
+	var items []accountDTO
+	pages := 1
+	for page := 1; page <= pages; page++ {
+		q.Set("page", strconv.Itoa(page))
+		data, err := p.client.GetData(ctx, apiPrefix+"/accounts?"+q.Encode(), true)
+		if err != nil {
+			return nil, err
+		}
+		var list accountListDTO
+		if err := json.Unmarshal(data, &list); err != nil {
+			return nil, fmt.Errorf("decode accounts page %d: %w", page, err)
+		}
+		items = append(items, list.Items...)
+		if page == 1 && list.Pages > pages {
+			if list.Pages > maxAccountPages {
+				return nil, fmt.Errorf("accounts pages %d exceeds safety limit %d", list.Pages, maxAccountPages)
+			}
+			pages = list.Pages
+		}
 	}
 
 	allow := idAllowSet(p.selector.IDs)
 	now := time.Now()
-	out := make([]model.Account, 0, len(list.Items))
-	for _, a := range list.Items {
+	out := make([]model.Account, 0, len(items))
+	for _, a := range items {
 		id := strconv.FormatInt(a.ID, 10)
 		if allow != nil {
 			if _, ok := allow[id]; !ok {
