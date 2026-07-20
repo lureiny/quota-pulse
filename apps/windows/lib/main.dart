@@ -21,6 +21,15 @@ import 'win_ticker.dart'; // 桌面悬浮跑马灯(原生 Win32 浮层 + D2D 像
 /// 弹层固定宽(WindowOptions 与定位共用)。高度由内容动态自适应(见 _onContentHeight)。
 const double kPanelWidth = 460.0;
 
+/// App 生效明暗:跟随「主题」设置(system 时解析系统平台明暗)。
+bool effectiveDark(ThemeChoice mode) => switch (mode) {
+      ThemeChoice.light => false,
+      ThemeChoice.dark => true,
+      ThemeChoice.system =>
+        WidgetsBinding.instance.platformDispatcher.platformBrightness ==
+            Brightness.dark,
+    };
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await windowManager.ensureInitialized();
@@ -42,10 +51,12 @@ Future<void> main() async {
     await windowManager.hide(); // 托盘应用:启动即隐藏,点托盘才弹出
   });
 
-  // 毛玻璃:Windows 用 acrylic(Win10+;降级可改 WindowEffect.solid)
-  final isDark =
-      WidgetsBinding.instance.platformDispatcher.platformBrightness == Brightness.dark;
-  await Window.setEffect(effect: WindowEffect.acrylic, dark: isDark);
+  // 毛玻璃:Windows 用 acrylic(Win10+;降级可改 WindowEffect.solid)。
+  // dark 跟随 App 生效明暗(主题设置,而非启动瞬间的系统明暗);之后由 Shell 在主题 /
+  // 系统明暗变化时重套。否则浅色主题会叠在深色 acrylic 上,半透 GlassCard 被压暗。
+  final settings = await SettingsStore.load();
+  await Window.setEffect(
+      effect: WindowEffect.acrylic, dark: effectiveDark(settings.themeMode));
   // flutter_acrylic 在 Windows 上套 acrylic 后会把标题栏(连带最小化/最大化/关闭三个按钮)加回来。
   // 注:flutter_acrylic 的隐藏按钮 API 仅 macOS 有效;window_manager 的 setTitleBarStyle 在
   // setAsFrameless 之后又会失效(已知问题)。故套完效果后:再断言无边框 + 直接剥掉
@@ -56,7 +67,6 @@ Future<void> main() async {
   await windowManager.setClosable(false);
   await UsageAlerter.setup(); // 通知后端初始化(一次;Windows 会建快捷方式挂 AppUserModelID)
 
-  final settings = await SettingsStore.load();
   final seed = await loadAccentColor(); // 跟随系统强调色
   runApp(QuotaPulseApp(source: FfiPulseSource(), settings: settings, seed: seed));
 }
@@ -210,9 +220,17 @@ class _ShellState extends State<Shell>
     super.dispose();
   }
 
-  // 系统明暗变化(themeMode=system 时):重渲染浮窗以跟随。
+  // 系统明暗变化(themeMode=system 时):重渲染浮窗 + 重套窗材质以跟随。
   @override
-  void didChangePlatformBrightness() => _updateTicker();
+  void didChangePlatformBrightness() {
+    _updateTicker();
+    _applyWindowEffect();
+  }
+
+  // 窗口材质(acrylic)的明暗跟随 App 生效明暗:启动时 main 已套过一次,
+  // 之后主题设置 / 系统明暗变化都要重套,否则浅色主题叠在深色 acrylic 上被压暗。
+  Future<void> _applyWindowEffect() =>
+      Window.setEffect(effect: WindowEffect.acrylic, dark: _effectiveDark());
 
   // ---------- 托盘 ----------
 
@@ -390,13 +408,7 @@ class _ShellState extends State<Shell>
   }
 
   // 浮窗明暗:跟随 app 的「主题」设置(system 时解析系统明暗),而非直接读系统。
-  bool _effectiveDark() => switch (_settings.themeMode) {
-        ThemeChoice.light => false,
-        ThemeChoice.dark => true,
-        ThemeChoice.system =>
-          WidgetsBinding.instance.platformDispatcher.platformBrightness ==
-              Brightness.dark,
-      };
+  bool _effectiveDark() => effectiveDark(_settings.themeMode);
 
   // 悬浮窗口:内容与 macOS 菜单栏同源(同一选集 + 选中窗口用量/重置),状态走原生圆点。
   // 单行滚动用 segments;多行铺开用 lines(每账户 base + 各窗口一行)。两份都构造,
@@ -464,6 +476,7 @@ class _ShellState extends State<Shell>
     await SettingsStore.save(s);
     setState(() => _settings = s);
     widget.onThemeModeChanged(s.themeMode.toThemeMode());
+    _applyWindowEffect(); // 主题可能随保存/导入变化,窗材质同步
     if (coreChanged) {
       _startCore(s);
     }
@@ -483,6 +496,7 @@ class _ShellState extends State<Shell>
     widget.onThemeModeChanged(choice.toThemeMode()); // 选中即时生效
     SettingsStore.save(_settings); // 顺手持久化,无需点保存
     _updateTicker(); // 浮窗即时跟随新主题
+    _applyWindowEffect(); // 窗材质即时跟随
   }
 
   Future<void> _onAutostartChanged(bool enable) async {

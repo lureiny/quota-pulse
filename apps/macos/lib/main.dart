@@ -15,6 +15,15 @@ import 'menu_bar.dart'; // 自定义菜单栏状态项(替代 tray_manager,支�
 /// 弹层固定宽(WindowOptions 与居中定位共用同一常量)。高度由内容动态自适应(见 _onContentHeight)。
 const double kPanelWidth = 460.0;
 
+/// App 生效明暗:跟随「主题」设置(system 时解析系统平台明暗)。
+bool effectiveDark(ThemeChoice mode) => switch (mode) {
+      ThemeChoice.light => false,
+      ThemeChoice.dark => true,
+      ThemeChoice.system =>
+        WidgetsBinding.instance.platformDispatcher.platformBrightness ==
+            Brightness.dark,
+    };
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await windowManager.ensureInitialized();
@@ -36,13 +45,14 @@ Future<void> main() async {
     await windowManager.hide(); // 菜单栏应用:启动即隐藏,点图标才弹出
   });
 
-  // 毛玻璃:macOS 用 popover 弹层材质(降级可改 WindowEffect.solid)
-  final isDark =
-      WidgetsBinding.instance.platformDispatcher.platformBrightness == Brightness.dark;
-  await Window.setEffect(effect: WindowEffect.popover, dark: isDark);
+  // 毛玻璃:macOS 用 popover 弹层材质(降级可改 WindowEffect.solid)。
+  // dark 跟随 App 生效明暗(主题设置,而非启动瞬间的系统明暗);之后由 Shell 在主题 /
+  // 系统明暗变化时重套。否则浅色主题会叠在深色窗材质上,半透 GlassCard 被压暗。
+  final settings = await SettingsStore.load();
+  await Window.setEffect(
+      effect: WindowEffect.popover, dark: effectiveDark(settings.themeMode));
   await UsageAlerter.setup(); // 通知后端初始化(一次)
 
-  final settings = await SettingsStore.load();
   final seed = await loadAccentColor(); // 跟随系统强调色
   runApp(QuotaPulseApp(source: FfiPulseSource(), settings: settings, seed: seed));
 }
@@ -107,7 +117,7 @@ class Shell extends StatefulWidget {
   State<Shell> createState() => _ShellState();
 }
 
-class _ShellState extends State<Shell> with WindowListener {
+class _ShellState extends State<Shell> with WindowListener, WidgetsBindingObserver {
   late Settings _settings = widget.initialSettings;
   PulseController? _controller;
   final _alerter = UsageAlerter(); // 用量阈值提醒
@@ -127,6 +137,7 @@ class _ShellState extends State<Shell> with WindowListener {
   void initState() {
     super.initState();
     windowManager.addListener(this);
+    WidgetsBinding.instance.addObserver(this); // 跟随系统明暗(themeMode=system 时)
     Autostart.isEnabled().then((v) {
       if (mounted) setState(() => _autostartEnabled = v);
     });
@@ -144,9 +155,19 @@ class _ShellState extends State<Shell> with WindowListener {
   @override
   void dispose() {
     windowManager.removeListener(this);
+    WidgetsBinding.instance.removeObserver(this);
     _controller?.dispose();
     super.dispose();
   }
+
+  // 系统明暗变化(themeMode=system 时):重套窗材质以跟随。
+  @override
+  void didChangePlatformBrightness() => _applyWindowEffect();
+
+  // 窗口材质(popover)的明暗跟随 App 生效明暗:启动时 main 已套过一次,
+  // 之后主题设置 / 系统明暗变化都要重套,否则浅色主题叠在深色材质上被压暗。
+  Future<void> _applyWindowEffect() => Window.setEffect(
+      effect: WindowEffect.popover, dark: effectiveDark(_settings.themeMode));
 
   // ---------- 菜单栏(自定义状态项) ----------
 
@@ -329,6 +350,7 @@ class _ShellState extends State<Shell> with WindowListener {
     await SettingsStore.save(s);
     setState(() => _settings = s);
     widget.onThemeModeChanged(s.themeMode.toThemeMode());
+    _applyWindowEffect(); // 主题可能随保存/导入变化,窗材质同步
     if (coreChanged) {
       _startCore(s);
     }
@@ -345,6 +367,7 @@ class _ShellState extends State<Shell> with WindowListener {
   void _onThemeChanged(ThemeChoice choice) {
     setState(() => _settings = _settings.copyWith(themeMode: choice));
     widget.onThemeModeChanged(choice.toThemeMode()); // 选中即时生效
+    _applyWindowEffect(); // 窗材质即时跟随
     SettingsStore.save(_settings); // 顺手持久化,无需点保存
   }
 
