@@ -24,7 +24,13 @@ class Autostart {
     }
   }
 
-  static String _plist(String exe) => '''<?xml version="1.0" encoding="UTF-8"?>
+  static String _plist(String exe) {
+    // App 路径允许包含 & / < / >;直接插入 XML 会生成损坏的 LaunchAgent。
+    final escaped = exe
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;');
+    return '''<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -32,7 +38,7 @@ class Autostart {
 	<string>$_label</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>$exe</string>
+		<string>$escaped</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
@@ -43,4 +49,5 @@ class Autostart {
 </dict>
 </plist>
 ''';
+  }
 }

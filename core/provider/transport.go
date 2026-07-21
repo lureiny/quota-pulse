@@ -51,14 +51,23 @@ type Client struct {
 	HTTP    *http.Client
 	Label   string // 实例名(调试采样按此分实例;由 app 在算出去重实例名后回填)
 
-	mu    sync.Mutex
-	cache map[string]cacheEntry // path -> 上次 etag + data(供 304 复用)
+	mu              sync.Mutex
+	cache           map[string]cacheEntry // path -> 上次 etag + data(供 304 复用)
+	cacheOrder      []string              // FIFO 淘汰序(命中不改序,写路径保持 O(1))
+	cacheBytes      int
+	cacheMaxEntries int
+	cacheMaxBytes   int
 }
 
 type cacheEntry struct {
 	etag string
 	data json.RawMessage
 }
+
+const (
+	defaultCacheMaxEntries = 64
+	defaultCacheMaxBytes   = 16 << 20 // 16 MiB;usage 历史分页不能无限常驻内存
+)
 
 // NewClient 构造客户端。baseURL 末尾斜杠会被去掉。
 func NewClient(baseURL string, auth AuthScheme) *Client {
@@ -73,7 +82,43 @@ func NewClient(baseURL string, auth AuthScheme) *Client {
 				IdleConnTimeout:     90 * time.Second,
 			},
 		},
-		cache: make(map[string]cacheEntry),
+		cache:           make(map[string]cacheEntry),
+		cacheMaxEntries: defaultCacheMaxEntries,
+		cacheMaxBytes:   defaultCacheMaxBytes,
+	}
+}
+
+func (c *Client) cached(path string) (cacheEntry, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.cache[path]
+	return e, ok
+}
+
+// cachePut 以有界 FIFO 保存响应。历史同步的 path 会随日期/页码不断变化,若无上限,
+// 长期运行会把每个 usage 分页的 RawMessage 永久留在堆上。
+func (c *Client) cachePut(path string, entry cacheEntry) {
+	// RawMessage 原本是整个 HTTP body 的切片;复制后既隔离调用方,也避免小 data
+	// 意外钉住一个更大的 envelope backing array。
+	entry.data = append(json.RawMessage(nil), entry.data...)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if old, ok := c.cache[path]; ok {
+		c.cacheBytes -= len(old.data)
+	} else {
+		c.cacheOrder = append(c.cacheOrder, path)
+	}
+	c.cache[path] = entry
+	c.cacheBytes += len(entry.data)
+
+	for len(c.cacheOrder) > c.cacheMaxEntries || c.cacheBytes > c.cacheMaxBytes {
+		victim := c.cacheOrder[0]
+		c.cacheOrder = c.cacheOrder[1:]
+		if old, ok := c.cache[victim]; ok {
+			c.cacheBytes -= len(old.data)
+			delete(c.cache, victim)
+		}
 	}
 }
 
@@ -89,9 +134,7 @@ func (c *Client) GetData(ctx context.Context, path string, useETag bool) (json.R
 		return nil, err
 	}
 	if status == http.StatusNotModified {
-		c.mu.Lock()
-		prev, ok := c.cache[path]
-		c.mu.Unlock()
+		prev, ok := c.cached(path)
 		if ok && len(prev.data) > 0 {
 			return prev.data, nil
 		}
@@ -121,9 +164,7 @@ func (c *Client) doOnce(ctx context.Context, path string, conditional, forceFres
 	req.Header.Set("Accept", "application/json")
 
 	if conditional {
-		c.mu.Lock()
-		prev, ok := c.cache[path]
-		c.mu.Unlock()
+		prev, ok := c.cached(path)
 		if ok && prev.etag != "" {
 			req.Header.Set("If-None-Match", prev.etag)
 		}
@@ -184,9 +225,7 @@ func (c *Client) doOnce(ctx context.Context, path string, conditional, forceFres
 
 	// 缓存 data(+ etag,如有)供后续 304 复用。对所有路径都缓存,
 	// 这样 useETag=false 的用量接口遇到 304 也能拿回上次的值。
-	c.mu.Lock()
-	c.cache[path] = cacheEntry{etag: resp.Header.Get("ETag"), data: env.Data}
-	c.mu.Unlock()
+	c.cachePut(path, cacheEntry{etag: resp.Header.Get("ETag"), data: env.Data})
 	return env.Data, resp.StatusCode, nil
 }
 

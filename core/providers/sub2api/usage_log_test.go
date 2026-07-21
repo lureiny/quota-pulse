@@ -200,3 +200,40 @@ func TestClampPageSize(t *testing.T) {
 		}
 	}
 }
+
+func TestListAccountsFetchesAllPages(t *testing.T) {
+	var mu sync.Mutex
+	var requested []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		pageNumber, _ := strconv.Atoi(page)
+		mu.Lock()
+		requested = append(requested, page)
+		mu.Unlock()
+		items := []map[string]any{{"id": 1, "name": "a1", "status": "active", "schedulable": true}}
+		if page == "2" {
+			items = []map[string]any{{"id": 2, "name": "a2", "status": "active", "schedulable": true}}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code": 0,
+			"data": map[string]any{
+				"items": items, "page": pageNumber, "page_size": 200, "pages": 2, "total": 2,
+			},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	p := mkProv(t, srv.URL)
+	accounts, err := p.ListAccounts(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(accounts) != 2 || accounts[0].ID != "1" || accounts[1].ID != "2" {
+		t.Fatalf("accounts=%+v, want both pages", accounts)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(requested) != 2 || requested[0] != "1" || requested[1] != "2" {
+		t.Fatalf("requested pages=%v, want [1 2]", requested)
+	}
+}

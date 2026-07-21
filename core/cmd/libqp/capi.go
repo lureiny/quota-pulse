@@ -40,8 +40,18 @@ func QP_Init(configJSON *C.char) C.int {
 		return -1
 	}
 	mu.Lock()
+	old := engine
+	oldCancel := cancel
 	engine = a
+	cancel = nil
 	mu.Unlock()
+	// API 调用方即使漏了显式 QP_Stop,重新 init 也不能遗留旧轮询器/SQLite 句柄。
+	if oldCancel != nil {
+		oldCancel()
+	}
+	if old != nil {
+		old.Stop()
+	}
 	return 0
 }
 
@@ -68,6 +78,7 @@ func QP_Stop() {
 	mu.Lock()
 	a := engine
 	c := cancel
+	cancel = nil
 	mu.Unlock()
 	if c != nil {
 		c()

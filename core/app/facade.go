@@ -61,6 +61,9 @@ func New(cfg config.Config) (*App, error) {
 	for i, pc := range a.cfg.Providers {
 		prov, err := provider.Build(pc)
 		if err != nil {
+			if a.usageDB != nil {
+				_ = a.usageDB.Close()
+			}
 			return nil, err
 		}
 		// 计算唯一实例名:优先配置名 → provider 显示名 → 序号;重名自动加后缀。
@@ -131,6 +134,12 @@ func defaultDBPath() string {
 // Refresh 触发一次强制回源。
 func (a *App) Refresh(accountID string) { a.poll.Refresh(accountID) }
 
+// PollOnce 对全部 provider 执行一轮强制回源并等待完成。主要供 qpctl 的 -once
+// 模式使用;桌面宿主仍应使用 Start + Refresh 的异步模型。
+func (a *App) PollOnce(ctx context.Context) {
+	a.poll.PollOnce(ctx, provider.FetchOptions{Fresh: true})
+}
+
 // Snapshot 返回当前所有账户脉搏。
 func (a *App) Snapshot() []model.AccountPulse { return a.store.Snapshot() }
 
@@ -175,8 +184,12 @@ func (a *App) ChartSeriesJSON(instance, dimension string, hours int) string {
 		}
 	}
 
+	series, err := a.usageDB.QuerySeries(instance, dimension, reqFrom)
+	if err != nil {
+		return "" // FFI 约定:空串=取数失败;有覆盖的空 series 才是真空数据
+	}
 	b, err := json.Marshal(chartResp{
-		Series:        a.usageDB.QuerySeries(instance, dimension, reqFrom),
+		Series:        series,
 		CoverageFrom:  cov,
 		RequestedFrom: reqFrom,
 	})
@@ -199,9 +212,7 @@ func (a *App) ChartDailySeriesJSON(instance, dimension string, days int) string 
 	}
 	now := time.Now()
 	// 日对齐左界:今天零点往前 (days-1) 天(本地时区,与 store.dayBucket 一致)。
-	l := now.In(time.Local)
-	dayStart := time.Date(l.Year(), l.Month(), l.Day(), 0, 0, 0, 0, time.Local).Unix()
-	reqFrom := dayStart - int64(days-1)*86400
+	reqFrom := dailyRequestFrom(now, days, time.Local)
 
 	cov := a.usageDB.CoverageFrom(instance)
 	if cov == 0 {
@@ -212,8 +223,12 @@ func (a *App) ChartDailySeriesJSON(instance, dimension string, days int) string 
 		}
 	}
 
+	series, err := a.usageDB.QueryDailySeries(instance, dimension, reqFrom)
+	if err != nil {
+		return ""
+	}
 	b, err := json.Marshal(chartResp{
-		Series:        a.usageDB.QueryDailySeries(instance, dimension, reqFrom),
+		Series:        series,
 		CoverageFrom:  cov,
 		RequestedFrom: reqFrom,
 	})
@@ -221,6 +236,14 @@ func (a *App) ChartDailySeriesJSON(instance, dimension string, days int) string 
 		return empty
 	}
 	return string(b)
+}
+
+// dailyRequestFrom 返回包含今天在内最近 days 个本地自然日的左界。
+// 必须用 AddDate 而不是 days*86400:夏令时切换日可能是 23/25 小时。
+func dailyRequestFrom(now time.Time, days int, loc *time.Location) int64 {
+	l := now.In(loc)
+	today := time.Date(l.Year(), l.Month(), l.Day(), 0, 0, 0, 0, loc)
+	return today.AddDate(0, 0, -(days - 1)).Unix()
 }
 
 // coverageResp 是 CoverageJSON 的返回体:覆盖水位 + 全历史最早事件,供热力图画诚实进度与年份列表。

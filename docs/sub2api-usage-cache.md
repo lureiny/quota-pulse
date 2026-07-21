@@ -156,3 +156,22 @@ if source == "passive" {
 | Gemini 估算 | `backend/internal/service/gemini_quota.go` |
 | 账户类型判定 | `backend/internal/service/account.go` → `CanGetUsage` / `IsAnthropicOAuthOrSetupToken` / `IsBedrock` |
 | 计费缓存(无关 usage) | `backend/internal/service/billing_cache_service.go` |
+
+---
+
+## 8. quota-pulse 本地缓存与服务端缓存的边界
+
+上文讲的是 sub2api 服务端的账户 usage 缓存。quota-pulse 还有两份本地状态,不要混为一谈:
+
+1. `poller.Store`:进程内 rolling-window 快照,按 `instance|accountID` 保存 last-good。
+2. `usage.Store`:本地 SQLite 原始请求事件,服务小时图和热力图。
+
+SQLite 同步采用两条互不重叠的流:
+
+- 增量流 A 追 `id > last_id` 的新事件。第一次运行按最近窗口初始化,**事件、`last_id` 与覆盖水位 W 在同一事务提交**;之后的稳态增量只推进 `last_id`,不动 W。
+- 反向流 B 只补 W 左侧历史。抓全则 W 到 target;页上限截断则只到已抓到的最老事件;截断且零事件不推进。
+
+本地 HTTP 304 cache 与 SQLite 也不同:前者只保存近期响应 `data`,默认受 64 条 / 16 MiB 双上限约束;
+后者是持久化事件库。retention 模式按精确 `created_at` 删除过期事件,`keep_all=true` 则不淘汰。
+
+这些约束的变更记录见 [`code-review-2026-07.md`](./code-review-2026-07.md)。

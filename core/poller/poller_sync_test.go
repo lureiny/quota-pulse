@@ -191,6 +191,21 @@ func TestEmptyInitDoesNotReinitialize(t *testing.T) {
 	}
 }
 
+func TestIncompleteEmptyInitDoesNotClaimCoverage(t *testing.T) {
+	fp := &logProv{}
+	p, db := newSyncPoller(t, fp)
+	fp.window = func(from, to time.Time) ([]model.UsageEvent, bool) {
+		return nil, false
+	}
+	p.sync(context.Background(), p.bindings[0], fp)
+	if got := db.CoverageFrom("inst"); got != 0 {
+		t.Fatalf("incomplete empty fetch claimed coverage %d", got)
+	}
+	if got := db.LastID("inst"); got != 0 {
+		t.Fatalf("incomplete empty fetch advanced cursor %d", got)
+	}
+}
+
 // 反向流B 门槛:未初始化(LastID==0)时不跑,交给流A 先初始化;已初始化后才补。
 func TestBackfillGatedUntilInitialized(t *testing.T) {
 	fp := &logProv{}

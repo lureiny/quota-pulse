@@ -32,24 +32,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	a.Subscribe(func(js string) {
-		fmt.Println(js)
-		if *once {
-			a.Stop()
-		}
-	})
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	a.Start(ctx)
 
 	if *once {
-		// 给首轮一点时间;首轮回调里会 Stop。
-		select {
-		case <-ctx.Done():
-		case <-time.After(30 * time.Second):
-		}
+		roundCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		a.PollOnce(roundCtx)
+		cancel()
+		fmt.Println(a.SnapshotJSON())
+		a.Stop()
 		return
 	}
+
+	a.Subscribe(func(js string) { fmt.Println(js) })
+	a.Start(ctx)
 	<-ctx.Done()
 }

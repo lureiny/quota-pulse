@@ -54,3 +54,25 @@ func TestStorePutDoesNotRegressGoodDataToEmpty(t *testing.T) {
 		t.Fatalf("有意义的异常状态被挡掉:status=%q, want banned", snap[0].Status)
 	}
 }
+
+func TestStoreUpdateStateKeepsLastGoodUsage(t *testing.T) {
+	s := NewStore()
+	s.Put(model.AccountPulse{
+		Instance: "A", AccountID: "40", Name: "a40", Status: model.StatusOK,
+		Meters: []model.Meter{{ID: "five_hour", Label: "5h"}},
+		State:  &model.AccountState{Code: model.StateOK},
+	})
+	if ok := s.UpdateState("A", "40", &model.AccountState{Code: model.StatePaused}); !ok {
+		t.Fatal("existing account state was not updated")
+	}
+	p := s.Snapshot()[0]
+	if p.State == nil || p.State.Code != model.StatePaused {
+		t.Fatalf("state=%+v want paused", p.State)
+	}
+	if len(p.Meters) != 1 || p.Meters[0].ID != "five_hour" || p.Status != model.StatusOK {
+		t.Fatalf("last-good usage changed while updating state: %+v", p)
+	}
+	if ok := s.UpdateState("A", "missing", &model.AccountState{Code: model.StatePaused}); ok {
+		t.Fatal("state-only update must not create an empty account")
+	}
+}

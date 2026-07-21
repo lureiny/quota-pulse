@@ -43,6 +43,25 @@ func (s *Store) Put(p model.AccountPulse) {
 	s.m[k] = p
 }
 
+// UpdateState 只刷新 ListAccounts 已经给出的账户管理状态,不触碰 last-good 用量、
+// UpdatedAt 或窗口状态。某些账户不支持 passive usage,但列表里的 429/暂停/配额状态
+// 仍然是新鲜且可展示的,不能因为 FetchUsage 失败就一起冻结。
+func (s *Store) UpdateState(instance, accountID string, state *model.AccountState) bool {
+	if state == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	k := key(instance, accountID)
+	p, ok := s.m[k]
+	if !ok {
+		return false // 没有 last-good 用量时仍不凭空创建空账户
+	}
+	p.State = state
+	s.m[k] = p
+	return true
+}
+
 // Snapshot 返回所有账户的稳定排序快照(先按 provider,再按 name)。
 func (s *Store) Snapshot() []model.AccountPulse {
 	s.mu.RLock()

@@ -37,6 +37,13 @@ BAR_LEFT="${QP_BAR_LEFT:-[}"                    # 进度条左括号
 BAR_RIGHT="${QP_BAR_RIGHT:-]}"                  # 进度条右括号
 SHOW_RESET="${QP_SHOW_RESET:-1}"                # 1=显示重置倒计时(3h20m),0=隐藏
 
+# 配置文件由用户编辑:对参与算术/URL 语义的值做收口,避免笔误让状态栏脚本报语法错。
+case "$TTL" in ''|*[!0-9]*) TTL=30 ;; esac
+case "$BAR_WIDTH" in ''|*[!0-9]*) BAR_WIDTH=10 ;; esac
+[ "$BAR_WIDTH" -gt 50 ] && BAR_WIDTH=50
+case "$SOURCE" in passive|active) ;; *) SOURCE=passive ;; esac
+case "$SHOW_RESET" in 0|1) ;; *) SHOW_RESET=1 ;; esac
+
 die() { echo "$1"; exit 0; }   # 状态栏永不该报错退出;有问题就打一行提示
 
 command -v jq   >/dev/null 2>&1 || die "qp: 缺少 jq"
@@ -49,9 +56,13 @@ file_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
 
 fetch_data() {
   # 返回信封里的 .data(usageInfo);失败返回非 0。
-  local resp code
-  resp=$(curl -fsS --max-time 6 -H "x-api-key: $KEY" -H "Accept: application/json" \
-    "${BASE%/}/api/v1/admin/accounts/${ACCOUNT}/usage?source=${SOURCE}" 2>/dev/null) || return 1
+  local resp code query
+  query="source=${SOURCE}"
+  [ "$SOURCE" = "active" ] && query="${query}&force=true"
+  # header 从 stdin 交给 curl,admin key 不出现在进程 argv/ps 列表里。
+  resp=$(printf 'x-api-key: %s\nAccept: application/json\n' "$KEY" | \
+    curl -fsS --max-time 6 -H @- \
+      "${BASE%/}/api/v1/admin/accounts/${ACCOUNT}/usage?${query}" 2>/dev/null) || return 1
   code=$(printf '%s' "$resp" | jq -r '.code // 0' 2>/dev/null) || return 1
   [ "$code" = "0" ] || return 1
   printf '%s' "$resp" | jq -c '.data' 2>/dev/null
@@ -62,10 +73,17 @@ if [ -n "${QP_FIXTURE:-}" ]; then
   DATA="$QP_FIXTURE"
 else
   [ -n "$BASE" ] && [ -n "$KEY" ] && [ -n "$ACCOUNT" ] || die "qp: 未配置(见 $CONF)"
+  case "$ACCOUNT" in *[!0-9]*) die "qp: account id 必须是数字" ;; esac
+  case "$KEY" in *$'\r'*|*$'\n'*) die "qp: api key 格式无效" ;; esac
 
-  CACHE_DIR="${TMPDIR:-/tmp}/quota-pulse"
-  mkdir -p "$CACHE_DIR" 2>/dev/null
-  CACHE_FILE="$CACHE_DIR/usage-${ACCOUNT}.json"
+  # 放用户私有 cache 目录,不用共享 /tmp;实例/account/source 共同参与匿名指纹,
+  # 避免两个后台恰有相同 account id 时串用彼此缓存。
+  CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/quota-pulse/statusline"
+  umask 077
+  mkdir -p "$CACHE_DIR" 2>/dev/null || die "qp: 无法创建缓存目录"
+  chmod 700 "$CACHE_DIR" 2>/dev/null || true
+  CACHE_KEY=$(printf '%s\0%s\0%s' "$BASE" "$ACCOUNT" "$SOURCE" | cksum | awk '{print $1}')
+  CACHE_FILE="$CACHE_DIR/usage-${CACHE_KEY}.json"
 
   fresh=0
   if [ -f "$CACHE_FILE" ]; then
@@ -75,10 +93,19 @@ else
 
   if [ "$fresh" -eq 0 ]; then
     if d=$(fetch_data) && [ -n "$d" ] && [ "$d" != "null" ]; then
-      printf '%s' "$d" > "$CACHE_FILE"
+      DATA="$d" # 即便缓存落盘失败,本次新数据仍可正常渲染。
+      tmp=$(mktemp "$CACHE_DIR/.usage.XXXXXX" 2>/dev/null || true)
+      if [ -n "$tmp" ]; then
+        if printf '%s' "$d" > "$tmp"; then
+          chmod 600 "$tmp" 2>/dev/null || true
+          mv -f "$tmp" "$CACHE_FILE"
+        else
+          rm -f "$tmp"
+        fi
+      fi
     fi
   fi
-  [ -f "$CACHE_FILE" ] && DATA=$(cat "$CACHE_FILE")
+  [ -z "$DATA" ] && [ -f "$CACHE_FILE" ] && DATA=$(cat "$CACHE_FILE")
 fi
 
 [ -n "$DATA" ] && [ "$DATA" != "null" ] || die "qp: --"

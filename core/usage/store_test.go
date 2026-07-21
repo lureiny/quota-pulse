@@ -27,6 +27,26 @@ func seriesByKey(ss []model.Series) map[string]model.Series {
 	return m
 }
 
+func mustSeries(t *testing.T, ss []model.Series, err error) []model.Series {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ss
+}
+
+func mustHourly(t *testing.T, st *Store, instance, dimension string, since int64) []model.Series {
+	t.Helper()
+	ss, err := st.QuerySeries(instance, dimension, since)
+	return mustSeries(t, ss, err)
+}
+
+func mustDaily(t *testing.T, st *Store, instance, dimension string, since int64) []model.Series {
+	t.Helper()
+	ss, err := st.QueryDailySeries(instance, dimension, since)
+	return mustSeries(t, ss, err)
+}
+
 func ev(id int64, ts time.Time, acc, accName, key, keyName, model_ string, in, out, cc, cr int64) model.UsageEvent {
 	return model.UsageEvent{
 		ID: id, CreatedAt: ts, Input: in, Output: out, CacheCreate: cc, CacheRead: cr,
@@ -64,7 +84,7 @@ func TestStoreEventsQuerySeriesMultiDim(t *testing.T) {
 	}
 
 	// 按 account:账户 2 两个小时桶(14:00 合并 id1+id2;15:00 id3)。
-	acc := seriesByKey(st.QuerySeries("inst", "account", 0))
+	acc := seriesByKey(mustHourly(t, st, "inst", "account", 0))
 	if a, ok := acc["2"]; !ok || a.Name != "Claude美区" {
 		t.Fatalf("account series: %+v", acc)
 	}
@@ -73,7 +93,7 @@ func TestStoreEventsQuerySeriesMultiDim(t *testing.T) {
 	}
 
 	// 按 api_key:序列 3(kc-a,14:00 合并)与 9(kc-b,15:00)。
-	keys := seriesByKey(st.QuerySeries("inst", "api_key", 0))
+	keys := seriesByKey(mustHourly(t, st, "inst", "api_key", 0))
 	if len(keys) != 2 {
 		t.Fatalf("api_key series=%d want 2", len(keys))
 	}
@@ -85,7 +105,7 @@ func TestStoreEventsQuerySeriesMultiDim(t *testing.T) {
 	}
 
 	// 按 model:opus(14:00 合并)与 sonnet(15:00);model 维度键即名。
-	models := seriesByKey(st.QuerySeries("inst", "model", 0))
+	models := seriesByKey(mustHourly(t, st, "inst", "model", 0))
 	if models["opus"].Name != "opus" || len(models["opus"].Points) != 1 || models["opus"].Points[0].Input != 120 {
 		t.Errorf("model opus: %+v", models["opus"])
 	}
@@ -97,17 +117,17 @@ func TestStoreEventsQuerySeriesMultiDim(t *testing.T) {
 	mustOK(st.AddEvents("inst", []model.UsageEvent{
 		ev(1, h14a, "2", "Claude美区", "3", "kc-a", "opus", 100, 50, 10, 5),
 	}))
-	if got := seriesByKey(st.QuerySeries("inst", "account", 0))["2"].Points[0].Input; got != 120 {
+	if got := seriesByKey(mustHourly(t, st, "inst", "account", 0))["2"].Points[0].Input; got != 120 {
 		t.Errorf("dup re-counted: input=%d want 120", got)
 	}
 
 	// since 过滤 + Evict 早于 15:00。
 	cut := time.Date(2026, 6, 19, 15, 0, 0, 0, loc).Unix()
-	if p := seriesByKey(st.QuerySeries("inst", "account", cut))["2"].Points; len(p) != 1 || p[0].Input != 7 {
+	if p := seriesByKey(mustHourly(t, st, "inst", "account", cut))["2"].Points; len(p) != 1 || p[0].Input != 7 {
 		t.Errorf("since 15:00: %+v", p)
 	}
 	st.Evict("inst", cut)
-	if p := seriesByKey(st.QuerySeries("inst", "account", 0))["2"].Points; len(p) != 1 || p[0].Input != 7 {
+	if p := seriesByKey(mustHourly(t, st, "inst", "account", 0))["2"].Points; len(p) != 1 || p[0].Input != 7 {
 		t.Errorf("after evict: %+v", p)
 	}
 }
@@ -148,6 +168,53 @@ func TestStoreCoverageWatermark(t *testing.T) {
 	}
 }
 
+func TestAddInitialEventsCommitsCursorAndCoverageAtomically(t *testing.T) {
+	st := openTmp(t)
+	stamp := time.Now().Add(-time.Hour)
+	if err := st.AddInitialEvents("ok", []model.UsageEvent{
+		ev(7, stamp, "1", "A", "", "", "m", 1, 0, 0, 0),
+	}, stamp.Add(-time.Hour).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.LastID("ok"); got != 7 {
+		t.Fatalf("last_id=%d want 7", got)
+	}
+	if got := st.CoverageFrom("ok"); got != stamp.Add(-time.Hour).Unix() {
+		t.Fatalf("coverage=%d want %d", got, stamp.Add(-time.Hour).Unix())
+	}
+
+	// 让 sync_state 写失败,验证同一事务内先插入的事件也被回滚。
+	if _, err := st.db.Exec(`CREATE TRIGGER fail_initial BEFORE INSERT ON sync_state
+WHEN NEW.instance='fail' BEGIN SELECT RAISE(ABORT, 'boom'); END;`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddInitialEvents("fail", []model.UsageEvent{
+		ev(9, stamp, "1", "A", "", "", "m", 1, 0, 0, 0),
+	}, stamp.Add(-time.Hour).Unix()); err == nil {
+		t.Fatal("expected transactional sync_state failure")
+	}
+	if got := st.MinCreatedAt("fail"); got != 0 {
+		t.Fatalf("event survived failed initial transaction: min_created_at=%d", got)
+	}
+	if got := st.LastID("fail"); got != 0 {
+		t.Fatalf("cursor survived failed initial transaction: last_id=%d", got)
+	}
+}
+
+func TestAddInitialEventsEmptyBatchStillMarksCoverage(t *testing.T) {
+	st := openTmp(t)
+	w := time.Now().Add(-12 * time.Hour).Unix()
+	if err := st.AddInitialEvents("empty", nil, w); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.LastID("empty"); got != 0 {
+		t.Fatalf("last_id=%d want 0", got)
+	}
+	if got := st.CoverageFrom("empty"); got != w {
+		t.Fatalf("coverage=%d want %d", got, w)
+	}
+}
+
 func TestStoreEmptyAndLastID(t *testing.T) {
 	st := openTmp(t)
 	if st.LastID("x") != 0 {
@@ -158,6 +225,16 @@ func TestStoreEmptyAndLastID(t *testing.T) {
 	}
 	if st.LastID("x") != 0 {
 		t.Error("empty AddEvents must not change LastID")
+	}
+}
+
+func TestQuerySeriesReturnsDatabaseError(t *testing.T) {
+	st := openTmp(t)
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.QuerySeries("inst", "account", 0); err == nil {
+		t.Fatal("query on closed database was reported as a genuine empty series")
 	}
 }
 
@@ -204,7 +281,7 @@ func TestQuerySeriesAggregatesCost(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	acc := seriesByKey(st.QuerySeries("inst", "account", 0))
+	acc := seriesByKey(mustHourly(t, st, "inst", "account", 0))
 	if p := acc["2"].Points; len(p) != 1 || p[0].Cost != 2.0 {
 		t.Errorf("account 2 cost: %+v want 单桶 cost=2.0", p)
 	}
@@ -222,7 +299,7 @@ func TestQuerySeriesAggregatesCost(t *testing.T) {
 func TestQueryDailySeries(t *testing.T) {
 	st := openTmp(t)
 	loc := time.Local
-	d19a := time.Date(2026, 6, 19, 9, 5, 0, 0, loc)  // 6/19 日桶
+	d19a := time.Date(2026, 6, 19, 9, 5, 0, 0, loc)   // 6/19 日桶
 	d19b := time.Date(2026, 6, 19, 22, 40, 0, 0, loc) // 同 6/19 日桶(跨小时)
 	d20 := time.Date(2026, 6, 20, 1, 0, 0, 0, loc)    // 6/20 日桶
 	mk := func(id int64, ts time.Time, in, out int64, cost float64) model.UsageEvent {
@@ -237,7 +314,7 @@ func TestQueryDailySeries(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	acc := seriesByKey(st.QueryDailySeries("inst", "account", 0))
+	acc := seriesByKey(mustDaily(t, st, "inst", "account", 0))
 	s, ok := acc["2"]
 	if !ok || len(s.Points) != 2 {
 		t.Fatalf("daily series account 2: %+v", acc)
@@ -252,7 +329,7 @@ func TestQueryDailySeries(t *testing.T) {
 
 	// sinceUnix 过滤:只取 6/20 起。
 	cut := time.Date(2026, 6, 20, 0, 0, 0, 0, loc).Unix()
-	if p := seriesByKey(st.QueryDailySeries("inst", "account", cut))["2"].Points; len(p) != 1 || p[0].Input != 7 {
+	if p := seriesByKey(mustDaily(t, st, "inst", "account", cut))["2"].Points; len(p) != 1 || p[0].Input != 7 {
 		t.Errorf("since 6/20: %+v", p)
 	}
 }
@@ -299,7 +376,7 @@ PRAGMA user_version=3;`); err != nil {
 	}
 	defer st.Close()
 
-	acc := seriesByKey(st.QueryDailySeries("inst", "account", 0))
+	acc := seriesByKey(mustDaily(t, st, "inst", "account", 0))
 	if p := acc["2"].Points; len(p) != 2 {
 		t.Fatalf("迁移后日桶数=%d want 2(day_local 未回填?): %+v", len(p), acc["2"])
 	}
@@ -309,7 +386,7 @@ PRAGMA user_version=3;`); err != nil {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if p := seriesByKey(st.QueryDailySeries("inst", "account", 0))["2"].Points; len(p) != 2 || p[1].Count != 2 {
+	if p := seriesByKey(mustDaily(t, st, "inst", "account", 0))["2"].Points; len(p) != 2 || p[1].Count != 2 {
 		t.Errorf("迁移后新写入未并入日桶: %+v", p)
 	}
 }
@@ -329,5 +406,24 @@ func TestEvictClampsCoverage(t *testing.T) {
 	st.Evict("inst", time.Now().Add(-50*24*time.Hour).Unix())
 	if got := st.CoverageFrom("inst"); got != floor {
 		t.Errorf("更早 Evict 后 W=%d 不应回拉,want %d", got, floor)
+	}
+}
+
+func TestEvictUsesExactEventTimeNotHourBucket(t *testing.T) {
+	st := openTmp(t)
+	loc := time.Local
+	early := time.Date(2026, 7, 11, 14, 5, 0, 0, loc)
+	late := time.Date(2026, 7, 11, 14, 50, 0, 0, loc)
+	if err := st.AddEvents("inst", []model.UsageEvent{
+		ev(1, early, "1", "A", "", "", "m", 10, 0, 0, 0),
+		ev(2, late, "1", "A", "", "", "m", 20, 0, 0, 0),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	st.Evict("inst", time.Date(2026, 7, 11, 14, 30, 0, 0, loc).Unix())
+	points := seriesByKey(mustHourly(t, st, "inst", "account", 0))["1"].Points
+	if len(points) != 1 || points[0].Input != 20 || points[0].Count != 1 {
+		t.Fatalf("same-hour event after cutoff was evicted: %+v", points)
 	}
 }

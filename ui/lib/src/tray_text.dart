@@ -16,7 +16,8 @@ int _byAccount(AccountPulse a, AccountPulse b) {
 AccountPulse? _topAccount(List<AccountPulse> pulses) {
   AccountPulse? top;
   for (final a in pulses) {
-    if (top == null || (a.peakUtilization ?? -1) > (top.peakUtilization ?? -1)) {
+    if (top == null ||
+        (a.peakUtilization ?? -1) > (top.peakUtilization ?? -1)) {
       top = a;
     }
   }
@@ -163,14 +164,14 @@ List<TickerSeg> tickerSegments(
   final multi = windows.length > 1;
   final out = <TickerSeg>[];
   for (final a in trayAccounts(pulses, tray)) {
-    out.add(TickerSeg(statusColor(a.status).value, _accountName(a),
+    out.add(TickerSeg(statusColor(a.status).toARGB32(), _accountName(a),
         newAccount: true));
     for (final id in windows) {
       final m = _windowMeter(a, id);
       final reset = _reset(m, resetMode);
       final label = multi ? '${kAlertWindows[id]} ' : '';
       final tail = reset.isEmpty ? '' : ' · $reset';
-      out.add(TickerSeg(meterColor(m?.utilization).value,
+      out.add(TickerSeg(meterColor(m?.utilization).toARGB32(),
           '$label${_metricText(m, tray.metric)}$tail'));
     }
   }
@@ -209,7 +210,7 @@ List<TickerLine> tickerLines(
   for (final a in trayAccounts(pulses, tray)) {
     out.add(TickerLine(
       dot: true,
-      color: statusColor(a.status).value,
+      color: statusColor(a.status).toARGB32(),
       indent: 0,
       text: '${a.instance}·${_accountName(a)}',
     ));
@@ -221,7 +222,7 @@ List<TickerLine> tickerLines(
       final text = reset.isEmpty ? col1 : '$col1\t· ⏳$reset';
       out.add(TickerLine(
         dot: true,
-        color: meterColor(m?.utilization).value,
+        color: meterColor(m?.utilization).toARGB32(),
         indent: 1,
         text: text,
       ));

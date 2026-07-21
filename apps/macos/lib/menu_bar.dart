@@ -1,6 +1,3 @@
-import 'dart:typed_data';
-import 'dart:ui' show Rect;
-
 import 'package:flutter/services.dart';
 
 /// macOS 自定义菜单栏状态项(替代 tray_manager):
