@@ -47,9 +47,13 @@ func New(cfg config.ProviderConfig) (provider.Provider, error) {
 		name = providerType
 	}
 	auth := provider.AuthScheme{Header: "x-api-key", Token: cfg.APIKey}
+	client, err := provider.NewClient(cfg.BaseURL, auth, cfg.Proxy)
+	if err != nil {
+		return nil, fmt.Errorf("sub2api: %w", err)
+	}
 	return &Provider{
 		name:     name,
-		client:   provider.NewClient(cfg.BaseURL, auth),
+		client:   client,
 		selector: cfg.Accounts,
 	}, nil
 }

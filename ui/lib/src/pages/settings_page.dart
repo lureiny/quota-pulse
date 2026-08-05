@@ -91,20 +91,27 @@ class _Draft {
   final TextEditingController name;
   final TextEditingController url;
   final TextEditingController key;
+  final TextEditingController proxy; // 出站代理(可选;空=直连)
   bool obscure;
   bool enabled; // 是否启用;false=临时禁用(立即生效,见 _toggleEnabled)
 
   _Draft(this.id,
-      {String name = '', String url = '', String key = '', this.enabled = true})
+      {String name = '',
+      String url = '',
+      String key = '',
+      String proxy = '',
+      this.enabled = true})
       : name = TextEditingController(text: name),
         url = TextEditingController(text: url),
         key = TextEditingController(text: key),
+        proxy = TextEditingController(text: proxy),
         obscure = true;
 
   void dispose() {
     name.dispose();
     url.dispose();
     key.dispose();
+    proxy.dispose();
   }
 
   Sub2apiInstance toInstance() => Sub2apiInstance(
@@ -112,6 +119,7 @@ class _Draft {
         name: name.text.trim(),
         baseUrl: url.text.trim(),
         apiKey: key.text.trim(),
+        proxy: proxy.text.trim(),
         enabled: enabled,
       );
 }
@@ -152,7 +160,11 @@ class _SettingsPageState extends State<SettingsPage> {
     super.initState();
     _drafts = widget.initial.instances
         .map((i) => _Draft(i.id,
-            name: i.name, url: i.baseUrl, key: i.apiKey, enabled: i.enabled))
+            name: i.name,
+            url: i.baseUrl,
+            key: i.apiKey,
+            proxy: i.proxy,
+            enabled: i.enabled))
         .toList();
     if (_drafts.isEmpty) _drafts.add(_newDraft());
     _layout = widget.initial.layout;
@@ -284,7 +296,26 @@ class _SettingsPageState extends State<SettingsPage> {
         chartGroupBy: widget.initial.chartGroupBy,
       );
 
-  void _save() => widget.onSave(_currentSettings());
+  void _save() {
+    // 代理格式轻量校验:非法值会让核心启动失败(QP_Init 报错),在保存处就地拦下更直白。
+    for (final d in _drafts) {
+      final p = d.proxy.text.trim();
+      if (p.isEmpty) continue;
+      final u = Uri.tryParse(p);
+      final scheme = u?.scheme.toLowerCase() ?? '';
+      const ok = {'http', 'https', 'socks5', 'socks5h'};
+      if (u == null || !ok.contains(scheme) || u.host.isEmpty) {
+        final label = d.name.text.trim().isEmpty
+            ? '未命名实例'
+            : '「${d.name.text.trim()}」';
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(
+                '实例$label的代理格式不正确:仅支持 http(s):// 或 socks5:// 的 host:port')));
+        return;
+      }
+    }
+    widget.onSave(_currentSettings());
+  }
 
   // ---------- 配置导入 / 导出(YAML) ----------
 
@@ -621,7 +652,10 @@ class _SettingsPageState extends State<SettingsPage> {
               // 设置页,让用户就地补填 Admin Key 再「保存并连接」,提示也诚实。
               if (parsed.apiKey.trim().isEmpty) {
                 setState(() => _drafts.add(_Draft(newId,
-                    name: parsed.name, url: parsed.baseUrl, key: parsed.apiKey)));
+                    name: parsed.name,
+                    url: parsed.baseUrl,
+                    key: parsed.apiKey,
+                    proxy: parsed.proxy)));
                 ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                     content: Text('已导入实例$label(未含密钥,请填写 Admin Key 后「保存并连接」)')));
                 return;
@@ -632,6 +666,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 name: parsed.name,
                 baseUrl: parsed.baseUrl,
                 apiKey: parsed.apiKey,
+                proxy: parsed.proxy,
               );
               final cur = _currentSettings();
               final merged =
@@ -1428,6 +1463,13 @@ class _SettingsPageState extends State<SettingsPage> {
                       onPressed: () => setState(() => d.obscure = !d.obscure),
                     ),
                   ),
+                  style: const TextStyle(fontSize: 13),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: d.proxy,
+                  decoration: _dec(
+                      '代理(可选),如 socks5://127.0.0.1:1080 或 http://user:pass@host:8080'),
                   style: const TextStyle(fontSize: 13),
                 ),
               ],

@@ -5,6 +5,7 @@
       "name": "我的 sub2api",
       "base_url": "https://your-sub2api-host",
       "api_key": "${SUB2API_ADMIN_API_KEY}",
+      "proxy": "socks5://127.0.0.1:1080",
       "accounts": { "filter": { "status": "active" } },
       "poll": { "passive_interval": "60s", "active_interval": "10m" }
     }

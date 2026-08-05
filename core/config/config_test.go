@@ -30,3 +30,25 @@ func TestPollWithDefaults_Fallbacks(t *testing.T) {
 		t.Fatalf("active 默认应为 0(关闭回源),却是 %v", got.ActiveInterval.D())
 	}
 }
+
+// proxy 字段应原样透传,且与 api_key 一样支持 ${ENV} 展开(代理凭据可入环境变量)。
+func TestParse_ProxyPassthroughAndEnvExpand(t *testing.T) {
+	t.Setenv("QP_TEST_PROXY", "socks5://user:pass@127.0.0.1:1080")
+
+	raw := []byte(`{
+	  "providers": [
+	    { "type": "sub2api", "base_url": "https://a", "api_key": "k1" },
+	    { "type": "sub2api", "base_url": "https://b", "api_key": "k2", "proxy": "${QP_TEST_PROXY}" }
+	  ]
+	}`)
+	c, err := Parse(raw)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got := c.Providers[0].Proxy; got != "" {
+		t.Fatalf("未配置 proxy 应为空串,得到 %q", got)
+	}
+	if got := c.Providers[1].Proxy; got != "socks5://user:pass@127.0.0.1:1080" {
+		t.Fatalf("proxy ${ENV} 未展开或透传错误,得到 %q", got)
+	}
+}

@@ -77,6 +77,11 @@ type ProviderConfig struct {
 	APIKey   string          `json:"api_key"`  // 支持 ${ENV} 展开
 	Accounts AccountSelector `json:"accounts"` // 选哪些账户
 	Poll     PollConfig      `json:"poll"`     //
+
+	// 可选出站代理:http:// / https:// / socks5://(可带 user:pass@;支持 ${ENV} 展开)。
+	// socks5h:// 也接受(归一为 socks5——Go 的 socks5 本就是远端 DNS,等价 curl 的 socks5h)。
+	// 空 = 直连(不读 HTTP_PROXY 等环境变量)。设置后该实例所有 API 请求经代理发出。
+	Proxy string `json:"proxy,omitempty"`
 }
 
 // AccountSelector 决定监控哪些账户:优先用显式 IDs,否则用 Filter。
@@ -123,7 +128,7 @@ func Load(path string) (Config, error) {
 	return Parse(raw)
 }
 
-// Parse 解析 JSON 字节,并展开 api_key 中的 ${ENV}。
+// Parse 解析 JSON 字节,并展开 api_key / proxy 中的 ${ENV}。
 func Parse(raw []byte) (Config, error) {
 	var c Config
 	if err := json.Unmarshal(raw, &c); err != nil {
@@ -131,6 +136,7 @@ func Parse(raw []byte) (Config, error) {
 	}
 	for i := range c.Providers {
 		c.Providers[i].APIKey = os.ExpandEnv(c.Providers[i].APIKey)
+		c.Providers[i].Proxy = os.ExpandEnv(c.Providers[i].Proxy)
 	}
 	return c.Normalized(), nil
 }

@@ -18,14 +18,17 @@ import 'settings_store.dart';
 /// 跨平台天然兼容:Settings.fromJson 宽松解析,Windows 专属字段在 macOS 上忽略、反之亦然。
 
 /// 把当前 [Settings] 序列化为 YAML 字符串。
-/// [includeKeys]=false 时各实例的 `api_key` 置空(不导出明文密钥)。
+/// [includeKeys]=false 时各实例的 `api_key` 置空、代理 URL 剥掉 userinfo(不导出明文凭据)。
 String exportConfigYaml(Settings s, {required bool includeKeys}) {
   final settingsMap = s.toJson();
   if (!includeKeys) {
     final instances = settingsMap['instances'];
     if (instances is List) {
       for (final inst in instances) {
-        if (inst is Map) inst['api_key'] = '';
+        if (inst is Map) {
+          inst['api_key'] = '';
+          inst['proxy'] = stripProxyAuth(inst['proxy'] as String? ?? '');
+        }
       }
     }
   }
@@ -76,7 +79,7 @@ Settings importConfigYaml(String text) {
 // ----- 单个实例的导出 / 导入 -----
 //
 // 与整份配置的 `settings:` 信封区分:单实例用 `kind: instance` + `instance:` 单对象,
-// 只含一个站点的 name / base_url / api_key,便于把某个实例单独搬到另一台机器。
+// 只含一个站点的 name / base_url / api_key / proxy,便于把某个实例单独搬到另一台机器。
 //
 // ```yaml
 // app: quota-pulse
@@ -87,12 +90,22 @@ Settings importConfigYaml(String text) {
 //   name: 主力
 //   base_url: https://host
 //   api_key: sk-...        # includeKeys=false 时为空串
+//   proxy: socks5://127.0.0.1:1080   # 可选;includeKeys=false 时剥掉 userinfo
 // ```
+
+/// 剥掉代理 URL 里的 userinfo(user:pass@),导出不含凭据时用。
+/// 解析失败则原样返回(导入侧/核心会再做校验)。
+String stripProxyAuth(String proxy) {
+  final u = Uri.tryParse(proxy.trim());
+  if (u == null || u.userInfo.isEmpty) return proxy;
+  return u.replace(userInfo: '').toString();
+}
 
 /// 把单个 [Sub2apiInstance] 序列化为 YAML(只含该实例)。
 /// 不导出 `id`(机器本地的托盘钉住/列表 key;导入侧铸新 id)。
-/// [includeKeys]=false 时 `api_key` 置空(不导出明文密钥)。
+/// [includeKeys]=false 时 `api_key` 置空、代理 URL 剥掉 userinfo(不导出明文凭据)。
 String exportInstanceYaml(Sub2apiInstance inst, {required bool includeKeys}) {
+  final proxy = includeKeys ? inst.proxy : stripProxyAuth(inst.proxy);
   final wrapper = <String, dynamic>{
     'app': 'quota-pulse',
     'kind': 'instance',
@@ -104,6 +117,7 @@ String exportInstanceYaml(Sub2apiInstance inst, {required bool includeKeys}) {
       'name': inst.name,
       'base_url': inst.baseUrl,
       'api_key': includeKeys ? inst.apiKey : '',
+      if (proxy.trim().isNotEmpty) 'proxy': proxy,
     },
   };
   return json2yaml(wrapper);

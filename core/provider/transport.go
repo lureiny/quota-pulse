@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -61,20 +62,58 @@ type cacheEntry struct {
 }
 
 // NewClient 构造客户端。baseURL 末尾斜杠会被去掉。
-func NewClient(baseURL string, auth AuthScheme) *Client {
+// proxyURL 为空 = 直连(不读 HTTP_PROXY 等环境变量);非空必须是
+// http:// / https:// / socks5://(可带 user:pass@),socks5h:// 归一为 socks5
+// (Go 的 socks5 本就是远端 DNS,等价 curl 的 socks5h)。非法值返回 error。
+func NewClient(baseURL string, auth AuthScheme, proxyURL string) (*Client, error) {
+	proxy, err := parseProxyURL(proxyURL)
+	if err != nil {
+		return nil, err
+	}
+	transport := &http.Transport{
+		MaxIdleConns:        32,
+		MaxIdleConnsPerHost: 8,
+		IdleConnTimeout:     90 * time.Second,
+	}
+	if proxy != nil {
+		// net/http 原生支持 http/https/socks5 代理 scheme(无第三方依赖)。
+		transport.Proxy = http.ProxyURL(proxy)
+	}
 	return &Client{
 		BaseURL: strings.TrimRight(baseURL, "/"),
 		Auth:    auth,
 		HTTP: &http.Client{
-			Timeout: 20 * time.Second,
-			Transport: &http.Transport{
-				MaxIdleConns:        32,
-				MaxIdleConnsPerHost: 8,
-				IdleConnTimeout:     90 * time.Second,
-			},
+			Timeout:   20 * time.Second,
+			Transport: transport,
 		},
 		cache: make(map[string]cacheEntry),
+	}, nil
+}
+
+// parseProxyURL 校验并归一代理 URL。空串 → (nil, nil) 表示直连。
+func parseProxyURL(raw string) (*url.URL, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
 	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("invalid proxy %q: %w", raw, err)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme == "socks5h" {
+		scheme = "socks5" // Go 的 socks5 即远端 DNS(= curl 的 socks5h)
+	}
+	switch scheme {
+	case "http", "https", "socks5":
+	default:
+		return nil, fmt.Errorf("invalid proxy %q: 仅支持 http/https/socks5(socks5h)协议", raw)
+	}
+	if u.Host == "" {
+		return nil, fmt.Errorf("invalid proxy %q: 缺少主机(host:port)", raw)
+	}
+	u.Scheme = scheme
+	return u, nil
 }
 
 // GetData 发起 GET、解开信封、返回 data 原始字节。

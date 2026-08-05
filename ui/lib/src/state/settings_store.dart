@@ -9,6 +9,9 @@ class Sub2apiInstance {
   final String name;
   final String baseUrl;
   final String apiKey;
+  // 可选出站代理:http(s):// / socks5://(可带 user:pass@,socks5h 也接受)。
+  // 空 = 直连;设置后该实例所有 API 请求经代理发出(由 Go 核心执行)。
+  final String proxy;
   final bool enabled; // 是否参与轮询;false=临时禁用(保留配置、从核心配置/主面板排除)
 
   const Sub2apiInstance({
@@ -16,6 +19,7 @@ class Sub2apiInstance {
     this.name = '',
     this.baseUrl = '',
     this.apiKey = '',
+    this.proxy = '',
     this.enabled = true,
   });
 
@@ -26,6 +30,7 @@ class Sub2apiInstance {
         'name': name,
         'base_url': baseUrl,
         'api_key': apiKey,
+        'proxy': proxy,
         'enabled': enabled,
       };
 
@@ -34,6 +39,8 @@ class Sub2apiInstance {
         name: j['name'] as String? ?? '',
         baseUrl: j['base_url'] as String? ?? '',
         apiKey: j['api_key'] as String? ?? '',
+        // 老配置无此键 → 直连(无回归)。
+        proxy: j['proxy'] as String? ?? '',
         // 老配置无此键 → 默认启用(无回归)。
         enabled: j['enabled'] as bool? ?? true,
       );
@@ -516,6 +523,8 @@ class Settings {
         'name': e.key,
         'base_url': inst.baseUrl.trim(),
         'api_key': inst.apiKey.trim(),
+        // 出站代理(http/https/socks5;空=直连):属连接配置,改它必须重启核心,故在此。
+        if (inst.proxy.trim().isNotEmpty) 'proxy': inst.proxy.trim(),
         // 不按 status 过滤:账户限流后 sub2api 会把它改成非 active(自动停用),
         // 过滤会让它从列表消失(网页仍可见)。拉全部账户,真实状态由 UI 状态点体现。
         // 拉取节奏来自设置:被动刷新固定开;自动回源默认关(active_interval=0s 即关)。
