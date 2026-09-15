@@ -373,6 +373,11 @@ func (p *Poller) fetchEarliestAsync(instance string) {
 	p.syncMu.Lock()
 	p.earliest[instance] = t // 记住结果(含 0=确无数据),不再重复查
 	p.syncMu.Unlock()
+	// 锚点不落库,但 CoverageJSON 读它 —— 热力图的年份下拉和补齐进度都会随之变化,
+	// 所以要推进数据版本号,否则 UI 会一直用缓存、锚点到手了也不刷新。
+	if p.usageDB != nil {
+		p.usageDB.BumpVersion(instance)
+	}
 }
 
 // AddProvider 注册一个 provider 与其调度器(须在 Start 前调用)。

@@ -3,6 +3,7 @@ package usage
 import (
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -222,7 +223,7 @@ func TestQuerySeriesAggregatesCost(t *testing.T) {
 func TestQueryDailySeries(t *testing.T) {
 	st := openTmp(t)
 	loc := time.Local
-	d19a := time.Date(2026, 6, 19, 9, 5, 0, 0, loc)  // 6/19 日桶
+	d19a := time.Date(2026, 6, 19, 9, 5, 0, 0, loc)   // 6/19 日桶
 	d19b := time.Date(2026, 6, 19, 22, 40, 0, 0, loc) // 同 6/19 日桶(跨小时)
 	d20 := time.Date(2026, 6, 20, 1, 0, 0, 0, loc)    // 6/20 日桶
 	mk := func(id int64, ts time.Time, in, out int64, cost float64) model.UsageEvent {
@@ -329,5 +330,217 @@ func TestEvictClampsCoverage(t *testing.T) {
 	st.Evict("inst", time.Now().Add(-50*24*time.Hour).Unix())
 	if got := st.CoverageFrom("inst"); got != floor {
 		t.Errorf("更早 Evict 后 W=%d 不应回拉,want %d", got, floor)
+	}
+}
+
+// --- 数据版本号:UI 据此判断「要不要重新聚合」,语义错了会直接退化成每轮重算 ---
+
+// 版本号必须只在数据**真的**变了时递增。重复事件是稳态的常态
+// (poller 空闲期 page_size 收敛到 1,拉回来的那一条几乎总是已存过的),
+// 如果它们也推进版本号,缓存就全程失效,优化等于没做。
+func TestVersionOnlyBumpsOnRealChange(t *testing.T) {
+	st := openTmp(t)
+	base := time.Date(2026, 3, 2, 10, 0, 0, 0, time.Local)
+
+	v0 := st.Versions()["inst"]
+
+	evs := []model.UsageEvent{
+		ev(1, base, "a1", "账户一", "k1", "密钥一", "m1", 10, 20, 0, 0),
+		ev(2, base.Add(time.Hour), "a1", "账户一", "k1", "密钥一", "m1", 30, 40, 0, 0),
+	}
+	if err := st.AddEvents("inst", evs); err != nil {
+		t.Fatalf("首次写入: %v", err)
+	}
+	v1 := st.Versions()["inst"]
+	if v1 <= v0 {
+		t.Fatalf("落了新行,版本号必须前进:%d -> %d", v0, v1)
+	}
+
+	// 原样重放:INSERT OR IGNORE 全部忽略,一行都没落 → 版本号必须纹丝不动。
+	if err := st.AddEvents("inst", evs); err != nil {
+		t.Fatalf("重放: %v", err)
+	}
+	if got := st.Versions()["inst"]; got != v1 {
+		t.Fatalf("重复事件不得推进版本号:%d -> %d", v1, got)
+	}
+
+	// 混入一条新的:只要有一行真的落了,就该前进。
+	mixed := append([]model.UsageEvent{}, evs...)
+	mixed = append(mixed, ev(3, base.Add(2*time.Hour), "a1", "账户一", "k1", "密钥一", "m1", 1, 1, 0, 0))
+	if err := st.AddEvents("inst", mixed); err != nil {
+		t.Fatalf("混合写入: %v", err)
+	}
+	v2 := st.Versions()["inst"]
+	if v2 <= v1 {
+		t.Fatalf("混合批次里有新行,版本号必须前进:%d -> %d", v1, v2)
+	}
+
+	// 空批次是 no-op。
+	if err := st.AddEvents("inst", nil); err != nil {
+		t.Fatalf("空批次: %v", err)
+	}
+	if got := st.Versions()["inst"]; got != v2 {
+		t.Fatalf("空批次不得推进版本号:%d -> %d", v2, got)
+	}
+
+	// 实例之间互不干扰:UI 的缓存是按实例分的,串台会让无关实例白白重算。
+	if err := st.AddEvents("other", []model.UsageEvent{
+		ev(1, base, "b1", "乙", "k9", "密钥九", "m2", 5, 5, 0, 0),
+	}); err != nil {
+		t.Fatalf("另一实例写入: %v", err)
+	}
+	if got := st.Versions()["inst"]; got != v2 {
+		t.Fatalf("其他实例的写入不得推进本实例版本号:%d -> %d", v2, got)
+	}
+	if st.Versions()["other"] == 0 {
+		t.Fatal("另一实例自己的版本号应当前进")
+	}
+}
+
+// 覆盖水位只向更早推进。没真的前移时(稳态的近窗同步每轮都会调到)不能算变更,
+// 否则热力图会被每轮唤醒重算。
+func TestVersionCoverageWatermark(t *testing.T) {
+	st := openTmp(t)
+	now := time.Now().Unix()
+
+	st.NoteCoverage("inst", now-3600)
+	v1 := st.Versions()["inst"]
+	if v1 == 0 {
+		t.Fatal("首次写水位应推进版本号")
+	}
+
+	// 更晚的水位不会被采纳(只向更早推进)→ 不算变更。
+	st.NoteCoverage("inst", now-60)
+	if got := st.Versions()["inst"]; got != v1 {
+		t.Fatalf("水位未前移时不得推进版本号:%d -> %d", v1, got)
+	}
+	if got := st.CoverageFrom("inst"); got != now-3600 {
+		t.Fatalf("水位值被错误覆盖:want %d got %d", now-3600, got)
+	}
+
+	// 同一个值重复写也不算变更(补历史流每轮都可能重复声明)。
+	st.NoteCoverage("inst", now-3600)
+	if got := st.Versions()["inst"]; got != v1 {
+		t.Fatalf("重复写同一水位不得推进版本号:%d -> %d", v1, got)
+	}
+
+	// 真的往更早推 → 必须前进。
+	st.NoteCoverage("inst", now-7200)
+	if got := st.Versions()["inst"]; got <= v1 {
+		t.Fatalf("水位前移必须推进版本号:%d -> %d", v1, got)
+	}
+	if got := st.CoverageFrom("inst"); got != now-7200 {
+		t.Fatalf("水位未被推到更早:want %d got %d", now-7200, got)
+	}
+}
+
+// 淘汰会让图表左侧少掉一段,必须让 UI 缓存失效;没删到东西则不算变更。
+func TestVersionEvict(t *testing.T) {
+	st := openTmp(t)
+	base := time.Now().Add(-48 * time.Hour)
+	if err := st.AddEvents("inst", []model.UsageEvent{
+		ev(1, base, "a1", "账户一", "k1", "密钥一", "m1", 10, 10, 0, 0),
+		ev(2, time.Now(), "a1", "账户一", "k1", "密钥一", "m1", 10, 10, 0, 0),
+	}); err != nil {
+		t.Fatalf("写入: %v", err)
+	}
+	v1 := st.Versions()["inst"]
+
+	// 早于所有事件:什么都删不掉,水位也没得夹 → 不算变更。
+	st.Evict("inst", base.Add(-24*time.Hour).Unix())
+	if got := st.Versions()["inst"]; got != v1 {
+		t.Fatalf("空淘汰不得推进版本号:%d -> %d", v1, got)
+	}
+
+	// 真删掉一条 → 必须前进。
+	st.Evict("inst", time.Now().Add(-24*time.Hour).Unix())
+	if got := st.Versions()["inst"]; got <= v1 {
+		t.Fatalf("淘汰了行必须推进版本号:%d -> %d", v1, got)
+	}
+}
+
+// BumpVersion 是给库外写路径(poller 填好最早锚点)用的显式失效入口。
+func TestBumpVersionExplicit(t *testing.T) {
+	st := openTmp(t)
+	v0 := st.Versions()["inst"]
+	st.BumpVersion("inst")
+	if got := st.Versions()["inst"]; got <= v0 {
+		t.Fatalf("BumpVersion 应推进版本号:%d -> %d", v0, got)
+	}
+}
+
+// Versions() 返回的必须是快照副本,调用方改它不能影响内部状态。
+func TestVersionsReturnsCopy(t *testing.T) {
+	st := openTmp(t)
+	st.BumpVersion("inst")
+	m := st.Versions()
+	m["inst"] = 9999
+	m["injected"] = 1
+	again := st.Versions()
+	if again["inst"] == 9999 {
+		t.Fatal("Versions() 返回了内部 map 的引用,外部修改污染了内部状态")
+	}
+	if _, ok := again["injected"]; ok {
+		t.Fatal("Versions() 返回了内部 map 的引用,外部新增键泄漏进了内部状态")
+	}
+}
+
+// 新加的 created_at 索引必须真的被 MIN/MAX 用上 —— 否则 CoverageJSON 每次都是全表扫描
+// (50 万行实测 2.2s,且热力图每次刷新都会调它)。
+func TestCreatedAtIndexIsUsed(t *testing.T) {
+	st := openTmp(t)
+	if err := st.AddEvents("inst", []model.UsageEvent{
+		ev(1, time.Now(), "a1", "账户一", "k1", "密钥一", "m1", 1, 1, 0, 0),
+	}); err != nil {
+		t.Fatalf("写入: %v", err)
+	}
+	for _, q := range []string{
+		`SELECT MIN(created_at) FROM usage_events WHERE instance=?`,
+		`SELECT MAX(created_at) FROM usage_events WHERE instance=?`,
+	} {
+		rows, err := st.db.Query("EXPLAIN QUERY PLAN "+q, "inst")
+		if err != nil {
+			t.Fatalf("explain: %v", err)
+		}
+		var plan string
+		for rows.Next() {
+			var a, b, c int
+			var detail string
+			if err := rows.Scan(&a, &b, &c, &detail); err != nil {
+				rows.Close()
+				t.Fatalf("scan: %v", err)
+			}
+			plan += detail + "\n"
+		}
+		rows.Close()
+		if !strings.Contains(plan, "idx_events_created") {
+			t.Fatalf("MIN/MAX(created_at) 未走 idx_events_created,计划为:\n%s", plan)
+		}
+	}
+}
+
+// mmap_size 必须真的生效(纯 Go 驱动下也应是真的 mmap)——实测它是这组 PRAGMA 里
+// 唯一有效的一条(-26%)。生效与否只能靠回读确认。
+func TestMmapPragmaApplied(t *testing.T) {
+	st := openTmp(t)
+	var v int64
+	if err := st.db.QueryRow("PRAGMA mmap_size").Scan(&v); err != nil {
+		t.Fatalf("回读 mmap_size: %v", err)
+	}
+	if v <= 0 {
+		t.Fatalf("mmap_size 未生效,回读为 %d", v)
+	}
+}
+
+// user_version 必须等于当前 schemaVersion。写死字面量的话,升版时忘了同步改
+// 会导致每次启动都重跑迁移。
+func TestUserVersionMatchesSchemaVersion(t *testing.T) {
+	st := openTmp(t)
+	var v int
+	if err := st.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
+		t.Fatalf("回读 user_version: %v", err)
+	}
+	if v != schemaVersion {
+		t.Fatalf("user_version=%d,应为 schemaVersion=%d", v, schemaVersion)
 	}
 }

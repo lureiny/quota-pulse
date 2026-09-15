@@ -39,8 +39,9 @@ class HourlyChart extends StatefulWidget {
   final ValueChanged<ChartRange> onRangeChanged; // 切跨度
   final ValueChanged<ChartType> onTypeChanged; // 切柱/线
 
-  /// (instance, dimension, hours) → ChartData(本地查询,便宜)。
-  final ChartData Function(String instance, String dimension, int hours)
+  /// (instance, dimension, hours) → ChartData。
+  /// **异步**:底层是 SQLite 聚合,数据量大时单次可达数秒,已挪到后台 isolate 执行。
+  final Future<ChartData> Function(String instance, String dimension, int hours)
       fetchChart;
 
   /// (instance, hours) → 触发按需回填,确保本地覆盖延伸到 now-hours(异步)。
@@ -57,6 +58,11 @@ class _HourlyChartState extends State<HourlyChart> {
   static const double _labelReserve = 18; // 底部小时标签预留高
 
   ChartData _data = const ChartData();
+  // 首帧尚未取到数据。不能直接拿 const ChartData() 去渲染 —— 它的 ok=true / series=[] /
+  // fullyCovered=true 正好命中「该维度在所选区间暂无请求」分支,会闪一下假的空态。
+  bool _loaded = false;
+  // 请求序号:异步化之后,慢的旧请求可能后到并覆盖新结果(切维度再切回来即可复现)。
+  int _reqSeq = 0;
   ChartMetric? _renderedMetric; // 上次渲染用的度量;仅当它变化时禁掉图表过渡动画(切度量=换单位)
   final Set<String> _hidden = {}; // 被图例关掉的系列 key
   DateTime? _backfillStarted; // 本次未覆盖触发补齐的时刻(用于「补齐中」短时态)
@@ -66,8 +72,7 @@ class _HourlyChartState extends State<HourlyChart> {
   void initState() {
     super.initState();
     _renderedMetric = widget.metric; // 首帧与当前度量一致 → 正常入场动画;仅后续切换才瞬时
-    _data = _load(); // 直接赋值(initState 里不 setState),build 紧随其后。
-    _maybeBackfill();
+    _refresh(); // 异步:首帧先渲染加载态,拿到数据再 setState
     // 随新事件 / 补齐进度,定时刷新(与快照 tick 解耦,避免每次重建都打 FFI)。
     _timer = Timer.periodic(const Duration(seconds: 10), (_) => _refresh());
   }
@@ -82,6 +87,10 @@ class _HourlyChartState extends State<HourlyChart> {
     }
     if (dimOrInst || old.range != widget.range) {
       _backfillStarted = null; // 新跨度 → 重置「补齐中」短时态
+      // 查询参数变了 = 换了一份数据集。x 轴窗口(windowStart)在这一帧就按新 range 重排了,
+      // 旧 _data 配新窗口会渲染成一张误导性的图(24h→168h 时只有右侧 1/7 有柱子)。
+      // 异步化之前是同步取数,不存在这个中间态;现在必须显式退回加载态。
+      setState(() => _loaded = false);
       _refresh();
     }
   }
@@ -89,28 +98,33 @@ class _HourlyChartState extends State<HourlyChart> {
   @override
   void dispose() {
     _timer?.cancel();
+    _reqSeq++; // 作废在途请求:回包时序号对不上,不会再碰已销毁的 State
     super.dispose();
   }
 
-  ChartData _load() {
+  Future<void> _refresh() async {
+    final seq = ++_reqSeq;
+    ChartData d;
     try {
-      return widget.fetchChart(
+      // 必须 `await`。写成 `return widget.fetchChart(...)` 而不 await 的话,
+      // try 根本包不住这个 Future —— 编译能过,但 catch 永远不触发,
+      // 取数异常会变成未捕获的异步错误,「数据获取异常,点按重试」再也不会出现。
+      d = await widget.fetchChart(
           widget.instance, widget.dimension, widget.range.hours);
     } catch (_) {
-      return ChartData.failed;
+      d = ChartData.failed;
     }
-  }
-
-  void _refresh() {
-    final d = _load();
-    if (!mounted) return;
-    setState(() => _data = d);
+    if (!mounted || seq != _reqSeq) return; // 已销毁 / 已被更新的请求取代
+    setState(() {
+      _data = d;
+      _loaded = true;
+    });
     _maybeBackfill();
   }
 
   /// 区间未被本地覆盖 → 触发按需回填(Go 侧已对「已覆盖 / 在途」做幂等保护)。
   void _maybeBackfill() {
-    if (_data.ok && !_data.fullyCovered) {
+    if (_loaded && _data.ok && !_data.fullyCovered) {
       _backfillStarted ??= DateTime.now();
       widget.ensureCoverage(widget.instance, widget.range.hours);
     } else {
@@ -164,6 +178,11 @@ class _HourlyChartState extends State<HourlyChart> {
         ? const Duration(milliseconds: 150)
         : Duration.zero;
     _renderedMetric = widget.metric;
+
+    // 首帧加载态:必须先于下面的空态判断,否则会闪一下假的「暂无请求」。
+    if (!_loaded) {
+      return _shell(cs, _placeholder(cs, text: '加载中…', spinner: true));
+    }
 
     // 取数/解析异常:明确区别于「真无数据」,可点按重试。
     if (!_data.ok) {

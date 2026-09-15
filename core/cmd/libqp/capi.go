@@ -151,6 +151,22 @@ func QP_Coverage(argsJSON *C.char) *C.char {
 	return C.CString(a.CoverageJSON(args.Instance))
 }
 
+// QP_ChartVersions 返回 {"实例名": 数据版本号, ...} 的 JSON。
+// 版本号只在该实例的图表输入真的变了时递增;宿主据此决定要不要重新聚合。
+// 极廉价(一次读锁 + 几十字节序列化),可高频调用。
+// 返回的 C 字符串由调用方用 QP_Free 释放。
+//
+//export QP_ChartVersions
+func QP_ChartVersions() *C.char {
+	mu.Lock()
+	a := engine
+	mu.Unlock()
+	if a == nil {
+		return C.CString("{}")
+	}
+	return C.CString(a.ChartVersionsJSON())
+}
+
 // QP_EnsureCoverage 触发按需回填:确保某实例本地覆盖延伸到 now-hours(异步、立即返回)。
 // argsJSON: {"instance":"...","hours":168}
 //

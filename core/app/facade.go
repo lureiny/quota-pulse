@@ -250,6 +250,23 @@ func (a *App) CoverageJSON(instance string) string {
 	return string(b)
 }
 
+// ChartVersionsJSON 返回 {"实例名": 数据版本号, ...} 的 JSON。
+//
+// 版本号只在该实例的图表输入**真的**变了时递增(新事件落库 / 覆盖水位前移 / 淘汰 /
+// 最早锚点到手)。宿主每次想刷新图表前先读它,与上次比对,没变就直接复用已有结果 ——
+// 这把「每 10 秒重算一遍 O(窗口行数) 的聚合」换成了一次原子读 + 几十字节序列化。
+// 库未开(图表关闭/开库失败)时返回空对象,宿主会一直看到「没变」,行为安全降级。
+func (a *App) ChartVersionsJSON() string {
+	if a.usageDB == nil {
+		return "{}"
+	}
+	b, err := json.Marshal(a.usageDB.Versions())
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
+}
+
 // EnsureCoverage 触发按需回填:确保 instance 的本地覆盖延伸到 now-hours(异步、不阻塞)。
 // 已覆盖或库未开则是廉价 no-op。UI 在切大跨度时调用;补齐进度由后续 ChartSeries 的
 // coverageFrom 体现。

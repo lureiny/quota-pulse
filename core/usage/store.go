@@ -11,8 +11,10 @@ package usage
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	// 纯 Go sqlite 驱动(无 cgo),不给 c-shared 交叉编译加 C 依赖。注册驱动名 "sqlite"。
@@ -40,6 +42,39 @@ var dimPaths = map[string][2]string{
 // Store 是 SQLite 支撑的原始事件库。单连接串行写,简单稳妥。
 type Store struct {
 	db *sql.DB
+
+	// ver 是每实例的「数据版本号」:只在事件真的落库 / 覆盖水位真的前移 / 真的淘汰了行时递增。
+	//
+	// 存在的理由:按维度聚合是 O(窗口行数) 的昂贵操作(50 万行的 180 天热力图实测 ~5s),
+	// 而稳态下数据往往一整轮都没变 —— AddEvents 走 INSERT OR IGNORE,重复事件全被忽略,
+	// 且 poller 空闲期的 page_size 会收敛到 1。UI 先读版本号、没变就直接复用上次结果,
+	// 把「每 10 秒重算一遍完全相同的聚合」压成一次原子读。
+	verMu sync.RWMutex
+	ver   map[string]int64
+}
+
+// bump 递增某实例的数据版本号。仅由确实改变了该实例可见数据的写路径调用。
+func (s *Store) bump(instance string) {
+	s.verMu.Lock()
+	s.ver[instance]++
+	s.verMu.Unlock()
+}
+
+// BumpVersion 供库外的写路径(如 poller 填好最早事件锚点)声明「该实例的图表输入变了」。
+// 锚点不落库但会改变 CoverageJSON 的结果(热力图的年份下拉与补齐进度都读它),
+// 所以它同样要让 UI 的缓存失效。
+func (s *Store) BumpVersion(instance string) { s.bump(instance) }
+
+// Versions 返回所有已知实例的当前数据版本号快照。极廉价(一次读锁 + 小 map 复制),
+// 可高频调用 —— 这正是它替代「高频重算聚合」的前提。
+func (s *Store) Versions() map[string]int64 {
+	s.verMu.RLock()
+	defer s.verMu.RUnlock()
+	out := make(map[string]int64, len(s.ver))
+	for k, v := range s.ver {
+		out[k] = v
+	}
+	return out
 }
 
 // Open 打开(必要时新建)数据库并建表/迁移。父目录不存在会自动创建。
@@ -56,13 +91,16 @@ func Open(path string) (*Store, error) {
 		"PRAGMA journal_mode=WAL",
 		"PRAGMA busy_timeout=5000",
 		"PRAGMA synchronous=NORMAL",
+		// 内存映射读:实测把 50 万行的全量聚合从 ~4.5s 压到 ~3.3s(-26%)。
+		// 是这一组 PRAGMA 里唯一真正有效的 —— cache_size / temp_store 实测均在噪声内。
+		"PRAGMA mmap_size=268435456",
 	} {
 		if _, err := db.Exec(pragma); err != nil {
 			db.Close()
 			return nil, err
 		}
 	}
-	s := &Store{db: db}
+	s := &Store{db: db, ver: make(map[string]int64)}
 	if err := s.initSchema(); err != nil {
 		db.Close()
 		return nil, err
@@ -96,6 +134,9 @@ CREATE TABLE IF NOT EXISTS usage_events(
   PRIMARY KEY(instance, id)
 );
 CREATE INDEX IF NOT EXISTS idx_events_hour ON usage_events(instance, hour_local);
+-- created_at 上的索引:MinCreatedAt/MaxCreatedAt 原本是全表扫描(50 万行实测 2.2s,
+-- 而 CoverageJSON 每次都要调 MinCreatedAt),有索引后降到 0.05ms。也顺带加速 Evict。
+CREATE INDEX IF NOT EXISTS idx_events_created ON usage_events(instance, created_at);
 CREATE TABLE IF NOT EXISTS sync_state(
   instance        TEXT    PRIMARY KEY,
   last_id         INTEGER NOT NULL DEFAULT 0,
@@ -132,7 +173,10 @@ WHERE backfilled_from = 0`); err != nil {
 		return err
 	}
 	if ver < schemaVersion {
-		if _, err := s.db.Exec(`PRAGMA user_version=4`); err != nil {
+		// 注意:PRAGMA 不接受绑定参数,只能拼字面量(schemaVersion 是内部常量,安全)。
+		// 这里绝不能写死数字 —— 否则升版时忘了同步改,user_version 永远停在旧值,
+		// 每次启动都会重跑一遍迁移。
+		if _, err := s.db.Exec(fmt.Sprintf(`PRAGMA user_version=%d`, schemaVersion)); err != nil {
 			return err
 		}
 	}
@@ -259,11 +303,18 @@ func (s *Store) NoteCoverage(instance string, fromUnix int64) {
 	if fromUnix <= 0 {
 		return
 	}
-	_, _ = s.db.Exec(`
+	// DO UPDATE 带 WHERE(而非 CASE 写回原值):水位没真的前移时整条 UPDATE 不发生,
+	// RowsAffected=0。存进去的值与原来的 CASE 写法完全一致,但多了「有没有变」这个信号。
+	res, err := s.db.Exec(`
 INSERT INTO sync_state(instance,last_id,updated_at,backfilled_from) VALUES(?,0,0,?)
-ON CONFLICT(instance) DO UPDATE SET backfilled_from =
-  CASE WHEN backfilled_from=0 OR excluded.backfilled_from < backfilled_from
-       THEN excluded.backfilled_from ELSE backfilled_from END`, instance, fromUnix)
+ON CONFLICT(instance) DO UPDATE SET backfilled_from=excluded.backfilled_from
+  WHERE backfilled_from=0 OR excluded.backfilled_from < backfilled_from`, instance, fromUnix)
+	if err != nil {
+		return
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		s.bump(instance)
+	}
 }
 
 // hourBucket 把事件时间截断到本地小时起点的 unix 秒。
@@ -298,15 +349,22 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?)`)
 	}
 	defer stmt.Close()
 
-	var maxID int64
+	var maxID, inserted int64
 	for _, e := range evs {
 		if e.ID > maxID {
 			maxID = e.ID
 		}
 		dims, _ := json.Marshal(e.Dims)
-		if _, err := stmt.Exec(instance, e.ID, e.CreatedAt.Unix(), hourBucket(e.CreatedAt), dayBucket(e.CreatedAt),
-			e.Input, e.Output, e.CacheCreate, e.CacheRead, e.Cost, string(dims)); err != nil {
+		res, err := stmt.Exec(instance, e.ID, e.CreatedAt.Unix(), hourBucket(e.CreatedAt), dayBucket(e.CreatedAt),
+			e.Input, e.Output, e.CacheCreate, e.CacheRead, e.Cost, string(dims))
+		if err != nil {
 			return err
+		}
+		// INSERT OR IGNORE 撞 (instance,id) 主键时 RowsAffected=0,首插=1 —— 这是版本号的
+		// 唯一判据。**因此这里必须保持逐行 Exec**:改成多行 VALUES 批插会让判据失效,
+		// 版本号就会在「一条新行都没有」时照样递增,缓存全程失效、退回每轮重算。
+		if n, _ := res.RowsAffected(); n > 0 {
+			inserted += n
 		}
 	}
 
@@ -316,7 +374,14 @@ ON CONFLICT(instance) DO UPDATE SET last_id=max(last_id, excluded.last_id), upda
 		instance, maxID, time.Now().Unix()); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	// 只有确实落了新行才算「数据变了」。稳态下这里绝大多数时候是 0。
+	if inserted > 0 {
+		s.bump(instance)
+	}
+	return nil
 }
 
 // QuerySeries 按 dimension 维度把自 sinceUnix 起的事件聚合成「每维度值一条序列」,
@@ -395,7 +460,19 @@ ORDER BY k, h`, keyPath, namePath, instance, sinceUnix)
 // beforeUnix:数据都删了就不能再声称覆盖到更早(否则 CoverageFrom 谎报、ensureBackfill 也据此
 // 误判已补齐)。夹取只在 W 早于 beforeUnix 时发生,幂等安全。
 func (s *Store) Evict(instance string, beforeUnix int64) {
-	_, _ = s.db.Exec(`DELETE FROM usage_events WHERE instance=? AND hour_local<?`, instance, beforeUnix)
-	_, _ = s.db.Exec(`UPDATE sync_state SET backfilled_from=? WHERE instance=? AND backfilled_from>0 AND backfilled_from<?`,
-		beforeUnix, instance, beforeUnix)
+	var changed int64
+	if res, err := s.db.Exec(`DELETE FROM usage_events WHERE instance=? AND hour_local<?`,
+		instance, beforeUnix); err == nil {
+		n, _ := res.RowsAffected()
+		changed += n
+	}
+	if res, err := s.db.Exec(`UPDATE sync_state SET backfilled_from=? WHERE instance=? AND backfilled_from>0 AND backfilled_from<?`,
+		beforeUnix, instance, beforeUnix); err == nil {
+		n, _ := res.RowsAffected()
+		changed += n
+	}
+	// 淘汰会让已渲染的图表少掉左侧一段,同样要让 UI 缓存失效。
+	if changed > 0 {
+		s.bump(instance)
+	}
 }

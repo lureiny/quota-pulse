@@ -35,15 +35,17 @@ class HeatmapChart extends StatefulWidget {
   final String? heatmapValue; // null/''=全部(聚合);否则某维度值(series.key)
   final void Function(int? year, String? value) onHeatmapViewChanged;
 
-  /// (instance, dimension, days) → 按天 ChartData(本地查询,便宜)。
-  final ChartData Function(String instance, String dimension, int days)
+  /// (instance, dimension, days) → 按天 ChartData。
+  /// **异步**:底层是 SQLite 按天聚合,全历史下单次可达数秒,已挪到后台 isolate 执行。
+  final Future<ChartData> Function(String instance, String dimension, int days)
       fetchDailyChart;
 
   /// (instance, hours) → 触发按需回填(异步)。
   final void Function(String instance, int hours) ensureCoverage;
 
   /// (instance) → 覆盖状态(水位 + 最早事件),供进度/年份列表。
-  final Coverage Function(String instance) fetchCoverage;
+  /// **异步**:Go 侧读 CoverageFrom + MinCreatedAt,与聚合共用同一条 SQLite 连接。
+  final Future<Coverage> Function(String instance) fetchCoverage;
 
   @override
   State<HeatmapChart> createState() => _HeatmapChartState();
@@ -59,15 +61,17 @@ class _HeatmapChartState extends State<HeatmapChart> {
 
   ChartData _data = const ChartData();
   Coverage _coverage = Coverage.empty;
+  // 首帧尚未取到数据。const ChartData() 的 ok=true / series=[] 会被渲染成一张假的空热力图。
+  bool _loaded = false;
+  // 请求序号:异步化之后,慢的旧请求可能后到并覆盖新结果(切年份来回点即可复现)。
+  int _reqSeq = 0;
   DateTime? _backfillStarted;
   Timer? _timer;
 
   @override
   void initState() {
     super.initState();
-    _data = _load();
-    _coverage = _loadCoverage();
-    _maybeBackfill();
+    _refresh(); // 异步:首帧先渲染加载态,拿到数据再 setState
     _timer = Timer.periodic(const Duration(seconds: 10), (_) => _refresh());
   }
 
@@ -79,6 +83,10 @@ class _HeatmapChartState extends State<HeatmapChart> {
         old.dimension != widget.dimension ||
         old.heatmapYear != widget.heatmapYear) {
       _backfillStarted = null;
+      // 网格已经在这一帧按新年份重排了(_effectiveYear/_gridStartWeek/_displayEnd 直接读
+      // widget.heatmapYear),而 _data 还是旧窗口那份 —— 所有格子都落在 inWindow 之外,
+      // 用户会看到一张**全空的 2024 热力图**,几秒后才突然填满,极易误读成「这年没用量」。
+      setState(() => _loaded = false);
       _refresh();
     }
   }
@@ -86,39 +94,49 @@ class _HeatmapChartState extends State<HeatmapChart> {
   @override
   void dispose() {
     _timer?.cancel();
+    _reqSeq++; // 作废在途请求:回包时序号对不上,不会再碰已销毁的 State
     super.dispose();
   }
 
-  ChartData _load() {
+  /// 先取 coverage、再取序列 —— **顺序不能反,也不能 Future.wait**。
+  ///
+  /// `_daysToRequest()` 经 `_gridStartWeek()` → `_effectiveYear()` 依赖
+  /// `_coverage.earliestEvent`:coverage 没到位时 earliestY 退化成今年,用户选的
+  /// 「2024 年」会被区间判定打回 null,于是先按「最近 6 个月」发一次错跨度的查询,
+  /// coverage 到了再重查一次 —— 白跑一遍几秒的聚合,年份下拉还会先塌成一项再展开。
+  /// Go 侧本来就是单连接串行的,顺序 await 没有额外损失。
+  Future<void> _refresh() async {
+    final seq = ++_reqSeq;
+
+    Coverage c;
     try {
-      return widget.fetchDailyChart(
+      c = await widget.fetchCoverage(widget.instance);
+    } catch (_) {
+      c = Coverage.empty;
+    }
+    if (!mounted || seq != _reqSeq) return;
+    // 先落进字段:下一行算天数就要用它。此时不 setState,紧接着的那次会一起刷。
+    _coverage = c;
+
+    ChartData d;
+    try {
+      // 必须 `await`:不 await 的话 try 包不住这个 Future,catch 永远不触发,
+      // 取数异常会变成未捕获的异步错误,「点按重试」的占位再也不会出现。
+      d = await widget.fetchDailyChart(
           widget.instance, widget.dimension, _daysToRequest());
     } catch (_) {
-      return ChartData.failed;
+      d = ChartData.failed;
     }
-  }
-
-  Coverage _loadCoverage() {
-    try {
-      return widget.fetchCoverage(widget.instance);
-    } catch (_) {
-      return Coverage.empty;
-    }
-  }
-
-  void _refresh() {
-    final d = _load();
-    final c = _loadCoverage();
-    if (!mounted) return;
+    if (!mounted || seq != _reqSeq) return;
     setState(() {
       _data = d;
-      _coverage = c;
+      _loaded = true;
     });
     _maybeBackfill();
   }
 
   void _maybeBackfill() {
-    if (_data.ok && !_data.fullyCovered) {
+    if (_loaded && _data.ok && !_data.fullyCovered) {
       _backfillStarted ??= DateTime.now();
       widget.ensureCoverage(widget.instance, _daysToRequest() * 24);
     } else {
@@ -232,6 +250,11 @@ class _HeatmapChartState extends State<HeatmapChart> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+
+    // 首帧加载态:必须先于下面的渲染,否则会闪一张全空的假热力图。
+    if (!_loaded) {
+      return _placeholder(cs, text: '加载中…');
+    }
 
     if (!_data.ok) {
       return _placeholder(cs,

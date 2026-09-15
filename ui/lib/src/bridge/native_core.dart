@@ -20,9 +20,14 @@ typedef _IntArgD = void Function(int);
 
 /// NativeCore 封装对 libqp.dylib 的 dart:ffi 调用。
 class NativeCore {
-  NativeCore._(this._lib);
+  NativeCore._(this._lib, this.libraryPath);
 
   final DynamicLibrary _lib;
+
+  /// 实际打开成功的那个名字/路径。后台 isolate 用它复现同一次加载 —— 不重跑候选探测,
+  /// 避免两侧探测结果发散(dlopen/LoadLibrary 是进程级引用计数,再 open 一次只是
+  /// refcount++,拿到同一镜像,Go runtime 不会二次初始化)。
+  final String libraryPath;
 
   late final _InitD _init = _lib.lookupFunction<_InitC, _InitD>('QP_Init');
   late final _VoidD _start = _lib.lookupFunction<_VoidC, _VoidD>('QP_Start');
@@ -69,20 +74,27 @@ class NativeCore {
     ];
 
     DynamicLibrary? lib;
+    String? hit;
     Object? lastErr;
     for (final name in candidates) {
       try {
         lib = DynamicLibrary.open(name);
+        hit = name;
         break;
       } catch (e) {
         lastErr = e;
       }
     }
-    if (lib == null) {
+    if (lib == null || hit == null) {
       throw StateError('无法加载 $file:$lastErr');
     }
-    return NativeCore._(lib);
+    return NativeCore._(lib, hit);
   }
+
+  /// 按已知路径打开(供后台 isolate 复现主 isolate 那次加载)。
+  /// **永不调 DynamicLibrary.close()** —— Go 的 c-shared 不支持 dlclose。
+  factory NativeCore.openAt(String path) =>
+      NativeCore._(DynamicLibrary.open(path), path);
 
   int init(String configJson) {
     final p = configJson.toNativeUtf8();
@@ -166,6 +178,41 @@ class NativeCore {
       }
     } finally {
       malloc.free(a);
+    }
+  }
+
+  /// 读每实例的数据版本号,返回 {"实例名": 版本号} 的 JSON。
+  ///
+  /// 极廉价(Go 侧只读几个原子变量),这正是它能替代「每轮重算聚合」的前提。
+  ///
+  /// 哨兵:`''` = 取不到(符号缺失 / 空指针),调用方必须退回「照常查询」的旧行为,
+  /// **绝不能当成「没变化」** —— 否则一次瞬时失败会让图表永久停止刷新。
+  /// `'{}'` = 真的一个实例都没有。
+  ///
+  /// QP_ChartVersions 是后加的导出:老版 libqp 里没有这个符号,而 lookupFunction 找不到
+  /// 符号会抛 ArgumentError。若在字段初始化时直接 lookup,用户拿旧 DLL 配新 exe 会让
+  /// 整个 App 起不来。所以这里惰性解析 + 吞掉异常,降级成「版本永远未知」。
+  // QP_ChartVersions 是无参导出(char* QP_ChartVersions(void)),用 _SnapC/_SnapD。
+  _SnapD? _chartVersionsFn;
+  bool _chartVersionsResolved = false;
+
+  String chartVersions() {
+    if (!_chartVersionsResolved) {
+      _chartVersionsResolved = true;
+      try {
+        _chartVersionsFn = _lib.lookupFunction<_SnapC, _SnapD>('QP_ChartVersions');
+      } catch (_) {
+        _chartVersionsFn = null; // 旧库:降级,不致命
+      }
+    }
+    final fn = _chartVersionsFn;
+    if (fn == null) return '';
+    final ptr = fn();
+    if (ptr == nullptr) return '';
+    try {
+      return ptr.toDartString();
+    } finally {
+      _free(ptr); // Go 分配 → QP_Free
     }
   }
 

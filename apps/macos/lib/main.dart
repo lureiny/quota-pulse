@@ -122,6 +122,10 @@ class _ShellState extends State<Shell> with WindowListener, WidgetsBindingObserv
   PulseController? _controller;
   final _alerter = UsageAlerter(); // 用量阈值提醒
   _View _view = _View.list;
+  // 面板当前是否真的在屏上。启动时两个壳都先 windowManager.hide(),所以初值是 false。
+  // 不能靠 PulseController 的默认值 —— controller 是 _startCore 里才创建的,
+  // 而图表 widget 从第一帧起就挂着定时器了。
+  bool _popoverVisible = false;
   String? _error;
   bool _autostartEnabled = false; // 开机自启动:真值以 OS 为准,启动时查询
   bool _debugOpen = false; // 调试面板打开时:窗口放大 + 失焦不自动收起
@@ -222,7 +226,9 @@ class _ShellState extends State<Shell> with WindowListener, WidgetsBindingObserv
     await _positionUnderTray();
     await windowManager.show();
     await windowManager.focus();
-    _source.setForeground(true);
+    _source.setForeground(true); // 喂给 Go poller 的调度信号(提高回源频率)
+    _popoverVisible = true;
+    _controller?.setVisible(true); // 喂给 UI 侧:恢复 2s 快照 + 允许图表查询
   }
 
   /// 贴到菜单栏图标正下方、水平居中(图标落在弹层上沿中点);拿不到位置则回退右上角。
@@ -286,6 +292,10 @@ class _ShellState extends State<Shell> with WindowListener, WidgetsBindingObserv
 
   Future<void> _hidePopover() async {
     _source.setForeground(false);
+    // 面板看不见了:快照降频到 10s,图表只读缓存、不再发起几秒的聚合。
+    // 注意**不是停表** —— 托盘 tooltip / 跑马灯都挂在快照通知上,停了就不再更新。
+    _popoverVisible = false;
+    _controller?.setVisible(false);
     await windowManager.hide();
   }
 
@@ -308,6 +318,12 @@ class _ShellState extends State<Shell> with WindowListener, WidgetsBindingObserv
         _controller = PulseController(_source);
         _controller!.addListener(_onPulse);
       }
+      // 核心被重建了:新引擎的图表版本号从 0 重新计数,会和旧缓存里的版本号撞车,
+      // 不清就会永久命中过期缓存(改实例名同理 —— 它也走这条路径)。
+      // 以壳的真实可见态为准,别依赖 controller 的默认值。
+      // 必须在 startPolling() 之前:此时 _timer 还是 null,不会白重排一次定时器。
+      _controller!.setVisible(_popoverVisible);
+      _controller!.invalidateCharts();
       _controller!.startPolling();
       _applyDebug(); // 重启核心后按持久化配置重挂调试采样
       _error = null;
@@ -408,6 +424,10 @@ class _ShellState extends State<Shell> with WindowListener, WidgetsBindingObserv
           alertRecoverWindows: recover,
         ));
     SettingsStore.save(_settings);
+    // 快照脏检查之后 _onPulse 只在快照**真变**时才跑,而 _alerter.check 是唯一的告警入口。
+    // 不在这里立刻按当前快照重判一次的话:改阈值/改监听窗口要等到下一次快照变化才生效,
+    // 而且刚开启告警时,那一拍会被 alerter 当成 seed 静默吞掉 —— 真告警直接丢失。
+    _alerter.check(_controller?.pulses ?? const <AccountPulse>[], _settings);
   }
 
   // 后台拉取节奏改动:持久化并重启核心(poll 配置进 toConfigJson,只能重新 init 生效)。
@@ -499,6 +519,9 @@ class _ShellState extends State<Shell> with WindowListener, WidgetsBindingObserv
   Future<void> _quit() async {
     try {
       _source.stop();
+    } catch (_) {}
+    try {
+      _source.shutdown(); // 停掉图表查询用的后台 isolate
     } catch (_) {}
     await MacMenuBar.destroy();
     exit(0);

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../format.dart';
@@ -15,11 +17,73 @@ const _purple = Color(0xFFAF52DE);
 ///   - 模型级徽章(普通模型限流 / 积分已用尽 / 走积分),各带解除倒计时。
 ///
 /// 主状态为「正常」时不画徽章(交给行首状态点),避免每行都挂一个「正常」。
-/// 弹层每 ~2s 拉快照重建,倒计时随之刷新。
-class AccountStatusBadges extends StatelessWidget {
+///
+/// 倒计时由**本组件自己**的节拍器驱动,不再依赖弹层每 2 秒的重建 ——
+/// PulseController 现在做脏检查(快照一字未变就不通知),而这里的 [_remaining] 读的是
+/// `DateTime.now()`,是全 UI 里少有的**真墙钟**文案,不自己走表就会定格。
+/// (托盘/跑马灯不受影响:它们读的是快照里的静态 `Meter.remainingSecs`。)
+class AccountStatusBadges extends StatefulWidget {
   const AccountStatusBadges(this.state, {super.key});
 
   final AccountState state;
+
+  @override
+  State<AccountStatusBadges> createState() => _AccountStatusBadgesState();
+}
+
+class _AccountStatusBadgesState extends State<AccountStatusBadges> {
+  Timer? _tick;
+
+  /// 让下面原有的方法体继续用裸 `state`,不必逐处改写成 `widget.state`。
+  AccountState get state => widget.state;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncTicker();
+  }
+
+  @override
+  void didUpdateWidget(AccountStatusBadges old) {
+    super.didUpdateWidget(old);
+    _syncTicker(); // 状态变了(限流解除/新限流)→ 重新决定要不要走表
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  /// 只在「确实存在未过期的解除时刻」时开表,没有倒计时可显示时立刻停 ——
+  /// 绝大多数账户是正常态,不该为它们各挂一个常驻定时器。
+  /// [fmtDuration] 在 <1h 时只精确到分钟,30 秒一跳足够。
+  void _syncTicker() {
+    final need = _hasPendingReset();
+    if (need && _tick == null) {
+      _tick = Timer.periodic(const Duration(seconds: 30), (_) {
+        if (!mounted) return;
+        if (!_hasPendingReset()) {
+          _tick?.cancel();
+          _tick = null;
+        }
+        setState(() {}); // 仅重算倒计时文案
+      });
+    } else if (!need && _tick != null) {
+      _tick!.cancel();
+      _tick = null;
+    }
+  }
+
+  bool _hasPendingReset() {
+    final now = DateTime.now();
+    bool pending(DateTime? t) => t != null && t.isAfter(now);
+    if (pending(state.resetsAt)) return true;
+    for (final m in state.models) {
+      if (pending(m.resetsAt)) return true;
+    }
+    return false;
+  }
 
   @override
   Widget build(BuildContext context) {
