@@ -164,26 +164,47 @@ class _ShellState extends State<Shell>
   // ---- 弹层高度随内容自适应(底锚向上生长,超工作区高才封顶滚动) ----
   double? _cachedVisibleH;
   double _lastPanelH = 0; // 上次 setSize 的高(防抖)
+  int _heightSeq = 0; // 内容高度上报序号(丢弃乱序完成的过期上报)
+  double _lastContentH = 0; // 最近一次上报的内容固有高(兜底重应用用)
 
-  Future<double> _capHeight() async {
-    if (_cachedVisibleH == null) {
+  Future<double>? _capInFlight; // 并发去重:多次上报撞在一起时只发一个平台请求
+
+  Future<double> _capHeight() {
+    if (_cachedVisibleH != null) {
+      final vh = _cachedVisibleH!;
+      return Future<double>.value((vh - 60).clamp(300.0, vh));
+    }
+    return _capInFlight ??= () async {
       try {
         final d = await screenRetriever.getPrimaryDisplay();
         _cachedVisibleH = d.visibleSize?.height ?? d.size.height;
-      } catch (_) {}
-    }
-    final vh = _cachedVisibleH ?? 900.0;
-    return (vh - 60).clamp(300.0, vh);
+      } catch (_) {
+        // 取不到就这次先用兜底值,不写缓存 → 下次还会再试
+      } finally {
+        _capInFlight = null;
+      }
+      final vh = _cachedVisibleH ?? 900.0;
+      return (vh - 60).clamp(300.0, vh);
+    }();
   }
 
   /// PopoverPage 上报内容固有高 → 窗口高 = clamp(h, 260, cap),仅列表视图生效、防抖。
   Future<void> _onContentHeight(double h) async {
+    _lastContentH = h; // 记住最近一次上报,供显示面板时兜底重应用
     if (_view != _View.list) return;
+    // 序号守卫:本方法是 async 的(要先拿工作区高),而内容高度会在短时间内上报**多次** ——
+    // 图表从「加载中…」占位换成真图表、每个实例各换一轮。多个并发调用的 await 完成顺序
+    // 不保证与上报顺序一致,一旦「占位那一次」最后落地,窗口就被钉死在矮尺寸上;
+    // 而 MeasureSize 只在尺寸**变化**时才回调,此后内容高度稳定,再没有人来纠正它 ——
+    // 表现就是「窗口一直矮、等多久都不长高,必须滚动才能看全」。
+    final seq = ++_heightSeq;
     final cap = await _capHeight();
+    if (seq != _heightSeq) return; // 已被更新的上报取代,这次作废
     final target = (h + 2).clamp(260.0, cap); // +2 余量防亚像素溢出误出滚动条
     if ((target - _lastPanelH).abs() < 2) return;
     _lastPanelH = target;
     await windowManager.setSize(Size(kPanelWidth, target));
+    if (seq != _heightSeq) return; // setSize 期间又有新上报 → 交给它去定位
     await _positionNearTray();
   }
 
@@ -285,6 +306,12 @@ class _ShellState extends State<Shell>
   Future<void> _showPopover({bool fromTicker = false}) async {
     _updateTicker(); // 顺带回拉原生实际宽,把可能被拖拽改过的宽度同步到配置/设置页滑块
     WinTicker.setPopoverOpen(true); // 面板弹出时把浮窗降到面板之下(仍压住其他程序)
+    // 兜底:用最近一次上报的内容高度重新应用一次窗口高。
+    // MeasureSize 只在尺寸**变化**时回调,所以万一某次 setSize 落错了(或被乱序覆盖),
+    // 内容稳定之后就再没有人来纠正 —— 用户会永久看到一个矮窗口且无法自愈。
+    // 这里每次显示都重算一遍,把「不可恢复」降级成「打开一次就好」。
+    // 走 _onContentHeight 本身,自然领到新序号,与在途的上报正确排序。
+    if (_lastContentH > 0) await _onContentHeight(_lastContentH);
     if (fromTicker) {
       await WinTicker.positionNearTicker(); // 以悬浮窗为锚点
     } else {

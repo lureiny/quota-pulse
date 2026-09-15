@@ -63,6 +63,10 @@ class _HourlyChartState extends State<HourlyChart> {
   bool _loaded = false;
   // 请求序号:异步化之后,慢的旧请求可能后到并覆盖新结果(切维度再切回来即可复现)。
   int _reqSeq = 0;
+  // 是否有一发在途。定时刷新必须让位给它 —— 否则一轮耗时超过定时器周期时,
+  // 每一拍都会把上一拍作废,_loaded 永远变不成 true,图表永久停在加载态、
+  // 高度也永久停在矮占位上(弹层窗口高是按内容实测高定的)。
+  bool _inFlight = false;
   ChartMetric? _renderedMetric; // 上次渲染用的度量;仅当它变化时禁掉图表过渡动画(切度量=换单位)
   final Set<String> _hidden = {}; // 被图例关掉的系列 key
   DateTime? _backfillStarted; // 本次未覆盖触发补齐的时刻(用于「补齐中」短时态)
@@ -72,7 +76,7 @@ class _HourlyChartState extends State<HourlyChart> {
   void initState() {
     super.initState();
     _renderedMetric = widget.metric; // 首帧与当前度量一致 → 正常入场动画;仅后续切换才瞬时
-    _refresh(); // 异步:首帧先渲染加载态,拿到数据再 setState
+    _refresh(force: true); // 异步:首帧先渲染加载态,拿到数据再 setState
     // 随新事件 / 补齐进度,定时刷新(与快照 tick 解耦,避免每次重建都打 FFI)。
     _timer = Timer.periodic(const Duration(seconds: 10), (_) => _refresh());
   }
@@ -91,7 +95,7 @@ class _HourlyChartState extends State<HourlyChart> {
       // 旧 _data 配新窗口会渲染成一张误导性的图(24h→168h 时只有右侧 1/7 有柱子)。
       // 异步化之前是同步取数,不存在这个中间态;现在必须显式退回加载态。
       setState(() => _loaded = false);
-      _refresh();
+      _refresh(force: true);
     }
   }
 
@@ -102,8 +106,12 @@ class _HourlyChartState extends State<HourlyChart> {
     super.dispose();
   }
 
-  Future<void> _refresh() async {
+  /// [force] = 参数真的变了(切维度/跨度)或用户点了重试 → 必须重取,允许抢占在途请求。
+  /// [force]=false 是定时刷新:在途就直接跳过,绝不抢占(见 [_inFlight] 的说明)。
+  Future<void> _refresh({bool force = false}) async {
+    if (_inFlight && !force) return;
     final seq = ++_reqSeq;
+    _inFlight = true;
     ChartData d;
     try {
       // 必须 `await`。写成 `return widget.fetchChart(...)` 而不 await 的话,
@@ -114,6 +122,7 @@ class _HourlyChartState extends State<HourlyChart> {
     } catch (_) {
       d = ChartData.failed;
     }
+    if (seq == _reqSeq) _inFlight = false; // 被抢占时不清:由抢占者接管
     if (!mounted || seq != _reqSeq) return; // 已销毁 / 已被更新的请求取代
     setState(() {
       _data = d;
@@ -191,7 +200,7 @@ class _HourlyChartState extends State<HourlyChart> {
           _placeholder(cs,
               icon: Icons.error_outline,
               text: '数据获取异常,点按重试',
-              onTap: _refresh));
+              onTap: () => _refresh(force: true)));
     }
 
     final allSeries = _data.series;

@@ -65,13 +65,18 @@ class _HeatmapChartState extends State<HeatmapChart> {
   bool _loaded = false;
   // 请求序号:异步化之后,慢的旧请求可能后到并覆盖新结果(切年份来回点即可复现)。
   int _reqSeq = 0;
+  // 是否有一发在途。定时刷新必须让位给它 —— 否则一轮耗时超过定时器周期时,每一拍都会把
+  // 上一拍作废,_loaded 永远变不成 true。热力图尤其要命:它串行跑 coverage + daily 两发,
+  // 全历史 keep-all 下一轮很可能超过 10 秒,那就会永久停在加载态,而弹层窗口高是按内容
+  // 实测高定的 —— 表现就是「窗口一直矮、等多久都不长高」。
+  bool _inFlight = false;
   DateTime? _backfillStarted;
   Timer? _timer;
 
   @override
   void initState() {
     super.initState();
-    _refresh(); // 异步:首帧先渲染加载态,拿到数据再 setState
+    _refresh(force: true); // 异步:首帧先渲染加载态,拿到数据再 setState
     _timer = Timer.periodic(const Duration(seconds: 10), (_) => _refresh());
   }
 
@@ -87,7 +92,7 @@ class _HeatmapChartState extends State<HeatmapChart> {
       // widget.heatmapYear),而 _data 还是旧窗口那份 —— 所有格子都落在 inWindow 之外,
       // 用户会看到一张**全空的 2024 热力图**,几秒后才突然填满,极易误读成「这年没用量」。
       setState(() => _loaded = false);
-      _refresh();
+      _refresh(force: true);
     }
   }
 
@@ -105,8 +110,12 @@ class _HeatmapChartState extends State<HeatmapChart> {
   /// 「2024 年」会被区间判定打回 null,于是先按「最近 6 个月」发一次错跨度的查询,
   /// coverage 到了再重查一次 —— 白跑一遍几秒的聚合,年份下拉还会先塌成一项再展开。
   /// Go 侧本来就是单连接串行的,顺序 await 没有额外损失。
-  Future<void> _refresh() async {
+  /// [force] = 参数真的变了(切实例/维度/年份)或用户点了重试 → 必须重取,允许抢占在途请求。
+  /// [force]=false 是定时刷新:在途就直接跳过,**绝不抢占**(见 [_inFlight])。
+  Future<void> _refresh({bool force = false}) async {
+    if (_inFlight && !force) return;
     final seq = ++_reqSeq;
+    _inFlight = true;
 
     Coverage c;
     try {
@@ -114,7 +123,10 @@ class _HeatmapChartState extends State<HeatmapChart> {
     } catch (_) {
       c = Coverage.empty;
     }
-    if (!mounted || seq != _reqSeq) return;
+    if (!mounted || seq != _reqSeq) {
+      if (seq == _reqSeq) _inFlight = false; // 仅"组件已销毁"这条:别把标志留成 true
+      return;
+    }
     // 先落进字段:下一行算天数就要用它。此时不 setState,紧接着的那次会一起刷。
     _coverage = c;
 
@@ -127,6 +139,7 @@ class _HeatmapChartState extends State<HeatmapChart> {
     } catch (_) {
       d = ChartData.failed;
     }
+    if (seq == _reqSeq) _inFlight = false; // 被抢占时不清:由抢占者接管
     if (!mounted || seq != _reqSeq) return;
     setState(() {
       _data = d;
@@ -195,6 +208,21 @@ class _HeatmapChartState extends State<HeatmapChart> {
     return days < 1 ? 1 : days;
   }
 
+  /// 单元边长:填满可用宽度,夹到 [_cellMin, _cellMax]。与 [_grid] 同一套算法。
+  double _cellFor(double availWidth) =>
+      ((availWidth - _labelW) / _weekCount() - _gap)
+          .clamp(_cellMin, _cellMax)
+          .toDouble();
+
+  /// 网格整体高度 = 月份标签行 + 7 行格子。
+  ///
+  /// 只依赖 `_coverage` 与 `widget.heatmapYear`,**不依赖 `_data`** —— 也就是说加载态
+  /// 完全有能力算准最终高度。占位必须用它预留出同样的高:弹层窗口高是按内容实测高定的
+  /// (popover_page 的 MeasureSize → 壳的 _onContentHeight),一行字的裸占位会把窗口
+  /// 定矮一百多像素,数据回来才长回去 —— 用户看到的就是「窗口不自动展开、要滚动」。
+  double _gridHeight(double availWidth) =>
+      _monthRowH + 7 * (_cellFor(availWidth) + _gap);
+
   int _weekCount() {
     final start = _gridStartWeek();
     final lastWeek = _weekStartSunday(_displayEnd());
@@ -258,7 +286,7 @@ class _HeatmapChartState extends State<HeatmapChart> {
 
     if (!_data.ok) {
       return _placeholder(cs,
-          icon: Icons.error_outline, text: '数据获取异常,点按重试', onTap: _refresh);
+          icon: Icons.error_outline, text: '数据获取异常,点按重试', onTap: () => _refresh(force: true));
     }
 
     final effectiveValue = _effectiveValue();
@@ -305,8 +333,7 @@ class _HeatmapChartState extends State<HeatmapChart> {
         _coverage.earliestEvent != null ? _dayOnly(_coverage.earliestEvent!) : null;
 
     // 单元占位边长:填满可用宽度,夹到 [min,max]。放不下则横向滚动。
-    final rawCell = (availWidth - _labelW) / weeks - _gap;
-    final cell = rawCell.clamp(_cellMin, _cellMax).toDouble();
+    final cell = _cellFor(availWidth);
     final slot = cell + _gap;
 
     Color colorFor(DateTime date) {
@@ -545,8 +572,15 @@ class _HeatmapChartState extends State<HeatmapChart> {
     );
   }
 
-  // ---- 占位(取数异常) ----
+  // ---- 占位(加载中 / 取数异常) ----
 
+  /// 与「装好数据的那一帧」**逐块同构**的占位:控件行 + 预留等高的网格 + 图例,
+  /// 只把网格本身换成一行提示。
+  ///
+  /// 为什么非要同构:弹层窗口高 = 内容实测固有高(popover_page 的 MeasureSize 上报给壳)。
+  /// 以前图表是同步取数,首帧即终态,量一次就定;异步化之后如果占位只有一行字,
+  /// 窗口会先被定成矮的,几秒后才长回去 —— 切维度/年份时更是每次都抽一下。
+  /// 把占位撑到同样高度,这条链路就回到「量一次就对」。
   Widget _placeholder(ColorScheme cs,
       {IconData? icon, required String text, VoidCallback? onTap}) {
     final row = Row(
@@ -558,14 +592,32 @@ class _HeatmapChartState extends State<HeatmapChart> {
       ],
     );
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-      child: Center(
-        child: onTap == null
-            ? row
-            : InkWell(
-                borderRadius: BorderRadius.circular(6),
-                onTap: onTap,
-                child: Padding(padding: const EdgeInsets.all(6), child: row)),
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 加载态下 _data.series 为空,值下拉只会有「全部(聚合)」;年份下拉同理。
+          // 结构在位、高度就在位,数据到了只是把内容填进去。
+          _controls(cs, null),
+          const SizedBox(height: 4),
+          LayoutBuilder(
+            builder: (context, c) => SizedBox(
+              width: double.infinity,
+              height: _gridHeight(c.maxWidth), // ← 关键:预留真网格的高度
+              child: Center(
+                child: onTap == null
+                    ? row
+                    : InkWell(
+                        borderRadius: BorderRadius.circular(6),
+                        onTap: onTap,
+                        child: Padding(
+                            padding: const EdgeInsets.all(6), child: row)),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          _legend(cs),
+        ],
       ),
     );
   }
