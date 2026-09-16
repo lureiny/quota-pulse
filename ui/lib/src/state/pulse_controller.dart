@@ -48,10 +48,14 @@ class PulseController extends ChangeNotifier {
 
   final PulseSource _source;
 
-  /// 可见 / 不可见时的快照拉取间隔。不可见时**不能停表** —— 托盘 tooltip、菜单栏跑马灯、
-  /// Windows 悬浮窗都挂在 `notifyListeners()` 上,停了它们就不再更新;只降频。
-  static const Duration _visibleInterval = Duration(seconds: 2);
-  static const Duration _hiddenInterval = Duration(seconds: 10);
+  /// 快照拉取间隔。**面板隐藏时也保持同一节奏,不降频、更不停表** ——
+  /// 隐藏时托盘 tooltip 和 Windows 悬浮窗跑马灯就是全部 UI,它们全挂在
+  /// `notifyListeners()` 上,降频只会让唯一可见的东西变迟钝。
+  ///
+  /// 而这一拍本身极便宜:数据没变时只有「一次 FFI 取快照 + Go 侧 marshal + 字符串比对」,
+  /// 实测 5/20/60 个账户分别是 28µs / 149µs / 380µs,脏检查会拦住重建、托盘推送和
+  /// 跑马灯 MethodChannel。真正吃 CPU 的是图表聚合,那条由 [setVisible] 单独把关。
+  static const Duration _interval = Duration(seconds: 2);
 
   /// 缓存条目上限。键是 (实例 × 维度 × 跨度),热力图的天数还会随日期漂移,
   /// 不封顶会缓慢长大。超了就按插入序淘汰最老的(Dart 的 Map 保持插入序)。
@@ -118,9 +122,7 @@ class PulseController extends ChangeNotifier {
   void startPolling({Duration? interval}) {
     _tick();
     _timer?.cancel();
-    _timer = Timer.periodic(
-        interval ?? (_visible ? _visibleInterval : _hiddenInterval),
-        (_) => _tick());
+    _timer = Timer.periodic(interval ?? _interval, (_) => _tick());
   }
 
   void stopPolling() {
@@ -130,15 +132,17 @@ class PulseController extends ChangeNotifier {
 
   /// 弹层是否可见。壳在显示/隐藏面板时调。
   ///
-  /// 不可见时:① 快照降频到 10s;② 图表**只读缓存、不再发起查询** —— 用户看不见的图
-  /// 不值得为它跑几秒的聚合。这是「关掉面板 CPU 仍然高」的直接解法。
+  /// 不可见时图表**只读缓存、不再发起查询** —— 用户看不见的图不值得为它跑几秒的聚合。
+  /// 这是「关掉面板 CPU 仍然高」的直接解法。
+  ///
+  /// 快照那一拍**不受影响**,照常 2 秒(见 [_interval]):托盘和跑马灯靠它活着,
+  /// 而它便宜到不值得为省它做任何事。
   ///
   /// 注意这里**不碰** `setForeground` —— 那条是喂给 Go poller 的调度信号(控制回源频率),
   /// 语义不同,由壳各自调用,别在这里耦合。
   void setVisible(bool v) {
     if (_visible == v) return;
     _visible = v;
-    if (_timer != null) startPolling(); // 换挡:按新的可见性重排间隔
   }
 
   /// 核心重启后必须调:新引擎的版本号从 0 重新计数,会和旧缓存里的版本号撞车,
