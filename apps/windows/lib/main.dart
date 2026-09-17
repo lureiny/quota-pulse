@@ -189,6 +189,16 @@ class _ShellState extends State<Shell>
   }
 
   /// PopoverPage 上报内容固有高 → 窗口高 = clamp(h, 260, cap),仅列表视图生效、防抖。
+  /// 切到设置页,并顺带重新定位一次窗口。
+  ///
+  /// 设置页不参与 [_onContentHeight](它不上报内容固有高),几何完全继承列表页留下的那份 ——
+  /// 万一那份是错的,设置页自己没有任何纠正机会,只能等用户退回列表才恢复。
+  /// 这里补一次定位,让它能自愈。
+  Future<void> _gotoSettings() async {
+    setState(() => _view = _View.settings);
+    await _positionNearTray();
+  }
+
   Future<void> _onContentHeight(double h) async {
     _lastContentH = h; // 记住最近一次上报,供显示面板时兜底重应用
     if (_view != _View.list) return;
@@ -204,7 +214,11 @@ class _ShellState extends State<Shell>
     if ((target - _lastPanelH).abs() < 2) return;
     _lastPanelH = target;
     await windowManager.setSize(Size(kPanelWidth, target));
-    if (seq != _heightSeq) return; // setSize 期间又有新上报 → 交给它去定位
+    // **resize 之后必须无条件重新定位**,哪怕这一发已经被更新的上报取代。
+    // 窗口是「底部贴托盘、向上生长」的,尺寸变了不重新定位,几何就错位
+    // (表现:顶部那一行渲染不出来,但控件其实还在、点得到)。
+    // 曾经想当然地交给抢占者去定位,但抢占者的目标高度若落在下面那个 <2 的防抖区间,
+    // 它会在定位之前就 return —— 那次 setSize 就永远没有配套定位了。
     await _positionNearTray();
   }
 
@@ -740,7 +754,7 @@ class _ShellState extends State<Shell>
       onChartViewChanged: _onChartViewChanged,
       onContentHeight: _onContentHeight,
       onRefresh: () => _controller?.refreshNow(),
-      onSettings: () => setState(() => _view = _View.settings),
+      onSettings: _gotoSettings,
     );
   }
 
@@ -753,7 +767,7 @@ class _ShellState extends State<Shell>
               Text(msg, textAlign: TextAlign.center, style: const TextStyle(fontSize: 12, color: Color(0xFFFF3B30))),
               const SizedBox(height: 12),
               FilledButton(
-                onPressed: () => setState(() => _view = _View.settings),
+                onPressed: _gotoSettings,
                 child: const Text('去设置'),
               ),
             ],
