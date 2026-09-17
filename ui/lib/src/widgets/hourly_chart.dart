@@ -77,8 +77,10 @@ class _HourlyChartState extends State<HourlyChart> {
     super.initState();
     _renderedMetric = widget.metric; // 首帧与当前度量一致 → 正常入场动画;仅后续切换才瞬时
     _refresh(force: true); // 异步:首帧先渲染加载态,拿到数据再 setState
-    // 随新事件 / 补齐进度,定时刷新(与快照 tick 解耦,避免每次重建都打 FFI)。
-    _timer = Timer.periodic(const Duration(seconds: 10), (_) => _refresh());
+    // 小时图要跟手:3 秒探一次。这**不等于**每 3 秒查一次库 —— controller 的版本号闸门
+    // 会把「数据没变」的那些拍挡成一次 map 查找,只有真有新事件才会下发查询,
+    // 而小时图单次实测只有几十~几百毫秒,付得起。
+    _timer = Timer.periodic(const Duration(seconds: 3), (_) => _refresh());
   }
 
   @override

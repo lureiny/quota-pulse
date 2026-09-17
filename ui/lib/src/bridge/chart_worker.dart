@@ -36,6 +36,18 @@ class ChartQueryKind {
   static const int coverage = 2; // QP_Coverage
 }
 
+/// 出队优先级(数字小者先跑)。
+///
+/// worker 是一条**串行**队列(Go 侧 `SetMaxOpenConns(1)`,并发发过去也只是排队),
+/// 所以谁先跑直接决定用户先看到什么。小时图便宜(实测几十~几百毫秒)且要跟手,
+/// 热力图昂贵(全历史按天聚合可达数秒)但只有按天粒度 —— 让后者堵在前者前面,
+/// 就会出现「打开面板要等半天柱状图才出来」。
+int _priorityOf(int kind) => switch (kind) {
+      ChartQueryKind.hourly => 0,
+      ChartQueryKind.coverage => 1, // 便宜(已加 created_at 索引),且热力图要等它
+      _ => 2, // daily:最贵,垫底
+    };
+
 /// 主 isolate 侧的客户端:负责 spawn、配对请求/响应。
 class ChartWorkerClient {
   ChartWorkerClient._(this._iso, this._tx, this._rx);
@@ -202,7 +214,13 @@ void _workerMain(List<Object?> boot) {
     draining = true;
     try {
       while (buffer.isNotEmpty) {
-        final item = buffer.removeAt(0);
+        // 按优先级挑,而不是先进先出:一发几秒的热力图不该把要跟手的小时图堵在后面。
+        // (已经开始执行的那一发拦不住 —— 同步 cgo 不可抢占。)
+        var pick = 0;
+        for (var i = 1; i < buffer.length; i++) {
+          if (_priorityOfItem(buffer[i]) < _priorityOfItem(buffer[pick])) pick = i;
+        }
+        final item = buffer.removeAt(pick);
         // 取参与抢占判定本身也必须裹在 try 里 —— _execute 内部虽然全程 try/catch,
         // 但这一段裸着的话,一条畸形消息就会让异常逃出 drain(),那一发**没有任何回包**,
         // 主侧的 Completer 永远挂着。纪律是「每一项都必有回包」,靠结构保证,不靠自觉。
@@ -213,6 +231,12 @@ void _workerMain(List<Object?> boot) {
 
           // 同 slot 后面还有更新的 → 这一发已无意义,直接顶掉。
           // (已经开始执行的那一发无法取消,同步 cgo 拦不住,最多浪费一次。)
+          //
+          // 这条判据依赖一个**不明显的前提**:buffer 里剩下的同 slot 项必然比这一项新。
+          // 改成按优先级出队之后它仍然成立,因为 slot 一一对应 kind、kind 一一对应优先级,
+          // 所以同 slot 的项优先级必然相同;而上面挑选时用的是严格小于,同优先级保持最小
+          // 下标 = 先进先出。**若将来让同 slot 的项拥有不同优先级,这条就会反向抢占
+          // (用旧的顶掉新的),必须同步改。**
           if (buffer.any((p) => p.length > 2 && p[2] == slot)) {
             reply.send(<Object?>[id, '']);
             continue;
@@ -244,6 +268,10 @@ void _workerMain(List<Object?> boot) {
     unawaited(Future<void>(drain));
   });
 }
+
+/// 从一条队列消息里安全地取出优先级(畸形消息垫底,由后面的校验去丢弃)。
+int _priorityOfItem(List<Object?> item) =>
+    (item.length == 6 && item[1] is int) ? _priorityOf(item[1] as int) : 3;
 
 /// 真正执行一次查询。任何失败都收敛成 `''`(与 Go 空指针哨兵一致),**绝不抛异常** ——
 /// 异常会走 isolate 的 onError 通道,那条通道拿不到 requestId,上层将永远 await 不到结果。

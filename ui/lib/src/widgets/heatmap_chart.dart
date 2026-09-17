@@ -77,7 +77,9 @@ class _HeatmapChartState extends State<HeatmapChart> {
   void initState() {
     super.initState();
     _refresh(force: true); // 异步:首帧先渲染加载态,拿到数据再 setState
-    _timer = Timer.periodic(const Duration(seconds: 10), (_) => _refresh());
+    // 热力图是**按天**粒度的:一天一个格子,秒级刷新没有任何意义,而它单次聚合可达数秒。
+    // 探测降到 30 秒(controller 里还叠了 60 秒的最小重查间隔,这里只需要保证按时探到边界)。
+    _timer = Timer.periodic(const Duration(seconds: 30), (_) => _refresh());
   }
 
   @override
