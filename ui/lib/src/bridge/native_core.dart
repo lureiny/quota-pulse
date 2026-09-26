@@ -91,22 +91,42 @@ class NativeCore {
     return NativeCore._(lib, hit);
   }
 
-  /// 已加载镜像的 dlopen 句柄地址。**后台 isolate 要用它来复现同一次加载。**
+  /// 把后台 isolate 需要的那几个符号**解析成地址**打包带走。
   ///
-  /// 为什么不传路径让对端自己 open:那样是第二次 dlopen,解析结果理论上相同、
-  /// 实际上取决于 @rpath / 搜索路径在该调用点如何展开。一旦解析到**另一个文件**,
-  /// 进程里就会出现两份 libqp、两个 Go runtime(golang/go#65050 明确说这会炸),
-  /// 而且第二份的全局 engine 从没 QP_Init 过 —— 表现就是闪退或静默空数据。
-  /// 传句柄没有这个歧义:拿到的必然是同一个镜像。
-  int get handleAddress => _lib.handle.address;
+  /// 为什么不让对端自己 `DynamicLibrary.open(路径)`:那是第二次 dlopen,解析结果取决于
+  /// `@rpath` / 搜索路径在该调用点如何展开。一旦解析到**另一个文件**,进程里就会出现两份
+  /// libqp、两个 Go runtime(golang/go#65050),而且第二份的全局 engine 从没 QP_Init 过 ——
+  /// 表现是闪退或静默空数据。传地址没有这个歧义:指向的必然是同一份已加载代码。
+  ///
+  /// (注:`dart:ffi` 没有「按句柄构造 DynamicLibrary」的入口,
+  /// 传函数指针地址是官方推荐的跨 isolate 共享方式。)
+  /// 逐个符号显式 lookup —— **不要抽成泛型辅助函数**:dart:ffi 的转换器要求
+  /// 这类调用的类型实参是编译期常量,类型变量会被拒。
+  ChartSymbols chartSymbols() {
+    int s2s(String name) {
+      try {
+        return _lib.lookup<NativeFunction<_StrToStrC>>(name).address;
+      } catch (_) {
+        return 0; // 老库缺这个符号 → 0,对端据此降级
+      }
+    }
 
-  /// 按已加载镜像的句柄地址构造(供后台 isolate 用)。
-  /// 句柄是进程级的,跨 isolate 传一个 int 是安全的;**永不调 DynamicLibrary.close()**
-  /// —— Go 的 c-shared 不支持 dlclose。
-  factory NativeCore.fromHandleAddress(int address, String label) => NativeCore._(
-        DynamicLibrary.fromHandle(Pointer<Void>.fromAddress(address)),
-        label,
-      );
+    int sArg(String name) {
+      try {
+        return _lib.lookup<NativeFunction<_StrArgC>>(name).address;
+      } catch (_) {
+        return 0;
+      }
+    }
+
+    return ChartSymbols(
+      chartSeries: s2s('QP_ChartSeries'),
+      chartDaily: s2s('QP_ChartDailySeries'),
+      coverage: s2s('QP_Coverage'),
+      free: sArg('QP_Free'),
+      log: sArg('QP_Log'),
+    );
+  }
 
   int init(String configJson) {
     final p = configJson.toNativeUtf8();
@@ -305,4 +325,99 @@ class NativeCore {
 
   /// 清空已采样本(保留开关与上限)。
   void debugReset() => _debugReset();
+}
+
+/// ChartSymbols 是「后台 isolate 需要的函数指针地址」集合。**全是 int,可安全跨 isolate 传递。**
+/// 0 表示该符号在当前库里不存在(老版 libqp),对端据此降级而不是崩。
+class ChartSymbols {
+  const ChartSymbols({
+    required this.chartSeries,
+    required this.chartDaily,
+    required this.coverage,
+    required this.free,
+    required this.log,
+  });
+
+  final int chartSeries;
+  final int chartDaily;
+  final int coverage;
+  final int free;
+  final int log;
+
+  /// 三个查询里只要有一个拿不到,就没必要起 worker 了。
+  bool get usable => chartSeries != 0 && chartDaily != 0 && coverage != 0 && free != 0;
+
+  List<Object?> toWire() => <Object?>[chartSeries, chartDaily, coverage, free, log];
+
+  static ChartSymbols fromWire(List<Object?> w) => ChartSymbols(
+        chartSeries: w[0] as int,
+        chartDaily: w[1] as int,
+        coverage: w[2] as int,
+        free: w[3] as int,
+        log: w[4] as int,
+      );
+}
+
+/// ChartQueryCore 是**只在后台 isolate 里存在**的精简核心:只含图表查询用得到的几个符号,
+/// 由主 isolate 解析好地址后传过来重建,不做第二次 dlopen。
+///
+/// **这里的每个方法都必须与 [NativeCore] 里的同名方法保持相同的内存纪律**(见 CLAUDE.md):
+/// Dart 传进去的字符串用 `malloc.free`,Go 返回的字符串用 `QP_Free`。用反了会破坏堆。
+/// 之所以不复用 NativeCore:它持有 `DynamicLibrary`,而 dart:ffi 没有按地址重建 DynamicLibrary
+/// 的入口,只能按函数指针重建。
+class ChartQueryCore {
+  ChartQueryCore(ChartSymbols s)
+      : _chartSeries = Pointer<NativeFunction<_StrToStrC>>.fromAddress(s.chartSeries)
+            .asFunction<_StrToStrD>(),
+        _chartDaily = Pointer<NativeFunction<_StrToStrC>>.fromAddress(s.chartDaily)
+            .asFunction<_StrToStrD>(),
+        _coverage = Pointer<NativeFunction<_StrToStrC>>.fromAddress(s.coverage)
+            .asFunction<_StrToStrD>(),
+        _free = Pointer<NativeFunction<_StrArgC>>.fromAddress(s.free)
+            .asFunction<_StrArgD>(),
+        _log = s.log == 0
+            ? null
+            : Pointer<NativeFunction<_StrArgC>>.fromAddress(s.log)
+                .asFunction<_StrArgD>();
+
+  final _StrToStrD _chartSeries;
+  final _StrToStrD _chartDaily;
+  final _StrToStrD _coverage;
+  final _StrArgD _free;
+  final _StrArgD? _log;
+
+  /// 三个查询共用一套调用骨架:入参 Dart 分配→malloc.free,返回值 Go 分配→QP_Free。
+  /// 空指针返回 ''(上层据此判为取数异常,区别于真空数据)。
+  String _call(_StrToStrD fn, String argsJson) {
+    final a = argsJson.toNativeUtf8();
+    try {
+      final ptr = fn(a);
+      if (ptr == nullptr) return '';
+      try {
+        return ptr.toDartString();
+      } finally {
+        _free(ptr);
+      }
+    } finally {
+      malloc.free(a);
+    }
+  }
+
+  String chartSeries(String argsJson) => _call(_chartSeries, argsJson);
+  String chartDailySeries(String argsJson) => _call(_chartDaily, argsJson);
+  String coverage(String argsJson) => _call(_coverage, argsJson);
+
+  /// 写一行日志到 Go 侧同一个日志文件(未启用/老库时是 no-op)。
+  void log(String line) {
+    final fn = _log;
+    if (fn == null) return;
+    final p = line.toNativeUtf8();
+    try {
+      fn(p);
+    } catch (_) {
+      // 记日志绝不能成为新的故障源
+    } finally {
+      malloc.free(p);
+    }
+  }
 }

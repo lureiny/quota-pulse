@@ -65,12 +65,12 @@ class ChartWorkerClient {
 
   /// 启动 worker。
   ///
-  /// [handleAddress] 是主 isolate 那次 dlopen 的**句柄地址**([NativeCore.handleAddress])。
+  /// [symbols] 是主 isolate 解析好的**函数指针地址**集合([NativeCore.chartSymbols])。
   /// 刻意不传路径让 worker 自己 open:第二次 dlopen 的解析结果取决于 @rpath / 搜索路径
   /// 在该调用点如何展开,一旦解析到另一个文件,进程里就会出现两份 libqp、两个 Go runtime
   /// (golang/go#65050),而且第二份的全局 engine 从没 QP_Init 过 —— 表现是闪退或静默空数据。
-  /// 传句柄没有这个歧义。[label] 只用于日志。
-  static Future<ChartWorkerClient> spawn(int handleAddress, String label) async {
+  /// 传地址没有这个歧义:指向的必然是同一份已加载代码。[label] 只用于日志。
+  static Future<ChartWorkerClient> spawn(ChartSymbols symbols, String label) async {
     final rx = ReceivePort();
     final ready = Completer<SendPort>();
     // 一条**持久**订阅,从头到尾不取消。
@@ -102,7 +102,7 @@ class ChartWorkerClient {
     try {
       iso = await Isolate.spawn(
         _workerMain,
-        <Object?>[rx.sendPort, handleAddress, label],
+        <Object?>[rx.sendPort, symbols.toWire(), label],
         errorsAreFatal: false, // worker 崩了不拖垮宿主;在途请求走兜底哨兵
         onExit: rx.sendPort, // 退出时往上面那条 listen 推一个 null
         debugName: 'qp-chart-worker',
@@ -193,17 +193,16 @@ class ChartWorkerClient {
 /// worker 入口。必须是顶层函数([Isolate.spawn] 的要求)。
 void _workerMain(List<Object?> boot) {
   final reply = boot[0] as SendPort;
-  final handleAddress = boot[1] as int;
+  final symbols = ChartSymbols.fromWire((boot[1] as List).cast<Object?>());
   final label = boot[2] as String;
 
-  // 本 isolate 里唯一一次构造 NativeCore。用主 isolate 的 dlopen 句柄,
-  // 必然是同一个镜像、同一个 Go runtime —— 不存在「第二次 dlopen 解析到别处」的歧义。
-  NativeCore? core;
+  // 按主 isolate 解析好的函数指针地址重建 —— 不做第二次 dlopen,
+  // 所以必然指向同一份已加载代码、同一个 Go runtime。
+  ChartQueryCore? core;
   Object? openErr;
   try {
-    core = NativeCore.fromHandleAddress(handleAddress, label);
-    core.log('[worker] attached to libqp via handle 0x'
-        '${handleAddress.toRadixString(16)} ($label)');
+    core = ChartQueryCore(symbols);
+    core.log('[worker] attached via symbol addrs ($label)');
   } catch (e) {
     core = null; // 拿不到:后续一律回错误哨兵,不让宿主挂起
     openErr = e;
@@ -214,7 +213,7 @@ void _workerMain(List<Object?> boot) {
   if (openErr != null) {
     // core 为 null 时没法用 QP_Log,只能进 stderr(终端可见 / macOS 统一日志可捞)。
     // ignore: avoid_print
-    print('[quota-pulse][worker] fromHandleAddress FAILED: $openErr');
+    print('[quota-pulse][worker] ChartQueryCore init FAILED: $openErr');
   }
 
   // 自己缓冲,而不是直接在 listen 回调里执行:一次聚合是**同步阻塞**的 cgo 调用,
@@ -295,7 +294,7 @@ int _priorityOfItem(List<Object?> item) =>
 
 /// 真正执行一次查询。任何失败都收敛成 `''`(与 Go 空指针哨兵一致),**绝不抛异常** ——
 /// 异常会走 isolate 的 onError 通道,那条通道拿不到 requestId,上层将永远 await 不到结果。
-String _execute(NativeCore? core, List<Object?> item) {
+String _execute(ChartQueryCore? core, List<Object?> item) {
   if (core == null) return '';
   final kind = item[1] as int;
   final instance = item[3] as String;

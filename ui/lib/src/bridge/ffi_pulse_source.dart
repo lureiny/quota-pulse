@@ -31,8 +31,15 @@ class FfiPulseSource implements PulseSource {
     if (core == null) return Future<ChartWorkerClient?>.value(null);
     return _workerFut ??= () async {
       try {
+        final syms = core.chartSymbols();
+        if (!syms.usable) {
+          // 老版 libqp 缺符号:不起 worker,图表降级为「取数异常」而不是崩。
+          core.log('[main] chart symbols UNUSABLE (old libqp?), worker not spawned');
+          _workerFut = null;
+          return null;
+        }
         core.log('[main] spawning chart worker (lib=${core.libraryPath})');
-        final w = await ChartWorkerClient.spawn(core.handleAddress, core.libraryPath);
+        final w = await ChartWorkerClient.spawn(syms, core.libraryPath);
         core.log('[main] chart worker ready');
         // worker 意外退出(被 VM 回收 / 崩溃)后清掉缓存的 Future,让下次查询重建一个。
         // 不这么做的话 _ensureWorker 会一直返回那个已死的 client,图表再也不会恢复。
