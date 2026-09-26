@@ -484,6 +484,15 @@ class _ShellState extends State<Shell> with WindowListener, WidgetsBindingObserv
   }
 
   // 设置页:图表开关。仅它进 toConfigJson,变化才重启核心(跨度/维度/样式纯 UI)。
+  // 文件日志开关:在 toConfigJson 里 → 必须重启核心才生效(日志在 core 初始化时打开)。
+  void _onFileLogChanged(bool enabled) {
+    if (enabled == _settings.fileLogEnabled) return;
+    final s = _settings.copyWith(fileLogEnabled: enabled);
+    SettingsStore.save(s);
+    setState(() => _settings = s);
+    if (s.configured) _startCore(s);
+  }
+
   void _onChartChanged(bool enabled) {
     final enabledChanged = enabled != _settings.chartEnabled;
     final s = _settings.copyWith(chartEnabled: enabled);
@@ -602,6 +611,9 @@ class _ShellState extends State<Shell> with WindowListener, WidgetsBindingObserv
         onAlertChanged: _onAlertChanged,
         onPollChanged: _onPollChanged,
         onChartChanged: _onChartChanged,
+        fileLogEnabled: _settings.fileLogEnabled,
+        onFileLogChanged: _onFileLogChanged,
+        logPath: _source.logPath,
         onTestNotification: () => _alerter.testNotification(),
         onImport: _onImportConfig,
         onInstancesChanged: _onInstancesChanged,

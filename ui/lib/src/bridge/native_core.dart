@@ -91,10 +91,22 @@ class NativeCore {
     return NativeCore._(lib, hit);
   }
 
-  /// 按已知路径打开(供后台 isolate 复现主 isolate 那次加载)。
-  /// **永不调 DynamicLibrary.close()** —— Go 的 c-shared 不支持 dlclose。
-  factory NativeCore.openAt(String path) =>
-      NativeCore._(DynamicLibrary.open(path), path);
+  /// 已加载镜像的 dlopen 句柄地址。**后台 isolate 要用它来复现同一次加载。**
+  ///
+  /// 为什么不传路径让对端自己 open:那样是第二次 dlopen,解析结果理论上相同、
+  /// 实际上取决于 @rpath / 搜索路径在该调用点如何展开。一旦解析到**另一个文件**,
+  /// 进程里就会出现两份 libqp、两个 Go runtime(golang/go#65050 明确说这会炸),
+  /// 而且第二份的全局 engine 从没 QP_Init 过 —— 表现就是闪退或静默空数据。
+  /// 传句柄没有这个歧义:拿到的必然是同一个镜像。
+  int get handleAddress => _lib.handle.address;
+
+  /// 按已加载镜像的句柄地址构造(供后台 isolate 用)。
+  /// 句柄是进程级的,跨 isolate 传一个 int 是安全的;**永不调 DynamicLibrary.close()**
+  /// —— Go 的 c-shared 不支持 dlclose。
+  factory NativeCore.fromHandleAddress(int address, String label) => NativeCore._(
+        DynamicLibrary.fromHandle(Pointer<Void>.fromAddress(address)),
+        label,
+      );
 
   int init(String configJson) {
     final p = configJson.toNativeUtf8();
@@ -213,6 +225,49 @@ class NativeCore {
       return ptr.toDartString();
     } finally {
       _free(ptr); // Go 分配 → QP_Free
+    }
+  }
+
+  // QP_Log / QP_LogPath 是后加的导出,老库里没有 → 惰性解析 + 吞异常,降级成「不记日志」。
+  _StrArgD? _logFn;
+  bool _logResolved = false;
+
+  /// 把一行日志写进 Go 侧的同一个日志文件(日志没开时是廉价 no-op)。
+  /// 这样 Dart 侧动作与 Go 侧动作落在**同一条时间线**上,排查崩溃时不用对齐两份日志。
+  void log(String line) {
+    if (!_logResolved) {
+      _logResolved = true;
+      try {
+        _logFn = _lib.lookupFunction<_StrArgC, _StrArgD>('QP_Log');
+      } catch (_) {
+        _logFn = null;
+      }
+    }
+    final fn = _logFn;
+    if (fn == null) return;
+    final p = line.toNativeUtf8();
+    try {
+      fn(p);
+    } catch (_) {
+      // 记日志本身绝不能成为新的故障源
+    } finally {
+      malloc.free(p);
+    }
+  }
+
+  /// 当前日志文件路径(未启用/旧库返回空串),供设置页展示。
+  String logPath() {
+    try {
+      final fn = _lib.lookupFunction<_SnapC, _SnapD>('QP_LogPath');
+      final ptr = fn();
+      if (ptr == nullptr) return '';
+      try {
+        return ptr.toDartString();
+      } finally {
+        _free(ptr);
+      }
+    } catch (_) {
+      return '';
     }
   }
 

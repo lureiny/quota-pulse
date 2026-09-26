@@ -31,14 +31,20 @@ class FfiPulseSource implements PulseSource {
     if (core == null) return Future<ChartWorkerClient?>.value(null);
     return _workerFut ??= () async {
       try {
-        final w = await ChartWorkerClient.spawn(core.libraryPath);
+        core.log('[main] spawning chart worker (lib=${core.libraryPath})');
+        final w = await ChartWorkerClient.spawn(core.handleAddress, core.libraryPath);
+        core.log('[main] chart worker ready');
         // worker 意外退出(被 VM 回收 / 崩溃)后清掉缓存的 Future,让下次查询重建一个。
         // 不这么做的话 _ensureWorker 会一直返回那个已死的 client,图表再也不会恢复。
-        w.onDead = () => _workerFut = null;
+        w.onDead = () {
+          core.log('[main] chart worker DIED, will respawn on next query');
+          _workerFut = null;
+        };
         return w;
-      } catch (_) {
+      } catch (e) {
         // 失败不要粘住:清掉缓存的 Future,让下一次查询可以重试。
         // 否则一次瞬时的 spawn 失败会把图表永久钉死在「取数异常」。
+        core.log('[main] chart worker spawn FAILED: $e');
         _workerFut = null;
         return null;
       }
@@ -131,6 +137,9 @@ class FfiPulseSource implements PulseSource {
 
   @override
   void debugReset() => _core?.debugReset();
+
+  @override
+  String logPath() => _core?.logPath() ?? '';
 
   @override
   void shutdown() {

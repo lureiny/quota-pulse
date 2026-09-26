@@ -11,9 +11,11 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/lureiny/quota-pulse/core/app"
+	"github.com/lureiny/quota-pulse/core/logx"
 )
 
 var (
@@ -34,9 +36,17 @@ func withApp(f func(a *app.App)) {
 // QP_Init 用 JSON 配置初始化引擎。成功返回 0,失败返回 -1。
 //
 //export QP_Init
-func QP_Init(configJSON *C.char) C.int {
+func QP_Init(configJSON *C.char) (rc C.int) {
+	// 注意具名返回:panic 被接住后零值是 0(=成功),必须显式改成 -1,
+	// 否则宿主会以为初始化成功、后续所有调用都拿到一个空引擎。
+	defer func() {
+		if logx.Recover("QP_Init") {
+			rc = -1
+		}
+	}()
 	a, err := app.NewFromJSON(C.GoString(configJSON))
 	if err != nil {
+		logx.Printf("QP_Init failed: %v", err)
 		return -1
 	}
 	mu.Lock()
@@ -49,6 +59,7 @@ func QP_Init(configJSON *C.char) C.int {
 //
 //export QP_Start
 func QP_Start() {
+	defer logx.Recover("QP_Start")
 	mu.Lock()
 	a := engine
 	if a == nil {
@@ -65,6 +76,7 @@ func QP_Start() {
 //
 //export QP_Stop
 func QP_Stop() {
+	defer logx.Recover("QP_Stop")
 	mu.Lock()
 	a := engine
 	c := cancel
@@ -81,6 +93,7 @@ func QP_Stop() {
 //
 //export QP_SnapshotJSON
 func QP_SnapshotJSON() *C.char {
+	defer logx.Recover("QP_SnapshotJSON")
 	mu.Lock()
 	a := engine
 	mu.Unlock()
@@ -96,6 +109,7 @@ func QP_SnapshotJSON() *C.char {
 //
 //export QP_ChartSeries
 func QP_ChartSeries(argsJSON *C.char) *C.char {
+	defer logx.Recover("QP_ChartSeries")
 	mu.Lock()
 	a := engine
 	mu.Unlock()
@@ -108,7 +122,13 @@ func QP_ChartSeries(argsJSON *C.char) *C.char {
 		Hours     int    `json:"hours"`
 	}
 	_ = json.Unmarshal([]byte(C.GoString(argsJSON)), &args)
-	return C.CString(a.ChartSeriesJSON(args.Instance, args.Dimension, args.Hours))
+	// 进/出断点:不可恢复的内存违例 recover 接不住,但「有 start 没 end」
+	// 能把崩溃位置钉在这一段里。同时顺带记慢查询。
+	logx.Printf("QP_ChartSeries start inst=%q dim=%q hours=%d", args.Instance, args.Dimension, args.Hours)
+	t0 := time.Now()
+	out := a.ChartSeriesJSON(args.Instance, args.Dimension, args.Hours)
+	logx.Printf("QP_ChartSeries done  inst=%q %dms %dB", args.Instance, time.Since(t0).Milliseconds(), len(out))
+	return C.CString(out)
 }
 
 // QP_ChartDailySeries 同 QP_ChartSeries,但按本地日聚合最近 days 天(供热力图)。
@@ -117,6 +137,7 @@ func QP_ChartSeries(argsJSON *C.char) *C.char {
 //
 //export QP_ChartDailySeries
 func QP_ChartDailySeries(argsJSON *C.char) *C.char {
+	defer logx.Recover("QP_ChartDailySeries")
 	mu.Lock()
 	a := engine
 	mu.Unlock()
@@ -129,7 +150,11 @@ func QP_ChartDailySeries(argsJSON *C.char) *C.char {
 		Days      int    `json:"days"`
 	}
 	_ = json.Unmarshal([]byte(C.GoString(argsJSON)), &args)
-	return C.CString(a.ChartDailySeriesJSON(args.Instance, args.Dimension, args.Days))
+	logx.Printf("QP_ChartDailySeries start inst=%q dim=%q days=%d", args.Instance, args.Dimension, args.Days)
+	t0 := time.Now()
+	out := a.ChartDailySeriesJSON(args.Instance, args.Dimension, args.Days)
+	logx.Printf("QP_ChartDailySeries done  inst=%q %dms %dB", args.Instance, time.Since(t0).Milliseconds(), len(out))
+	return C.CString(out)
 }
 
 // QP_Coverage 返回某实例的覆盖水位与全历史最早事件(供热力图判断补齐进度/年份列表)。
@@ -138,6 +163,7 @@ func QP_ChartDailySeries(argsJSON *C.char) *C.char {
 //
 //export QP_Coverage
 func QP_Coverage(argsJSON *C.char) *C.char {
+	defer logx.Recover("QP_Coverage")
 	mu.Lock()
 	a := engine
 	mu.Unlock()
@@ -158,6 +184,7 @@ func QP_Coverage(argsJSON *C.char) *C.char {
 //
 //export QP_ChartVersions
 func QP_ChartVersions() *C.char {
+	defer logx.Recover("QP_ChartVersions")
 	mu.Lock()
 	a := engine
 	mu.Unlock()
@@ -172,6 +199,7 @@ func QP_ChartVersions() *C.char {
 //
 //export QP_EnsureCoverage
 func QP_EnsureCoverage(argsJSON *C.char) {
+	defer logx.Recover("QP_EnsureCoverage")
 	mu.Lock()
 	a := engine
 	mu.Unlock()
@@ -190,6 +218,7 @@ func QP_EnsureCoverage(argsJSON *C.char) {
 //
 //export QP_Refresh
 func QP_Refresh(accountID *C.char) {
+	defer logx.Recover("QP_Refresh")
 	withApp(func(a *app.App) { a.Refresh(C.GoString(accountID)) })
 }
 
@@ -197,6 +226,7 @@ func QP_Refresh(accountID *C.char) {
 //
 //export QP_SetForeground
 func QP_SetForeground(v C.int) {
+	defer logx.Recover("QP_SetForeground")
 	withApp(func(a *app.App) { a.SetPopoverOpen(v != 0) })
 }
 
@@ -204,6 +234,7 @@ func QP_SetForeground(v C.int) {
 //
 //export QP_SetOnBattery
 func QP_SetOnBattery(v C.int) {
+	defer logx.Recover("QP_SetOnBattery")
 	withApp(func(a *app.App) { a.SetOnBattery(v != 0) })
 }
 
@@ -211,6 +242,7 @@ func QP_SetOnBattery(v C.int) {
 //
 //export QP_SetAsleep
 func QP_SetAsleep(v C.int) {
+	defer logx.Recover("QP_SetAsleep")
 	withApp(func(a *app.App) { a.SetAsleep(v != 0) })
 }
 
@@ -220,6 +252,7 @@ func QP_SetAsleep(v C.int) {
 //
 //export QP_DebugSet
 func QP_DebugSet(argsJSON *C.char) {
+	defer logx.Recover("QP_DebugSet")
 	mu.Lock()
 	a := engine
 	mu.Unlock()
@@ -239,6 +272,7 @@ func QP_DebugSet(argsJSON *C.char) {
 //
 //export QP_DebugReport
 func QP_DebugReport() *C.char {
+	defer logx.Recover("QP_DebugReport")
 	mu.Lock()
 	a := engine
 	mu.Unlock()
@@ -252,12 +286,39 @@ func QP_DebugReport() *C.char {
 //
 //export QP_DebugReset
 func QP_DebugReset() {
+	defer logx.Recover("QP_DebugReset")
 	withApp(func(a *app.App) { a.DebugReset() })
+}
+
+// QP_Log 让宿主(Dart)把一行日志写进**同一个**日志文件。
+//
+// 刻意不让 Dart 自己写文件:两个写者写一个文件要么加锁要么分文件,
+// 而排查崩溃时最需要的恰恰是「Dart 侧动作」与「Go 侧动作」在同一条时间线上对齐 ——
+// 比如「worker spawn → 打开 dylib → QP_ChartDailySeries start → (没有 done)」。
+// 日志没开时这里是一次原子读 + 立即返回。
+//
+//export QP_Log
+func QP_Log(line *C.char) {
+	defer logx.Recover("QP_Log")
+	if !logx.Enabled() {
+		return
+	}
+	logx.Printf("%s", C.GoString(line))
+}
+
+// QP_LogPath 返回当前日志文件路径(未启用返回空串),供 UI 展示「日志在哪」。
+// 返回的 C 字符串由调用方用 QP_Free 释放。
+//
+//export QP_LogPath
+func QP_LogPath() *C.char {
+	defer logx.Recover("QP_LogPath")
+	return C.CString(logx.Path())
 }
 
 // QP_Free 释放由本库返回的 C 字符串。
 //
 //export QP_Free
 func QP_Free(p *C.char) {
+	defer logx.Recover("QP_Free")
 	C.free(unsafe.Pointer(p))
 }

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/lureiny/quota-pulse/core/config"
+	"github.com/lureiny/quota-pulse/core/logx"
 	"github.com/lureiny/quota-pulse/core/model"
 	"github.com/lureiny/quota-pulse/core/netstat"
 	"github.com/lureiny/quota-pulse/core/poller"
@@ -42,6 +43,23 @@ func New(cfg config.Config) (*App, error) {
 		cfg:   cfg.Normalized(),
 		store: poller.NewStore(),
 	}
+
+	// 日志尽早开:后面的开库、provider 构建都可能失败,失败原因得能落盘。
+	if a.cfg.Log.Enabled {
+		lp := a.cfg.Log.Path
+		if lp == "" {
+			dbp := a.cfg.Chart.DBPath
+			if dbp == "" {
+				dbp = defaultDBPath()
+			}
+			lp = filepath.Join(filepath.Dir(dbp), "quota-pulse.log")
+		}
+		logx.Open(lp)
+		logx.Printf("=== core init | providers=%d chart=%v keepAll=%v ===",
+			len(a.cfg.Providers), a.cfg.Chart.Enabled, a.cfg.Chart.KeepAll)
+	} else {
+		logx.Close()
+	}
 	a.poll = poller.New(a.store, a.broadcast)
 	// 小时图表:开启则打开本地 SQLite 库;开库失败则降级(图不展示,核心其余照常)。
 	var db *usage.Store
@@ -53,6 +71,10 @@ func New(cfg config.Config) (*App, error) {
 		if opened, err := usage.Open(path); err == nil {
 			db = opened
 			a.usageDB = db
+			logx.Printf("usage db opened: %s", path)
+		} else {
+			// 开库失败是「图表静默不可用」的唯一成因,以前完全没有痕迹。
+			logx.Printf("usage db OPEN FAILED: %s: %v (charts disabled)", path, err)
 		}
 	}
 	a.poll.SetChart(a.cfg.Chart, db)

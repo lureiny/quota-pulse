@@ -68,6 +68,9 @@ abstract class PulseSource {
   /// 清空已采样本(保留开关与上限)。
   void debugReset();
 
+  /// 当前运行日志文件路径(未启用/不支持返回空串),供设置页展示与复制。
+  String logPath();
+
   /// 释放实现方持有的后台资源(如查询用的 isolate)。进程退出前调用。
   void shutdown();
 }

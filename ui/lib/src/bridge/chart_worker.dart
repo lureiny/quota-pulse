@@ -63,10 +63,14 @@ class ChartWorkerClient {
   /// worker 意外没了时回调(由 [FfiPulseSource] 设置,用于允许下次重建)。
   void Function()? onDead;
 
-  /// 启动 worker。[libraryPath] 必须是主 isolate 里**实际打开成功**的那个路径
-  /// ([NativeCore.libraryPath]),不要让 worker 自己重跑候选探测 —— 两侧探测结果发散
-  /// 会导致加载到不同镜像,而同进程加载两份 Go c-shared 是会炸的。
-  static Future<ChartWorkerClient> spawn(String libraryPath) async {
+  /// 启动 worker。
+  ///
+  /// [handleAddress] 是主 isolate 那次 dlopen 的**句柄地址**([NativeCore.handleAddress])。
+  /// 刻意不传路径让 worker 自己 open:第二次 dlopen 的解析结果取决于 @rpath / 搜索路径
+  /// 在该调用点如何展开,一旦解析到另一个文件,进程里就会出现两份 libqp、两个 Go runtime
+  /// (golang/go#65050),而且第二份的全局 engine 从没 QP_Init 过 —— 表现是闪退或静默空数据。
+  /// 传句柄没有这个歧义。[label] 只用于日志。
+  static Future<ChartWorkerClient> spawn(int handleAddress, String label) async {
     final rx = ReceivePort();
     final ready = Completer<SendPort>();
     // 一条**持久**订阅,从头到尾不取消。
@@ -98,7 +102,7 @@ class ChartWorkerClient {
     try {
       iso = await Isolate.spawn(
         _workerMain,
-        <Object?>[rx.sendPort, libraryPath],
+        <Object?>[rx.sendPort, handleAddress, label],
         errorsAreFatal: false, // worker 崩了不拖垮宿主;在途请求走兜底哨兵
         onExit: rx.sendPort, // 退出时往上面那条 listen 推一个 null
         debugName: 'qp-chart-worker',
@@ -189,19 +193,29 @@ class ChartWorkerClient {
 /// worker 入口。必须是顶层函数([Isolate.spawn] 的要求)。
 void _workerMain(List<Object?> boot) {
   final reply = boot[0] as SendPort;
-  final libraryPath = boot[1] as String;
+  final handleAddress = boot[1] as int;
+  final label = boot[2] as String;
 
-  // 本 isolate 里唯一一次构造 NativeCore。dlopen/LoadLibrary 是进程级引用计数,
-  // 主 isolate 已加载过,这里只是 refcount++,拿到同一镜像、同一个 Go runtime。
+  // 本 isolate 里唯一一次构造 NativeCore。用主 isolate 的 dlopen 句柄,
+  // 必然是同一个镜像、同一个 Go runtime —— 不存在「第二次 dlopen 解析到别处」的歧义。
   NativeCore? core;
+  Object? openErr;
   try {
-    core = NativeCore.openAt(libraryPath);
-  } catch (_) {
-    core = null; // 打不开:后续一律回错误哨兵,不让宿主挂起
+    core = NativeCore.fromHandleAddress(handleAddress, label);
+    core.log('[worker] attached to libqp via handle 0x'
+        '${handleAddress.toRadixString(16)} ($label)');
+  } catch (e) {
+    core = null; // 拿不到:后续一律回错误哨兵,不让宿主挂起
+    openErr = e;
   }
 
   final rx = ReceivePort();
   reply.send(rx.sendPort);
+  if (openErr != null) {
+    // core 为 null 时没法用 QP_Log,只能进 stderr(终端可见 / macOS 统一日志可捞)。
+    // ignore: avoid_print
+    print('[quota-pulse][worker] fromHandleAddress FAILED: $openErr');
+  }
 
   // 自己缓冲,而不是直接在 listen 回调里执行:一次聚合是**同步阻塞**的 cgo 调用,
   // 执行期间事件循环停摆。先把同一批到达的请求全收进 buffer 再统一 drain,
@@ -242,8 +256,14 @@ void _workerMain(List<Object?> boot) {
             continue;
           }
 
-          reply.send(<Object?>[id, _execute(core, item)]);
-        } catch (_) {
+          core?.log('[worker] exec kind=${item[1]} slot=$slot');
+          final out = _execute(core, item);
+          if (out.isEmpty) {
+            core?.log('[worker] exec kind=${item[1]} slot=$slot → EMPTY(取数失败)');
+          }
+          reply.send(<Object?>[id, out]);
+        } catch (e) {
+          core?.log('[worker] exec THREW: $e');
           if (id != null) reply.send(<Object?>[id, '']); // 兜底:永远有回包
         } finally {
           // 让出一拍,好让执行期间积压的端口消息进到 buffer,下一轮才能正确抢占。

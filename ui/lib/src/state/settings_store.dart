@@ -385,6 +385,9 @@ class Settings {
   final String? chartHeatmapValue; // 热力图选中的维度值:null/''=全部(聚合);否则某维度值(纯 UI)
 
   // 调试:客户端读流量采样(运行时开关,通过 FFI 控制;这里仅持久化开关与上限)。
+  /// 文件日志开关(默认关)。排查问题时打开重现一次,日志与 usage.db 同目录。
+  /// 进 toConfigJson → 会重启核心(日志是在 core 初始化时打开的)。
+  final bool fileLogEnabled;
   final bool debugSampling; // 是否开启采样(默认关)
   final int debugMaxSamples; // 最大采样次数(默认 200000)
   final int debugMaxMemMB; // 采样内存上限(MB,默认 32)
@@ -409,6 +412,7 @@ class Settings {
     this.chartMetric = ChartMetric.tokens,
     this.chartHeatmapYear,
     this.chartHeatmapValue,
+    this.fileLogEnabled = false,
     this.debugSampling = false,
     this.debugMaxSamples = 200000,
     this.debugMaxMemMB = 32,
@@ -458,6 +462,7 @@ class Settings {
     // 可空热力图字段用哨兵区分「不改」与「显式置 null」(copyWith 的经典难点)。
     Object? chartHeatmapYear = _kNoChange,
     Object? chartHeatmapValue = _kNoChange,
+    bool? fileLogEnabled,
     bool? debugSampling,
     int? debugMaxSamples,
     int? debugMaxMemMB,
@@ -486,6 +491,7 @@ class Settings {
         chartHeatmapValue: chartHeatmapValue == _kNoChange
             ? this.chartHeatmapValue
             : chartHeatmapValue as String?,
+        fileLogEnabled: fileLogEnabled ?? this.fileLogEnabled,
         debugSampling: debugSampling ?? this.debugSampling,
         debugMaxSamples: debugMaxSamples ?? this.debugMaxSamples,
         debugMaxMemMB: debugMaxMemMB ?? this.debugMaxMemMB,
@@ -545,6 +551,9 @@ class Settings {
         // core 反复补拉可把覆盖水位一路推到最早事件;本地库只增不删。
         'keep_all': true,
       },
+      // 文件日志(默认关)。注意它在 toConfigJson 里 → 改这一项会重启核心,
+      // 这是刻意的:日志是在 core 初始化时打开的,不重启拿不到。
+      'log': {'enabled': fileLogEnabled},
     });
   }
 
@@ -580,6 +589,7 @@ class Settings {
         if (chartHeatmapYear != null) 'chart_heatmap_year': chartHeatmapYear,
         if (chartHeatmapValue != null && chartHeatmapValue!.isNotEmpty)
           'chart_heatmap_value': chartHeatmapValue,
+        'file_log_enabled': fileLogEnabled,
         'debug_sampling': debugSampling,
         'debug_max_samples': debugMaxSamples,
         'debug_max_mem_mb': debugMaxMemMB,
@@ -632,6 +642,7 @@ class Settings {
         ),
         chartHeatmapYear: (j['chart_heatmap_year'] as num?)?.toInt(),
         chartHeatmapValue: j['chart_heatmap_value'] as String?,
+        fileLogEnabled: j['file_log_enabled'] as bool? ?? false,
         debugSampling: j['debug_sampling'] as bool? ?? false,
         debugMaxSamples: (j['debug_max_samples'] as num?)?.toInt() ?? 200000,
         debugMaxMemMB: (j['debug_max_mem_mb'] as num?)?.toInt() ?? 32,

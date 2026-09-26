@@ -38,6 +38,9 @@ class SettingsPage extends StatefulWidget {
     this.debugSampling = false, // 调试:客户端读流量采样开关
     this.debugMaxSamples = 200000,
     this.debugMaxMemMB = 32,
+    this.fileLogEnabled = false, // 文件日志开关(改后重启核心生效)
+    this.onFileLogChanged,
+    this.logPath, // () → 当前日志文件路径(空=未启用)
     this.onDebugChanged, // (enabled, maxSamples, maxMemMB):壳持久化 + 调 FFI
     this.onOpenDebug, // 打开独立调试面板视图
   });
@@ -78,6 +81,9 @@ class SettingsPage extends StatefulWidget {
   final bool debugSampling;
   final int debugMaxSamples;
   final int debugMaxMemMB;
+  final bool fileLogEnabled;
+  final void Function(bool enabled)? onFileLogChanged;
+  final String Function()? logPath;
   final void Function(bool enabled, int maxSamples, int maxMemMB)? onDebugChanged;
   final VoidCallback? onOpenDebug;
 
@@ -227,6 +233,37 @@ class _SettingsPageState extends State<SettingsPage> {
 
   /// 小时图表开关改动:通知壳持久化(开关变化时重启核心)。
   void _emitChart() => widget.onChartChanged?.call(_chartEnabled);
+
+  /// 日志文件路径一行,可一键复制 —— 让用户不用问「日志在哪」。
+  Widget _logPathRow(ThemeData theme) {
+    final p = widget.logPath?.call() ?? '';
+    if (p.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Text('日志路径获取中…(核心重启后显示)', style: theme.textTheme.bodySmall),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: SelectableText(p,
+                maxLines: 1,
+                style: theme.textTheme.bodySmall?.copyWith(fontFamily: 'monospace')),
+          ),
+          IconButton(
+            tooltip: '复制路径',
+            icon: const Icon(Icons.copy_all_outlined, size: 15),
+            padding: EdgeInsets.zero,
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            onPressed: () => Clipboard.setData(ClipboardData(text: p)),
+          ),
+        ],
+      ),
+    );
+  }
 
   _Draft _newDraft() {
     _idSeq++;
@@ -1337,6 +1374,23 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ),
         const SizedBox(height: 12),
+        const Divider(height: 1),
+        const SizedBox(height: 8),
+        // 文件日志:排查问题时打开重现一次。Dart 侧与 Go 侧写同一个文件,单一时间线。
+        Text('运行日志',
+            style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: const Text('写运行日志到文件', style: TextStyle(fontSize: 13)),
+          subtitle: Text('记录启动、取数、错误与崩溃现场(含 Go panic 栈),'
+              '与用量库同目录、上限 2MB 轮转一代。默认关闭;开启会重启核心',
+              style: theme.textTheme.bodySmall),
+          value: widget.fileLogEnabled,
+          onChanged: (v) => widget.onFileLogChanged?.call(v),
+        ),
+        if (widget.fileLogEnabled) _logPathRow(theme),
+        const SizedBox(height: 8),
         const Divider(height: 1),
         const SizedBox(height: 8),
         // 网络采样(调试):客户端统计每个实例每次请求拿到的读流量。默认关、零开销。

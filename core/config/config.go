@@ -12,6 +12,16 @@ import (
 type Config struct {
 	Providers []ProviderConfig `json:"providers"`
 	Chart     ChartConfig      `json:"chart"` // 主面板小时用量图表
+	Log       LogConfig        `json:"log"`   // 文件日志(默认关闭)
+}
+
+// LogConfig 控制文件日志。默认关闭 —— 平时不需要,出问题时让用户打开重现一次。
+//
+// 开着也很轻:只记生命周期事件、错误、以及超过阈值的慢查询,不记每次轮询。
+// 单文件上限 2MB、轮转一代。
+type LogConfig struct {
+	Enabled bool   `json:"enabled,omitempty"`
+	Path    string `json:"path,omitempty"` // 空=DBPath 同目录下的 quota-pulse.log
 }
 
 // ChartConfig 控制每站点小时级用量图。数据来自 /admin/usage 原始日志,
