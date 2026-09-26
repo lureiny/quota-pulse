@@ -21,3 +21,7 @@ PROMO.md
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Go c-shared 产物(无 -o 时会落在 core/)
+core/libqp
+core/libqp.*
