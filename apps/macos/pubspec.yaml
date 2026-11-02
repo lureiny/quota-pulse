@@ -21,6 +21,12 @@ dependencies:
 dev_dependencies:
   flutter_lints: ^4.0.0
 
+# shared_preferences_foundation 2.6.x 的 pigeon 生成代码用了参数列表尾随逗号(Swift 6.1+ / Xcode 16.3+),
+# macos-14 runner 的默认 Xcode 编不过("unexpected ',' separator")。仓库未提交 pubspec.lock,
+# CI 每次重新解析会自动升级,故钉在最后一个可编译版本;runner 升到 Xcode 16.3+ 后可移除。
+dependency_overrides:
+  shared_preferences_foundation: 2.5.7
+
 flutter:
   uses-material-design: true
   # macOS 用系统 SF Pro(字重齐全),不打包 MiSans —— 故此处不声明字体。
